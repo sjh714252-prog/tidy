@@ -18,7 +18,7 @@ pub enum ConfigError {
     Parse {
         path: PathBuf,
         #[source]
-        source: toml::de::Error,
+        source: Box<toml::de::Error>,
     },
 }
 
@@ -33,6 +33,7 @@ pub struct Config {
     pub classify: Classify,
     pub mover: Mover,
     pub index: Index,
+    pub store: Store,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,6 +107,9 @@ impl Default for IndexRoot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Classify {
+    /// Rules file (SPEC §5.2). Relative paths are resolved against the
+    /// directory containing `config.toml`.
+    pub rules: PathBuf,
     pub stabilize_secs: u64,
     pub learn_threshold: u32,
     pub ignore_globs: Vec<String>,
@@ -114,6 +118,7 @@ pub struct Classify {
 impl Default for Classify {
     fn default() -> Self {
         Self {
+            rules: PathBuf::from("rules.toml"),
             stabilize_secs: 3,
             learn_threshold: 3,
             ignore_globs: vec![
@@ -174,17 +179,56 @@ impl Default for Index {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct Store {
+    /// SQLite database file. `None` = `<data_local_dir>/tidy/tidy.db`.
+    /// Relative paths are resolved against the directory of `config.toml`.
+    pub path: Option<PathBuf>,
+}
+
+impl Store {
+    pub fn default_db_path() -> PathBuf {
+        dirs::data_local_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("tidy")
+            .join("tidy.db")
+    }
+
+    pub fn db_path(&self) -> PathBuf {
+        self.path.clone().unwrap_or_else(Self::default_db_path)
+    }
+}
+
 impl Config {
-    /// Load from a TOML file. Missing keys fall back to defaults.
+    /// Load from a TOML file. Missing keys fall back to defaults. Relative
+    /// `classify.rules` / `store.path` are resolved against the config
+    /// file's directory so `tidy watch --config x/config.toml` works from
+    /// any working directory.
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
             path: path.to_path_buf(),
             source,
         })?;
-        Self::from_toml(&text).map_err(|source| ConfigError::Parse {
+        let mut cfg = Self::from_toml(&text).map_err(|source| ConfigError::Parse {
             path: path.to_path_buf(),
-            source,
-        })
+            source: Box::new(source),
+        })?;
+        let base = path.parent().unwrap_or_else(|| Path::new(""));
+        cfg.resolve_relative(base);
+        Ok(cfg)
+    }
+
+    /// Resolve relative file references against `base`.
+    pub fn resolve_relative(&mut self, base: &Path) {
+        if self.classify.rules.is_relative() {
+            self.classify.rules = base.join(&self.classify.rules);
+        }
+        if let Some(p) = &self.store.path {
+            if p.is_relative() {
+                self.store.path = Some(base.join(p));
+            }
+        }
     }
 
     pub fn from_toml(text: &str) -> Result<Self, toml::de::Error> {
@@ -194,6 +238,10 @@ impl Config {
         }
         for r in &mut cfg.index_only {
             r.path = expand_home(&r.path);
+        }
+        cfg.classify.rules = expand_home(&cfg.classify.rules);
+        if let Some(p) = &cfg.store.path {
+            cfg.store.path = Some(expand_home(p));
         }
         Ok(cfg)
     }
@@ -263,6 +311,18 @@ duplicate_policy = "rename"
         assert_eq!(c.mover.duplicate_policy, DuplicatePolicy::Rename);
         // Korean path survives round trip untouched.
         assert!(c.watches[1].path.to_string_lossy().contains("공유"));
+    }
+
+    #[test]
+    fn relative_rules_and_db_resolve_against_config_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("설정 폴더");
+        std::fs::create_dir(&sub).unwrap();
+        let cfg_path = sub.join("config.toml");
+        std::fs::write(&cfg_path, "[store]\npath = \"data/tidy.db\"\n").unwrap();
+        let c = Config::load(&cfg_path).unwrap();
+        assert_eq!(c.classify.rules, sub.join("rules.toml"));
+        assert_eq!(c.store.db_path(), sub.join("data").join("tidy.db"));
     }
 
     #[test]

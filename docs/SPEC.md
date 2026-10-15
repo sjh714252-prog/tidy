@@ -104,6 +104,7 @@ tidy/
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── config.rs
+│   │       ├── engine.rs   # 파일 1건: 분류 → 대기열 또는 Mover (watch/앱 공용)
 │   │       ├── watcher/    # 이벤트 + 폴링
 │   │       ├── classify/   # rules.rs, ai.rs, learner.rs
 │   │       ├── mover/      # mover.rs, undo.rs
@@ -130,8 +131,11 @@ tidy/
 - 입력: `config.watch[]` (경로, 종류 `local|network`, 폴링 간격, 재귀 여부, 제외 패턴)
 - `local`: `notify` 이벤트. `network`: `notify` 시도 + **주기 폴링**(기본 120s, mtime/size 스냅샷 비교) 병행. 둘 다에서 같은 파일이 잡히면 dedupe.
 - **안정화 대기**: 생성 이벤트 후 파일 크기가 N초(기본 3s) 동안 변하지 않을 때까지 처리 보류. 임시 파일(`*.tmp`, `*.crdownload`, `*.part`, `~$*`, `.DS_Store`, `Thumbs.db`) 무시.
-- 출력: `FileEvent { path, kind: Created|Modified|Removed|Renamed, source: Watch|Poll, at }` → 내부 채널
-- 자기 자신이 옮긴 파일로 인한 이벤트는 무시(Mover가 발행하는 "expected move" 토큰으로 식별).
+- 출력: `FileEvent { path, kind: Created|Modified|Removed|Renamed, source: Watch|Poll, at }` → 내부 채널 (M1은 안정화된 `Created|Modified`만 내보낸다. 삭제/이름변경은 추적 대상에서 제거하는 데만 쓴다)
+- 자기 자신이 옮긴 파일로 인한 이벤트는 무시(Mover가 발행하는 "expected move" 토큰으로 식별, TTL 10s).
+- 다른 프로세스(`tidy undo`)가 되돌린 파일은 토큰이 없으므로, Engine이 `move_log`에서 "같은 원래 경로 + 같은 해시로 undo된 기록"을 확인해 다시 옮기지 않는다. 내용이 바뀌면(해시 다름) 새 파일로 보고 다시 분류한다.
+- 감시 루트는 시작 시 정규화(`dunce::canonicalize`)한다. macOS `/var`→`/private/var`, Windows `\\?\` 접두사 문제 회피.
+- 잠긴 파일(Windows 공유 위반 등)은 안정화 대기 후 최대 5회 재시도.
 
 ### 5.2 Classifier
 파이프라인: **Rules → (매칭 없으면) AI → (AI 없거나 confidence 낮으면) Ask user**
@@ -151,8 +155,14 @@ dest = "~/Downloads/Installers"
 confirm = true
 ```
 - 매치 조건: `ext`, `name_regex`, `min_size`, `max_size`, `older_than_days`, `source_app`(가능한 OS에서만), `from_dir`
+  - 조건은 모두 AND. `ext`는 대소문자 무시·점 없이. `name_regex`는 확장자 포함 파일 이름에 적용.
+  - 크기는 바이트 정수 또는 `"10MB"`/`"1.5GB"`(1024 단위) 문자열.
+  - `source_app`은 SPEC §13 결정 전까지 미지원: 지정한 규칙은 경고 후 매치되지 않음.
+  - 규칙 파일의 오타(알 수 없는 키·변수, 잘못된 정규식)는 로드 시 오류로 거부.
 - `dest` 템플릿 변수: `{yyyy}` `{mm}` `{dd}` `{ext}` `{stem}` `{source_dir_name}`
-- `confirm = false`인 규칙은 묻지 않고 이동(로그는 남김).
+  - 날짜는 파일 수정시각(로컬 시간대). `~`는 홈으로 확장. 상대 경로는 원래 파일이 있던 폴더 기준.
+- `confirm = false`인 규칙은 묻지 않고 이동(로그는 남김). `confirm = true`면 이동하지 않고 `pending`에 넣는다(M3 확인 UI 전까지 `tidy pending`으로 조회).
+- `enabled = false`로 규칙을 끌 수 있다. `ai_auto`는 M4에서 사용.
 
 **AI 분류 요청에 보내는 정보** (프라이버시·비용 위해 최소화)
 - 파일명, 확장자, 크기, 생성시각, 원본 폴더
@@ -188,7 +198,16 @@ confirm = true
   1. 목적지 충돌 검사 → 동일 해시면 중복 처리 정책(건너뜀/덮어쓰기/이름 뒤 `(1)`), 다른 파일이면 이름 변경
   2. 같은 볼륨: `rename`. 다른 볼륨/NAS: `dest.tmp.<uuid>`로 복사 → 크기·해시 검증 → 원자적 rename → 원본 삭제
   3. `move_log`에 기록 (before/after 경로, 해시, 결정 출처 `rule|ai|user|restructure`, 배치 ID)
+  - 구현 순서: 로그 행을 **먼저** 쓰고 이동한다. 이동이 실패하면 그 행을 철회한다. 따라서 기록 없는 이동은 생길 수 없다.
+  - 이름이 같고 내용이 다른 파일은 항상 `이름 (1).ext`로. 어떤 경우에도 덮어쓰지 않는다. `replace`는 동일 해시 사본을 휴지통으로 보낸 뒤 이동.
+  - 경로는 UTF-8 TEXT로 저장한다. UTF-8이 아닌 경로는 손실 없이 기록할 수 없으므로 이동하지 않는다.
+  - 복사-검증 이동의 임시 파일 이름: `.<name>.tidy-tmp.<uuid>` (Watcher가 무시).
 - **Undo**: 단건/배치 단위 되돌리기. 원본 위치에 다른 파일이 생겼으면 충돌 알림. 최근 30일(설정) 보관.
+  - CLI: `tidy undo --last`(가장 최근의 미취소 배치), `--batch <id 접두사>`, `--id <move_log id>`.
+  - 충돌(원래 위치에 다른 파일 존재 / 옮긴 파일이 사라짐)은 건너뛰고 보고하며, 해당 행은 활성 상태로 남아 재시도 가능.
+  - 원래 폴더가 없어졌으면 다시 만든다. 이동 때 생긴 빈 목적지 폴더는 지우지 않는다(삭제 금지).
+  - `undo_retention_days`가 지난 로그 행은 `watch` 시작 시 DB에서만 정리된다(파일은 건드리지 않음).
+  - 배치: watch 중 파일 1건 = 배치 1개, `--process-existing` 초기 처리 = 배치 1개.
 - 절대 삭제하지 않는다. "삭제"는 OS 휴지통으로 보내는 것만 허용(`trash` crate).
 
 ### 5.5 Indexer
@@ -308,6 +327,7 @@ CREATE TABLE move_log (
   undone_at INTEGER
 );
 CREATE INDEX idx_move_batch ON move_log(batch_id);
+CREATE INDEX idx_move_src ON move_log(src_path);   -- undo된 파일 재이동 방지 조회
 
 -- 사용자 결정 (학습용)
 CREATE TABLE decisions (
@@ -350,6 +370,8 @@ CREATE TABLE ai_log (
 CREATE TABLE schema_version (version INTEGER NOT NULL);
 ```
 
+마이그레이션: `schema_version`에 적용 버전을 기록하고 순서대로 적용. M1(v1)은 `move_log`, `pending`, `ignored`만 만든다. 나머지 테이블은 해당 마일스톤에서 추가.
+
 ---
 
 ## 7. 설정 파일 (`config.toml`)
@@ -386,6 +408,7 @@ path = "~/Documents"
 recursive = true
 
 [classify]
+rules = "rules.toml"           # 상대 경로는 config.toml 폴더 기준
 stabilize_secs = 3
 learn_threshold = 3
 ignore_globs = ["*.tmp", "*.crdownload", "*.part", "~$*", ".DS_Store", "Thumbs.db"]
@@ -394,6 +417,9 @@ ignore_globs = ["*.tmp", "*.crdownload", "*.part", "~$*", ".DS_Store", "Thumbs.d
 undo_retention_days = 30
 duplicate_policy = "skip"      # skip|rename|replace
 nas_concurrency = 2
+
+[store]
+# path = "tidy.db"             # 생략 시 <data_local_dir>/tidy/tidy.db, 상대 경로는 config.toml 폴더 기준
 
 [index]
 max_content_size_mb = 200

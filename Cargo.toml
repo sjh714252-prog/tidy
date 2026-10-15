@@ -21,6 +21,14 @@ humansize = "2"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 tempfile = "3"
+notify = "8"
+rusqlite = { version = "0.40", features = ["bundled"] }
+regex = "1"
+globset = "0.4"
+blake3 = "1"
+uuid = { version = "1", features = ["v4"] }
+trash = "5"
+dunce = "1"
 
 [profile.release]
 lto = "thin"

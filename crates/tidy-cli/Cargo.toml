@@ -19,3 +19,4 @@ humansize.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 toml.workspace = true
+chrono.workspace = true
