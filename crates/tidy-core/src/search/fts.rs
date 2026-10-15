@@ -223,15 +223,25 @@ mod tests {
     use crate::config::RootKind;
     use crate::store::{NewFile, TextStatus};
 
+    /// An absolute root that looks like what the indexer stores on this OS
+    /// (Windows paths carry a drive; `/r` would be rooted but driveless).
+    fn root() -> std::path::PathBuf {
+        if cfg!(windows) {
+            std::path::PathBuf::from(r"C:\r")
+        } else {
+            std::path::PathBuf::from("/r")
+        }
+    }
+
     fn store_with(docs: &[(&str, &str)]) -> Store {
         let s = Store::open_in_memory().unwrap();
         let root = s
-            .upsert_root(Path::new("/r"), RootKind::Local, false, true)
+            .upsert_root(&root(), RootKind::Local, false, true)
             .unwrap();
         for (name, body) in docs {
             s.upsert_file(
                 &NewFile {
-                    path: Path::new("/r").join(name),
+                    path: self::root().join(name),
                     root_id: root,
                     name: name.to_string(),
                     ext: Path::new(name)
@@ -322,7 +332,9 @@ mod tests {
         assert_eq!(names(&s, "body type:doc"), ["a.pdf", "b.txt"]);
         assert_eq!(names(&s, "body after:2030"), Vec::<String>::new());
         assert_eq!(names(&s, "ext:txt"), ["b.txt"]);
-        assert_eq!(names(&s, "in:/r"), ["a.pdf", "b.txt"]);
-        assert_eq!(names(&s, "in:/other"), Vec::<String>::new());
+        let inside = format!("in:\"{}\"", root().display());
+        assert_eq!(names(&s, &inside), ["a.pdf", "b.txt"]);
+        let other = format!("in:\"{}\"", root().with_file_name("other").display());
+        assert_eq!(names(&s, &other), Vec::<String>::new());
     }
 }
