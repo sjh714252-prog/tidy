@@ -46,7 +46,7 @@ pub fn show_confirm(app: &AppHandle) {
                 // Bottom-right corner, above the taskbar.
                 let size = m.size();
                 let scale = m.scale_factor();
-                let (ww, wh) = (460.0 * scale, 340.0 * scale);
+                let (ww, wh) = (460.0 * scale, 420.0 * scale);
                 let x = m.position().x as f64 + size.width as f64 - ww - 24.0 * scale;
                 let y = m.position().y as f64 + size.height as f64 - wh - 72.0 * scale;
                 let _ = w.set_position(tauri::PhysicalPosition::new(x, y));

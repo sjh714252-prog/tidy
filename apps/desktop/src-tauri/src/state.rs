@@ -20,6 +20,9 @@ pub struct AppState {
     pub paused: AtomicBool,
     pub indexing: AtomicBool,
     pub last_error: Mutex<Option<String>>,
+    /// AI step as reported by the running watch loop: Ok("provider / model")
+    /// or why it is off. `None` = AI not enabled in the config.
+    pub ai_state: Mutex<Option<Result<String, String>>>,
 }
 
 pub struct Inner {
@@ -50,6 +53,7 @@ impl AppState {
             paused: AtomicBool::new(false),
             indexing: AtomicBool::new(false),
             last_error: Mutex::new(None),
+            ai_state: Mutex::new(None),
         };
         state.reload();
         state

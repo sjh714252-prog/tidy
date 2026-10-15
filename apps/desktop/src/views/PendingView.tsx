@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import * as ipc from "../ipc/commands";
 import { usePending } from "../store/pending";
 import { formatSize, formatTime } from "../components/format";
+import { LearnPanel } from "../components/LearnPanel";
 
 /** Queue screen (SPEC §9.4): multi-select, bulk move/skip/ignore. */
 export function PendingView() {
@@ -22,6 +23,8 @@ export function PendingView() {
 
   return (
     <div className="pending">
+      {/* Decisions change the learner's view: refresh it as the queue shrinks. */}
+      <LearnPanel refreshKey={items.length} />
       <div className="toolbar">
         <span>{checked.size ? `${checked.size}건 선택` : `대기 ${items.length}건`}</span>
         <button
@@ -58,7 +61,7 @@ export function PendingView() {
               </th>
               <th>파일</th>
               <th>제안 위치</th>
-              <th>규칙</th>
+              <th>제안</th>
               <th>들어온 시각</th>
               <th />
             </tr>
@@ -78,7 +81,17 @@ export function PendingView() {
                 <td className="path" title={p.suggestedDest ?? ""}>
                   {p.suggestedDest ?? "—"}
                 </td>
-                <td className="nowrap">{p.rule}</td>
+                <td className="nowrap" title={p.reason ?? ""}>
+                  {p.source === "ai" ? (
+                    <>
+                      <span className="tag ai">AI {p.confidence != null ? `${Math.round(p.confidence * 100)}%` : ""}</span>
+                      {p.reason && <div className="muted small reason">{p.reason}</div>}
+                    </>
+                  ) : (
+                    <>규칙: {p.rule}</>
+                  )}
+                  {p.suggestedName && <div className="muted small">새 이름: {p.suggestedName}</div>}
+                </td>
                 <td className="nowrap muted">{formatTime(p.createdAt)}</td>
                 <td className="nowrap">
                   <button

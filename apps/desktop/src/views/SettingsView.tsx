@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import * as ipc from "../ipc/commands";
 import { useSettings } from "../store/settings";
 import { useStatus } from "../store/status";
+import { AiSettingsSection } from "../components/AiSettingsSection";
 
 /** Settings (SPEC §9.7, M3 subset): watch folders, rules (raw TOML), DB path, hotkey. */
 export function SettingsView() {
@@ -96,6 +97,8 @@ export function SettingsView() {
             <p className="error small">✗ {rulesCheck.error}</p>
           ))}
       </section>
+
+      <AiSettingsSection />
 
       <section>
         <h2>데이터베이스</h2>

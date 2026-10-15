@@ -41,7 +41,7 @@
         "title": "Tidy 확인",
         "url": "index.html#/confirm",
         "width": 460,
-        "height": 340,
+        "height": 420,
         "visible": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
