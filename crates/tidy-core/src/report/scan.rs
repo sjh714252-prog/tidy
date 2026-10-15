@@ -59,6 +59,9 @@ pub struct DirNode {
     pub file_count: u64,
     /// Total directory count in this subtree (excluding self).
     pub dir_count: u64,
+    /// True when the scan stopped here because of `max_depth`; the
+    /// directory's contents are unknown, not empty.
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -128,7 +131,8 @@ pub fn scan(root: &Path, opts: &ScanOptions) -> Result<ScanResult, ScanError> {
 
         let ft = entry.file_type();
         if ft.is_dir() {
-            insert_dir(&mut tree, &comps);
+            let truncated = opts.max_depth.is_some_and(|d| comps.len() > d);
+            insert_dir(&mut tree, &comps, truncated);
         } else if ft.is_file() {
             let md = match entry.metadata() {
                 Ok(m) => m,
@@ -155,7 +159,7 @@ pub fn scan(root: &Path, opts: &ScanOptions) -> Result<ScanResult, ScanError> {
     Ok(ScanResult { root, tree, errors })
 }
 
-fn insert_dir(tree: &mut DirNode, comps: &[String]) {
+fn insert_dir(tree: &mut DirNode, comps: &[String], truncated: bool) {
     let mut cur = tree;
     for c in comps {
         cur = cur.dirs.entry(c.clone()).or_insert_with(|| DirNode {
@@ -163,6 +167,7 @@ fn insert_dir(tree: &mut DirNode, comps: &[String]) {
             ..Default::default()
         });
     }
+    cur.truncated = truncated;
 }
 
 fn insert_file(tree: &mut DirNode, dir_comps: &[String], file: FileNode) {
@@ -235,6 +240,8 @@ mod tests {
         .unwrap();
         assert!(res.tree.dirs["a"].dirs.contains_key("b"));
         assert!(res.tree.dirs["a"].dirs["b"].dirs.is_empty());
+        assert!(res.tree.dirs["a"].dirs["b"].truncated);
+        assert!(!res.tree.dirs["a"].truncated);
     }
 
     #[test]

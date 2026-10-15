@@ -35,9 +35,14 @@ enum Cmd {
 struct ScanArgs {
     /// Directory to scan (default: current directory).
     path: Option<PathBuf>,
-    /// Maximum depth to print (scan still computes full totals).
+    /// Maximum depth to print (scan still computes full totals unless
+    /// --scan-depth is given).
     #[arg(short, long)]
     depth: Option<usize>,
+    /// Maximum depth to descend while scanning. Use on network drives or
+    /// huge trees; totals then cover only the scanned portion.
+    #[arg(long)]
+    scan_depth: Option<usize>,
     /// Output format.
     #[arg(short, long, value_enum, default_value_t = Format::Text)]
     format: Format,
@@ -98,7 +103,7 @@ fn cmd_scan(args: ScanArgs) -> Result<()> {
     let res = scan(
         &path,
         &ScanOptions {
-            max_depth: None,
+            max_depth: args.scan_depth,
             skip_hidden: !args.hidden,
             follow_links: false,
         },

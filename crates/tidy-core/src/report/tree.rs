@@ -87,7 +87,12 @@ fn render_children(
         } else {
             String::new()
         };
-        let _ = writeln!(out, "{prefix}{branch}{}/{size}", child.name);
+        let mark = if child.truncated {
+            " (not scanned)"
+        } else {
+            ""
+        };
+        let _ = writeln!(out, "{prefix}{branch}{}/{size}{mark}", child.name);
         render_children(child, &format!("{prefix}{next}"), depth + 1, opts, out);
     }
 

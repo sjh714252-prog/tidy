@@ -70,7 +70,7 @@ impl Stats {
                     bytes: node.total_size,
                     files: node.file_count,
                 });
-                if node.file_count == 0 && node.dirs.is_empty() {
+                if node.file_count == 0 && node.dirs.is_empty() && !node.truncated {
                     empty.push(path.to_string());
                 }
             }
