@@ -1,25 +1,23 @@
 //! `tidy` CLI. Thin adapter over `tidy-core` (SPEC §4: the core knows
 //! nothing about its callers).
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use humansize::{format_size, BINARY};
 use tidy_core::classify::{FileFacts, RuleSet};
-use tidy_core::engine::{new_batch_id, Action, Engine};
+use tidy_core::engine::{new_batch_id, reindex_undo, Action};
 use tidy_core::index::{FileOutcome, IndexOptions, IndexReport, Indexer};
-use tidy_core::mover::{Mover, UndoReport};
+use tidy_core::mover::{ExpectedMoves, Mover, UndoReport};
+use tidy_core::pending::{resolve, Decision, Resolution};
 use tidy_core::report::{render_tree, scan, ScanOptions, Stats, TreeOptions};
 use tidy_core::search::{search, MatchedIn, Query, SearchOptions};
+use tidy_core::service::{run_watch, WatchEvent, WatchRunOptions};
 use tidy_core::store::Store;
-use tidy_core::watcher::{existing_files, IgnoreFilter, WatchOptions, Watcher};
 use tidy_core::Config;
-
-/// How often a locked/busy file is retried before giving up.
-const MAX_RETRIES: u32 = 5;
 
 #[derive(Parser)]
 #[command(name = "tidy", version, about = "Desktop & folder organizer")]
@@ -46,8 +44,9 @@ enum Cmd {
     Undo(UndoArgs),
     /// Show recent moves from move_log.
     Log(LogArgs),
-    /// List files waiting for confirmation (rules with confirm = true).
-    Pending,
+    /// List files waiting for confirmation (rules with confirm = true), or
+    /// resolve one with --move / --skip / --ignore.
+    Pending(PendingArgs),
     /// Show which rule would apply to the given files (moves nothing).
     Classify(ClassifyArgs),
     /// Index folders or single files (metadata + body text) for `tidy search`.
@@ -99,6 +98,22 @@ struct SearchArgs {
 }
 
 #[derive(Args)]
+struct PendingArgs {
+    /// Move entry ID to its suggested folder (or --to).
+    #[arg(long, value_name = "ID", conflicts_with_all = ["skip", "ignore"])]
+    r#move: Option<i64>,
+    /// Destination folder for --move instead of the suggestion.
+    #[arg(long, requires = "move", value_name = "DIR")]
+    to: Option<PathBuf>,
+    /// Drop entry ID from the queue and leave the file (this time only).
+    #[arg(long, value_name = "ID", conflicts_with = "ignore")]
+    skip: Option<i64>,
+    /// Leave the file and never organise this path again.
+    #[arg(long, value_name = "ID")]
+    ignore: Option<i64>,
+}
+
+#[derive(Args)]
 struct WatchArgs {
     /// Rules file (default: classify.rules from the config).
     #[arg(long)]
@@ -109,6 +124,9 @@ struct WatchArgs {
     /// Print what would happen without moving anything.
     #[arg(long)]
     dry_run: bool,
+    /// Do not update the search index for handled/moved files.
+    #[arg(long)]
+    no_index: bool,
 }
 
 #[derive(Args)]
@@ -190,7 +208,7 @@ fn main() -> Result<()> {
         Cmd::Watch(args) => cmd_watch(cli.config, args),
         Cmd::Undo(args) => cmd_undo(cli.config, args),
         Cmd::Log(args) => cmd_log(cli.config, args),
-        Cmd::Pending => cmd_pending(cli.config),
+        Cmd::Pending(args) => cmd_pending(cli.config, args),
         Cmd::Classify(args) => cmd_classify(cli.config, args),
         Cmd::Index(args) => cmd_index(cli.config, args),
         Cmd::Search(args) => cmd_search(cli.config, args),
@@ -359,69 +377,32 @@ fn open_mover(cfg: &Config) -> Result<Mover> {
 
 fn cmd_watch(config: Option<PathBuf>, args: WatchArgs) -> Result<()> {
     let cfg = load_config(config)?;
-    if cfg.watches.is_empty() {
-        bail!("no [[watch]] folders configured");
-    }
-    let rules = load_rules(&cfg, args.rules)?;
-    let mover = open_mover(&cfg)?;
-    let pruned = mover
-        .store()
-        .prune_move_log(cfg.mover.undo_retention_days)?;
-    if pruned > 0 {
-        tracing::info!(pruned, "old move_log rows pruned");
-    }
+    let rules_path = args.rules.clone().unwrap_or(cfg.classify.rules.clone());
+    eprintln!("# rules: {}", rules_path.display());
     eprintln!("# db: {}", cfg.store.db_path().display());
-    let expected = mover.expected();
-    let filter = IgnoreFilter::new(&cfg.classify.ignore_globs)?;
-    let engine = Engine::new(rules, mover, filter.clone()).dry_run(args.dry_run);
-
-    let (watcher, rx) = Watcher::start(
-        &cfg.watches,
-        WatchOptions::from_config(&cfg.classify),
-        expected,
-    )?;
-
-    if args.process_existing {
-        let batch = new_batch_id();
-        for root in &cfg.watches {
-            for path in existing_files(root, &filter) {
-                report_action(engine.handle(&path, &batch), &path);
+    let opts = WatchRunOptions {
+        rules: args.rules,
+        process_existing: args.process_existing,
+        dry_run: args.dry_run,
+        index: !args.no_index,
+    };
+    let stop = AtomicBool::new(false); // Ctrl+C ends the process
+    run_watch(&cfg, &opts, ExpectedMoves::new(), &stop, |ev| match ev {
+        WatchEvent::Started(roots) => {
+            for r in roots {
+                eprintln!("# watching: {}", r.display());
             }
+            eprintln!(
+                "# ready{} — Ctrl+C to stop",
+                if args.dry_run { " (dry run)" } else { "" }
+            );
         }
-    }
-
-    for r in watcher.roots() {
-        eprintln!("# watching: {}", r.display());
-    }
-    eprintln!(
-        "# ready{} — Ctrl+C to stop",
-        if args.dry_run { " (dry run)" } else { "" }
-    );
-
-    let mut retries: HashMap<PathBuf, u32> = HashMap::new();
-    for ev in rx {
-        match engine.handle(&ev.path, &new_batch_id()) {
-            Err(e) if e.is_transient() => {
-                let n = retries.entry(ev.path.clone()).or_default();
-                *n += 1;
-                if *n <= MAX_RETRIES {
-                    tracing::info!(path = %ev.path.display(), attempt = *n, "busy, retrying: {e}");
-                    watcher.requeue(ev.path);
-                } else {
-                    retries.remove(&ev.path);
-                    report_action(Err(e), &ev.path);
-                }
-            }
-            res => {
-                retries.remove(&ev.path);
-                report_action(res, &ev.path);
-            }
-        }
-    }
+        WatchEvent::Handled(path, res) => report_action(res, path),
+    })?;
     Ok(())
 }
 
-fn report_action(res: Result<Action, tidy_core::engine::EngineError>, path: &Path) {
+fn report_action(res: &Result<Action, tidy_core::engine::EngineError>, path: &Path) {
     match res {
         Ok(Action::Moved {
             src,
@@ -434,7 +415,7 @@ fn report_action(res: Result<Action, tidy_core::engine::EngineError>, path: &Pat
             src.display(),
             dst.display(),
             rule,
-            short(&batch_id)
+            short(batch_id)
         ),
         Ok(Action::Pending {
             path,
@@ -453,7 +434,7 @@ fn report_action(res: Result<Action, tidy_core::engine::EngineError>, path: &Pat
             confirm,
         }) => println!(
             "would {}  {} -> {}  [{}]",
-            if confirm { "ask " } else { "move" },
+            if *confirm { "ask " } else { "move" },
             path.display(),
             dest_dir.display(),
             rule
@@ -518,6 +499,7 @@ fn cmd_undo(config: Option<PathBuf>, args: UndoArgs) -> Result<()> {
             }
         }
     };
+    reindex_undo(mover.store(), &report, &IndexOptions::from_config(&cfg));
     print_undo(&report)
 }
 
@@ -573,8 +555,51 @@ fn cmd_log(config: Option<PathBuf>, args: LogArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_pending(config: Option<PathBuf>) -> Result<()> {
+fn cmd_pending(config: Option<PathBuf>, args: PendingArgs) -> Result<()> {
     let cfg = load_config(config)?;
+    let decision = if let Some(id) = args.r#move {
+        Some((
+            id,
+            Decision::Move {
+                dest_dir: args.to.map(|p| tidy_core::config::expand_home(&p)),
+            },
+        ))
+    } else if let Some(id) = args.skip {
+        Some((id, Decision::Skip))
+    } else {
+        args.ignore.map(|id| (id, Decision::Ignore))
+    };
+    if let Some((id, decision)) = decision {
+        let mover = open_mover(&cfg)?;
+        let batch = new_batch_id();
+        let r = resolve(
+            &mover,
+            id,
+            &decision,
+            &batch,
+            Some(&IndexOptions::from_config(&cfg)),
+        )?;
+        match r {
+            Resolution::Moved { src, dst, .. } => println!(
+                "moved     {} -> {}  batch {}",
+                src.display(),
+                dst.display(),
+                short(&batch)
+            ),
+            Resolution::Duplicate { src, existing } => println!(
+                "duplicate {} (identical to {}; left in place)",
+                src.display(),
+                existing.display()
+            ),
+            Resolution::AlreadyInPlace { path } => println!("in place  {}", path.display()),
+            Resolution::Skipped { path } => println!("skipped   {}", path.display()),
+            Resolution::Ignored { path } => println!("ignored   {} (permanently)", path.display()),
+            Resolution::Gone { path } => {
+                println!("gone      {} (dropped from queue)", path.display())
+            }
+        }
+        return Ok(());
+    }
     let store = Store::open(&cfg.store.db_path())?;
     let items = store.list_pending()?;
     if items.is_empty() {
@@ -582,7 +607,8 @@ fn cmd_pending(config: Option<PathBuf>) -> Result<()> {
     }
     for p in items {
         println!(
-            "{}  {} -> {}  [{}]{}",
+            "#{:<4} {}  {} -> {}  [{}]{}",
+            p.id,
             fmt_time(p.created_at),
             p.path.display(),
             p.suggested_dest
