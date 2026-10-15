@@ -25,6 +25,12 @@ blake3.workspace = true
 uuid.workspace = true
 trash.workspace = true
 dunce.workspace = true
+# M2 extractors (SPEC §5.5): pure-Rust, no external CLIs.
+zip = { version = "8", default-features = false, features = ["deflate"] }
+quick-xml = "0.41"
+calamine = { version = "0.36", features = ["dates"] }
+pdf-extract = "0.12"
+encoding_rs = "0.8"
 
 [dev-dependencies]
 tempfile.workspace = true

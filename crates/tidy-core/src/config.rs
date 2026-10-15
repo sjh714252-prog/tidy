@@ -164,9 +164,12 @@ impl Default for Mover {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Index {
+    /// Files larger than this get metadata only (no hash, no text).
     pub max_content_size_mb: u64,
     pub max_hash_size_mb_network: u64,
     pub cpu_limit_percent: u8,
+    /// Extracted text is truncated to this many characters before storing.
+    pub max_text_chars: usize,
 }
 
 impl Default for Index {
@@ -175,6 +178,7 @@ impl Default for Index {
             max_content_size_mb: 200,
             max_hash_size_mb_network: 20,
             cpu_limit_percent: 30,
+            max_text_chars: 1_000_000,
         }
     }
 }

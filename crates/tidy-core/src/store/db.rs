@@ -6,10 +6,25 @@ use thiserror::Error;
 
 use super::models::{DecidedBy, MoveLogEntry, NewMove, PendingEntry};
 
+/// Hint appended to SQLite disk I/O errors. SQLite needs real file locks,
+/// which SMB/NFS shares and some mounted folders do not provide, so a
+/// `store.path` on a network share fails with `disk I/O error` (PR #1).
+pub const NETWORK_PATH_HINT: &str = "store.path가 네트워크 경로(NAS/공유 폴더/마운트)가 \
+     아닌지 확인하세요. DB는 반드시 로컬 디스크에 두어야 합니다";
+
 #[derive(Debug, Error)]
 pub enum StoreError {
-    #[error("sqlite error: {0}")]
-    Sqlite(#[from] rusqlite::Error),
+    #[error("sqlite error: {source}{}", io_hint(source))]
+    Sqlite {
+        #[from]
+        source: rusqlite::Error,
+    },
+    #[error("cannot open database {path}: {source} — {NETWORK_PATH_HINT}")]
+    DiskIo {
+        path: PathBuf,
+        #[source]
+        source: rusqlite::Error,
+    },
     #[error("cannot create database directory {path}: {source}")]
     CreateDir {
         path: PathBuf,
@@ -18,6 +33,23 @@ pub enum StoreError {
     },
     #[error("path is not valid UTF-8 and cannot be logged: {0}")]
     NonUtf8Path(PathBuf),
+    #[error("not an indexed root: {0}")]
+    UnknownRoot(PathBuf),
+}
+
+fn is_disk_io(e: &rusqlite::Error) -> bool {
+    matches!(
+        e,
+        rusqlite::Error::SqliteFailure(f, _) if f.code == rusqlite::ErrorCode::SystemIoFailure
+    )
+}
+
+fn io_hint(e: &rusqlite::Error) -> String {
+    if is_disk_io(e) {
+        format!(" — {NETWORK_PATH_HINT}")
+    } else {
+        String::new()
+    }
 }
 
 /// Ordered migrations. Index + 1 = schema version after applying it.
@@ -56,10 +88,83 @@ CREATE TABLE ignored (
   added_at INTEGER NOT NULL
 );
 "#,
+    // v2 (M2): index roots, indexed files, full-text search.
+    //
+    // `files.content` holds the extracted text and is the *external content*
+    // of both FTS tables (SPEC §6): FTS5 then only stores the index, and
+    // `snippet()`/`highlight()` read the text back from `files`. Two
+    // tokenizers (docs/fts-tokenizer.md): `trigram` is the primary one
+    // (substring matching inside Korean compounds, no spaces needed) and
+    // the `unicode61` table only serves 1–2 character terms, which trigram
+    // cannot match at all.
+    r#"
+CREATE TABLE roots (
+  id INTEGER PRIMARY KEY,
+  path TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL,
+  watch INTEGER NOT NULL,
+  index_content INTEGER NOT NULL,
+  poll_interval_s INTEGER
+);
+
+CREATE TABLE files (
+  id INTEGER PRIMARY KEY,
+  path TEXT NOT NULL UNIQUE,
+  root_id INTEGER NOT NULL REFERENCES roots(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  ext TEXT,
+  mime TEXT,
+  size INTEGER NOT NULL,
+  mtime INTEGER NOT NULL,
+  ctime INTEGER,
+  hash TEXT,
+  text_status TEXT NOT NULL DEFAULT 'none',
+  excerpt TEXT,
+  content TEXT,
+  indexed_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL
+);
+CREATE INDEX idx_files_hash ON files(hash);
+CREATE INDEX idx_files_ext ON files(ext);
+CREATE INDEX idx_files_mtime ON files(mtime);
+CREATE INDEX idx_files_root_seen ON files(root_id, last_seen_at);
+
+CREATE VIRTUAL TABLE files_fts USING fts5(
+  name, content,
+  content='files', content_rowid='id',
+  tokenize='trigram'
+);
+CREATE VIRTUAL TABLE files_fts_word USING fts5(
+  name, content,
+  content='files', content_rowid='id',
+  tokenize='unicode61 remove_diacritics 2'
+);
+
+CREATE TRIGGER files_ai AFTER INSERT ON files BEGIN
+  INSERT INTO files_fts(rowid, name, content) VALUES (new.id, new.name, new.content);
+  INSERT INTO files_fts_word(rowid, name, content) VALUES (new.id, new.name, new.content);
+END;
+CREATE TRIGGER files_ad AFTER DELETE ON files BEGIN
+  INSERT INTO files_fts(files_fts, rowid, name, content)
+    VALUES ('delete', old.id, old.name, old.content);
+  INSERT INTO files_fts_word(files_fts_word, rowid, name, content)
+    VALUES ('delete', old.id, old.name, old.content);
+END;
+CREATE TRIGGER files_au AFTER UPDATE OF name, content ON files BEGIN
+  INSERT INTO files_fts(files_fts, rowid, name, content)
+    VALUES ('delete', old.id, old.name, old.content);
+  INSERT INTO files_fts_word(files_fts_word, rowid, name, content)
+    VALUES ('delete', old.id, old.name, old.content);
+  INSERT INTO files_fts(rowid, name, content) VALUES (new.id, new.name, new.content);
+  INSERT INTO files_fts_word(rowid, name, content) VALUES (new.id, new.name, new.content);
+END;
+"#,
 ];
 
 pub struct Store {
     conn: Connection,
+    /// On-disk location (`None` for in-memory stores).
+    path: Option<PathBuf>,
 }
 
 impl Store {
@@ -71,20 +176,35 @@ impl Store {
                 source,
             })?;
         }
-        let conn = Connection::open(path)?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
-        Self::init(conn)
+        let disk_io = |e: rusqlite::Error| {
+            if is_disk_io(&e) {
+                StoreError::DiskIo {
+                    path: path.to_path_buf(),
+                    source: e,
+                }
+            } else {
+                StoreError::Sqlite { source: e }
+            }
+        };
+        let conn = Connection::open(path).map_err(disk_io)?;
+        // WAL is the first thing that fails on a network share.
+        conn.pragma_update(None, "journal_mode", "WAL")
+            .map_err(disk_io)?;
+        Self::init(conn, Some(path.to_path_buf())).map_err(|e| match e {
+            StoreError::Sqlite { source: e } => disk_io(e),
+            other => other,
+        })
     }
 
     pub fn open_in_memory() -> Result<Self, StoreError> {
-        Self::init(Connection::open_in_memory()?)
+        Self::init(Connection::open_in_memory()?, None)
     }
 
-    fn init(conn: Connection) -> Result<Self, StoreError> {
+    fn init(conn: Connection, path: Option<PathBuf>) -> Result<Self, StoreError> {
         // `watch` and `undo` may hold the DB from different processes.
         conn.busy_timeout(Duration::from_secs(5))?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
-        let mut store = Self { conn };
+        let mut store = Self { conn, path };
         store.migrate()?;
         Ok(store)
     }
@@ -109,6 +229,34 @@ impl Store {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    pub(crate) fn conn(&self) -> &Connection {
+        &self.conn
+    }
+
+    /// Database file (so the indexer never indexes its own DB/WAL files).
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    /// True for the database file itself and its `-wal` / `-shm` / `-journal`
+    /// side files.
+    pub fn is_own_file(&self, p: &Path) -> bool {
+        let Some(db) = &self.path else {
+            return false;
+        };
+        let (Some(dir), Some(name)) = (db.parent(), db.file_name()) else {
+            return false;
+        };
+        p.parent() == Some(dir)
+            && p.file_name().is_some_and(|n| {
+                let n = n.to_string_lossy();
+                let name = name.to_string_lossy();
+                n == name
+                    || n.strip_prefix(&*name)
+                        .is_some_and(|rest| rest.starts_with('-'))
+            })
     }
 
     pub fn schema_version(&self) -> Result<i64, StoreError> {
@@ -315,12 +463,12 @@ fn move_from_row(r: &Row<'_>) -> rusqlite::Result<MoveLogEntry> {
 
 /// Paths are stored as UTF-8 text. A non-UTF-8 path cannot be logged
 /// losslessly, so it cannot be moved either (no move without undo).
-fn path_str(p: &Path) -> Result<&str, StoreError> {
+pub(crate) fn path_str(p: &Path) -> Result<&str, StoreError> {
     p.to_str()
         .ok_or_else(|| StoreError::NonUtf8Path(p.to_path_buf()))
 }
 
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
@@ -350,6 +498,24 @@ mod tests {
         drop(s);
         let s = Store::open(&db).unwrap();
         assert_eq!(s.schema_version().unwrap(), MIGRATIONS.len() as i64);
+    }
+
+    #[test]
+    fn disk_io_errors_carry_network_hint() {
+        let e = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::SystemIoFailure,
+                extended_code: 2570,
+            },
+            Some("disk I/O error".into()),
+        );
+        assert!(StoreError::Sqlite { source: e }
+            .to_string()
+            .contains("네트워크 경로"));
+        let other = rusqlite::Error::QueryReturnedNoRows;
+        assert!(!StoreError::Sqlite { source: other }
+            .to_string()
+            .contains("네트워크"));
     }
 
     #[test]
