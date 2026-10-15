@@ -38,6 +38,8 @@ export const resolvePending = (id: number, decision: Decision) =>
 export const undoLast = () => invoke<UndoResult | null>("undo_last");
 export const pickFolder = (start?: string | null) =>
   invoke<string | null>("pick_folder", { start: start ?? null });
+/** UNC path, remote drive or SMB/NFS mount → default kind "network". */
+export const isNetworkPath = (path: string) => invoke<boolean>("is_network_path", { path });
 
 export const getSettings = () => invoke<Settings>("get_settings");
 export const checkRules = (text: string) => invoke<RulesCheck>("check_rules", { text });

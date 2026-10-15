@@ -3,12 +3,15 @@
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
+use tidy_core::config::RootKind;
 use tidy_core::engine::Action;
-use tidy_core::index::{IndexOptions, Indexer};
+use tidy_core::index::{jobs_from_config, Indexer};
+use tidy_core::mover::{ProgressFn, TransferProgress};
 use tidy_core::service::{run_watch, WatchEvent, WatchRunOptions};
 use tidy_core::store::Store;
 
@@ -18,6 +21,25 @@ use crate::{tray, windows};
 pub const EV_ACTIVITY: &str = "tidy://activity";
 pub const EV_PENDING: &str = "tidy://pending";
 pub const EV_STATUS: &str = "tidy://status";
+/// Progress of a long copy-verify move (NAS), payload `TransferProgress`.
+pub const EV_PROGRESS: &str = "tidy://progress";
+
+static APP: OnceLock<AppHandle> = OnceLock::new();
+
+/// Remember the app handle for callbacks that run on core threads.
+pub fn init(app: &AppHandle) {
+    let _ = APP.set(app.clone());
+}
+
+/// Progress callback for every mover in the app (watch loop and UI
+/// actions): forwards to the windows as `EV_PROGRESS`.
+pub fn progress_fn() -> ProgressFn {
+    Arc::new(|p: &TransferProgress| {
+        if let Some(app) = APP.get() {
+            let _ = app.emit(EV_PROGRESS, p);
+        }
+    })
+}
 
 /// One line of the activity feed (main window) — what happened to a file.
 #[derive(Debug, Clone, Serialize)]
@@ -110,6 +132,11 @@ fn stop_and_wait(app: &AppHandle) {
 fn start(app: &AppHandle) {
     let state = app.state::<AppState>();
     *state.ai_state.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    state
+        .offline
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
     if state.is_paused() {
         let _ = app.emit(EV_STATUS, ());
         return;
@@ -129,6 +156,7 @@ fn start(app: &AppHandle) {
             let opts = WatchRunOptions {
                 index: true,
                 ai: true,
+                progress: Some(progress_fn()),
                 ..Default::default()
             };
             let res = run_watch(&cfg, &opts, expected, &flag, |ev| on_event(&app2, ev));
@@ -151,6 +179,64 @@ fn start(app: &AppHandle) {
 
 fn on_event(app: &AppHandle, ev: WatchEvent<'_>) {
     match ev {
+        WatchEvent::Warning(w) => emit_activity(app, "warning", Path::new(""), w),
+        WatchEvent::Root(r) => {
+            {
+                let state = app.state::<AppState>();
+                let mut offline = state.offline.lock().unwrap_or_else(|e| e.into_inner());
+                offline.retain(|p| p != &r.path);
+                if !r.online {
+                    offline.push(r.path.clone());
+                }
+            }
+            let secs = tidy_core::watcher::RECONNECT_INTERVAL.as_secs();
+            if r.online {
+                emit_activity(
+                    app,
+                    "info",
+                    &r.path,
+                    format!(
+                        "다시 연결됨 — 끊긴 동안 바뀐 파일을 처리합니다{}",
+                        if r.events { "" } else { " (폴링만 사용)" }
+                    ),
+                );
+            } else {
+                emit_activity(
+                    app,
+                    "warning",
+                    &r.path,
+                    format!("연결 끊김 — 이 폴더만 일시정지하고 {secs}초마다 다시 확인합니다"),
+                );
+            }
+            let _ = app.emit(EV_STATUS, ());
+        }
+        WatchEvent::Recovered(r) => {
+            for p in &r.completed {
+                emit_activity(app, "info", p, "중단됐던 이동을 마저 끝냈습니다".into());
+            }
+            for p in &r.rolled_back {
+                emit_activity(
+                    app,
+                    "info",
+                    p,
+                    "중단됐던 이동을 취소했습니다 (파일은 원래 자리)".into(),
+                );
+            }
+            for a in &r.attention {
+                emit_activity(app, "warning", Path::new(""), format!("확인 필요: {a}"));
+            }
+            if r.unresolved > 0 {
+                emit_activity(
+                    app,
+                    "warning",
+                    Path::new(""),
+                    format!(
+                        "중단된 이동 {}건은 NAS가 다시 연결되면 정리합니다",
+                        r.unresolved
+                    ),
+                );
+            }
+        }
         WatchEvent::Started(roots) => {
             app.state::<AppState>().clear_error();
             for r in roots {
@@ -244,32 +330,11 @@ pub fn spawn_index(app: &AppHandle) {
             let result = (|| -> Result<(u64, u64), String> {
                 let store = Store::open(&cfg.store.db_path()).map_err(|e| e.to_string())?;
                 let indexer = Indexer::new(&store);
-                let base = IndexOptions {
-                    batch_size: 50,
-                    ..IndexOptions::from_config(&cfg)
-                };
-                let mut jobs = Vec::new();
-                for w in &cfg.watches {
-                    jobs.push((
-                        w.path.clone(),
-                        IndexOptions {
-                            recursive: w.recursive,
-                            kind: w.kind,
-                            watch: true,
-                            index_content: w.index_content,
-                            ..base.clone()
-                        },
-                    ));
-                }
-                for r in &cfg.index_only {
-                    jobs.push((
-                        r.path.clone(),
-                        IndexOptions {
-                            recursive: r.recursive,
-                            ..base.clone()
-                        },
-                    ));
-                }
+                // Background run: NAS folders follow their content window.
+                let jobs = jobs_from_config(&cfg, false).into_iter().map(|(p, mut o)| {
+                    o.batch_size = 50;
+                    (p, o)
+                });
                 let (mut files, mut changed) = (0, 0);
                 for (path, opts) in jobs {
                     if !path.is_dir() {
@@ -300,4 +365,24 @@ pub fn spawn_index(app: &AppHandle) {
             let _ = app.emit(EV_STATUS, ());
         })
         .expect("spawn index thread");
+}
+
+/// NAS folders with a `content_index_window` get their body text indexed
+/// inside that window: re-run the (incremental) background index hourly
+/// while such a folder is configured.
+pub fn spawn_content_window_timer(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::Builder::new()
+        .name("tidy-index-timer".into())
+        .spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(3600));
+            let cfg = app.state::<AppState>().config();
+            let windowed = cfg.watches.iter().any(|w| {
+                w.kind == RootKind::Network && w.index_content && w.content_index_window.is_some()
+            });
+            if windowed {
+                spawn_index(&app);
+            }
+        })
+        .expect("spawn index timer thread");
 }

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { Fragment, useEffect } from "react";
 import * as ipc from "../ipc/commands";
 import { useSettings } from "../store/settings";
 import { useStatus } from "../store/status";
@@ -19,7 +19,7 @@ export function SettingsView() {
 
   const addFolder = async () => {
     const dir = await ipc.pickFolder();
-    if (dir) s.addWatch(dir);
+    if (dir) await s.addWatch(dir);
   };
   const save = async () => {
     await s.save();
@@ -46,32 +46,85 @@ export function SettingsView() {
           </thead>
           <tbody>
             {draft.watches.map((w, i) => (
-              <tr key={i}>
-                <td>
-                  <input className="wide" value={w.path} onChange={(e) => s.setWatch(i, { path: e.target.value })} />
-                </td>
-                <td>
-                  <input type="checkbox" checked={w.recursive} onChange={(e) => s.setWatch(i, { recursive: e.target.checked })} />
-                </td>
-                <td>
-                  <input
-                    type="checkbox"
-                    checked={w.indexContent}
-                    onChange={(e) => s.setWatch(i, { indexContent: e.target.checked })}
-                  />
-                </td>
-                <td>
-                  <select value={w.kind} onChange={(e) => s.setWatch(i, { kind: e.target.value as "local" | "network" })}>
-                    <option value="local">로컬</option>
-                    <option value="network">네트워크(NAS)</option>
-                  </select>
-                </td>
-                <td>
-                  <button className="link" onClick={() => s.removeWatch(i)}>
-                    삭제
-                  </button>
-                </td>
-              </tr>
+              <Fragment key={i}>
+                <tr>
+                  <td>
+                    <input className="wide" value={w.path} onChange={(e) => s.setWatch(i, { path: e.target.value })} />
+                  </td>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={w.recursive}
+                      onChange={(e) => s.setWatch(i, { recursive: e.target.checked })}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={w.indexContent}
+                      onChange={(e) => s.setWatch(i, { indexContent: e.target.checked })}
+                    />
+                  </td>
+                  <td>
+                    <select
+                      value={w.kind}
+                      onChange={(e) => {
+                        const kind = e.target.value as "local" | "network";
+                        // NAS default: metadata only (SPEC §5.9).
+                        s.setWatch(i, { kind, indexContent: kind === "local" });
+                      }}
+                    >
+                      <option value="local">로컬</option>
+                      <option value="network">네트워크(NAS)</option>
+                    </select>
+                  </td>
+                  <td>
+                    <button className="link" onClick={() => s.removeWatch(i)}>
+                      삭제
+                    </button>
+                  </td>
+                </tr>
+                {w.kind === "network" && (
+                  <tr className="subrow">
+                    <td colSpan={5}>
+                      <label>
+                        폴링 간격(초){" "}
+                        <input
+                          type="number"
+                          min={5}
+                          className="narrow"
+                          placeholder="120"
+                          value={w.pollIntervalS ?? ""}
+                          onChange={(e) =>
+                            s.setWatch(i, { pollIntervalS: e.target.value ? Math.max(5, Number(e.target.value)) : null })
+                          }
+                        />
+                      </label>
+                      <label title="변경 알림을 보내지 않는 NAS(SMB/NFS)에서 켜세요">
+                        <input
+                          type="checkbox"
+                          checked={w.pollOnly}
+                          onChange={(e) => s.setWatch(i, { pollOnly: e.target.checked })}
+                        />{" "}
+                        폴링만 사용
+                      </label>
+                      <label title="본문 인덱싱을 켰을 때, 백그라운드 인덱싱이 본문을 읽는 시간대. 비우면 항상">
+                        본문 인덱싱 시간대{" "}
+                        <input
+                          className="narrow"
+                          placeholder="02:00-05:00"
+                          disabled={!w.indexContent}
+                          value={w.contentIndexWindow ?? ""}
+                          onChange={(e) => s.setWatch(i, { contentIndexWindow: e.target.value || null })}
+                        />
+                      </label>
+                      <span className="muted small">
+                        연결이 끊기면 이 폴더만 일시정지하고 60초마다 다시 확인합니다. 이동은 복사→검증 후 원본 정리.
+                      </span>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>

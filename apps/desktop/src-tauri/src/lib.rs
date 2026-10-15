@@ -43,6 +43,7 @@ pub fn run() {
         )
         .setup(move |app| {
             let handle = app.handle().clone();
+            watch::init(&handle);
             let first_run = !config_path.exists();
             app.manage(AppState::new(config_path.clone()));
             tray::create(&handle)?;
@@ -50,6 +51,7 @@ pub fn run() {
             windows::register_hotkey(&handle, &hotkey);
             watch::restart(&handle);
             watch::spawn_index(&handle);
+            watch::spawn_content_window_timer(&handle);
             watch::pending_changed(&handle, true);
             if first_run {
                 // Nothing is watched until folders are configured.
@@ -81,6 +83,7 @@ pub fn run() {
             commands::resolve_pending,
             commands::undo_last,
             commands::pick_folder,
+            commands::is_network_path,
             commands::get_settings,
             commands::check_rules,
             commands::save_settings,
