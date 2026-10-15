@@ -3,6 +3,7 @@
 //! `tidy-core`; this crate only wires it to windows, tray and IPC.
 
 mod commands;
+mod report_cmds;
 mod state;
 mod tray;
 mod watch;
@@ -90,6 +91,17 @@ pub fn run() {
             commands::list_learn,
             commands::accept_learn,
             commands::dismiss_learn,
+            report_cmds::report_roots,
+            report_cmds::build_report,
+            report_cmds::plan_rules,
+            report_cmds::plan_ai,
+            report_cmds::preview_plan,
+            report_cmds::apply_plan,
+            report_cmds::list_plans,
+            report_cmds::open_plan,
+            report_cmds::list_batches,
+            report_cmds::batch_moves,
+            report_cmds::undo_batch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tidy");

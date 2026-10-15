@@ -2,6 +2,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AiSettings,
+  ApplyResult,
+  BatchSummary,
+  MoveLogEntry,
+  PlanResult,
+  Preview,
+  Report,
+  StoredPlan,
   Decision,
   LearnSuggestion,
   PendingItem,
@@ -46,3 +53,20 @@ export const testAi = () => invoke<string>("test_ai");
 export const listLearn = () => invoke<LearnSuggestion[]>("list_learn");
 export const acceptLearn = (key: string) => invoke<void>("accept_learn", { key });
 export const dismissLearn = (key: string) => invoke<void>("dismiss_learn", { key });
+
+export const reportRoots = () => invoke<string[]>("report_roots");
+export const buildReport = (path: string, duplicates: boolean) =>
+  invoke<Report>("build_report", { path, duplicates });
+export const planRules = (path: string, recursive: boolean, protect: string[]) =>
+  invoke<PlanResult>("plan_rules", { path, recursive, protect });
+export const planAi = (path: string, protect: string[]) => invoke<PlanResult>("plan_ai", { path, protect });
+export const previewPlan = (id: number, ids: number[]) => invoke<Preview>("preview_plan", { id, ids });
+/** Moves files. Only call from an explicit user confirmation. */
+export const applyPlan = (id: number, ids: number[], protect: string[]) =>
+  invoke<ApplyResult>("apply_plan", { id, ids, protect });
+export const listPlans = () => invoke<StoredPlan[]>("list_plans");
+export const openPlan = (id: number) => invoke<PlanResult>("open_plan", { id });
+
+export const listBatches = (limit = 100) => invoke<BatchSummary[]>("list_batches", { limit });
+export const batchMoves = (batchId: string) => invoke<MoveLogEntry[]>("batch_moves", { batchId });
+export const undoBatch = (batchId: string) => invoke<UndoResult>("undo_batch", { batchId });
