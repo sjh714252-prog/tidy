@@ -46,3 +46,17 @@ cargo run -p tidy-cli -- search "회의록" --format json --config config.toml
 - 검색 필터: `ext:` `in:` `after:` `before:` `size:>10mb` `type:image|doc|video|audio|archive|code`, `"구절"`.
 - 한국어 토크나이저 결정(trigram + unicode61 보조): [`docs/fts-tokenizer.md`](docs/fts-tokenizer.md)
 - `[store] path`(DB)는 반드시 로컬 디스크에 두세요. NAS·공유 폴더 위에서는 SQLite가 `disk I/O error`로 실패합니다.
+
+## 데스크톱 앱 (M3)
+
+트레이에 상주하면서 감시·정리를 하고, 글로벌 단축키(기본 `Ctrl+Shift+Space`)로 검색창을 엽니다. 확인 팝업, 대기열, 설정 화면이 있습니다.
+
+```
+cd apps/desktop
+npm ci
+npm run tauri dev        # 개발 실행
+npm run tauri build      # 설치 파일 (Windows: MSI/NSIS)
+```
+
+- 필요한 것: Rust stable, Node LTS, (Windows) Visual Studio Build Tools의 "C++를 사용한 데스크톱 개발"과 WebView2 런타임.
+- 설정 파일: `%APPDATA%\tidy\config.toml`(Windows 기본). `--config <경로>` 인자나 `TIDY_CONFIG` 환경변수로 바꿀 수 있습니다. 설정이 없으면 아무것도 감시하지 않고 설정 탭을 엽니다.

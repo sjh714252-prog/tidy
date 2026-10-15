@@ -10,3 +10,4 @@
 Thumbs.db
 /config.toml
 /rules.toml
+/apps/desktop/src-tauri/gen

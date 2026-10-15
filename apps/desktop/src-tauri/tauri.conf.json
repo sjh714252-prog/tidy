@@ -1,0 +1,67 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Tidy",
+  "version": "0.1.0",
+  "identifier": "land.tidy.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Tidy",
+        "url": "index.html#/main",
+        "width": 960,
+        "height": 680,
+        "minWidth": 720,
+        "minHeight": 480,
+        "visible": false,
+        "center": true
+      },
+      {
+        "label": "search",
+        "title": "Tidy 검색",
+        "url": "index.html#/search",
+        "width": 760,
+        "height": 520,
+        "visible": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": true,
+        "center": true
+      },
+      {
+        "label": "confirm",
+        "title": "Tidy 확인",
+        "url": "index.html#/confirm",
+        "width": 460,
+        "height": 340,
+        "visible": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "focus": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
