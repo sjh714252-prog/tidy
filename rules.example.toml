@@ -1,0 +1,44 @@
+# Tidy 규칙 예시 (SPEC §5.2). 복사해서 rules.toml로 사용하세요.
+#
+# - 위에서부터 순서대로 검사하고, 처음 맞는 규칙 하나만 적용됩니다.
+# - match 조건은 모두 만족해야 합니다(AND). 생략한 조건은 검사하지 않습니다.
+#     ext             = ["png", "jpg"]     확장자(대소문자 무시, 점 없이)
+#     name_regex      = "^스크린샷"         파일 이름(확장자 포함) 정규식
+#     min_size / max_size = 1048576 또는 "10MB", "1.5GB"
+#     older_than_days = 30                 수정한 지 N일 지난 파일
+#     from_dir        = "~/Downloads"      이 폴더 바로 안에 있는 파일만
+#     source_app                           아직 미지원(SPEC §13) — 쓰면 그 규칙은 매치되지 않음
+# - dest 변수: {yyyy} {mm} {dd}(파일 수정 날짜), {ext}, {stem}(확장자 뺀 이름),
+#   {source_dir_name}(원래 있던 폴더 이름). "~"는 홈 폴더.
+#   상대 경로를 쓰면 원래 파일이 있던 폴더 기준입니다.
+# - confirm = true  → 옮기지 않고 확인 대기열에 넣습니다(`tidy pending`으로 확인).
+# - enabled = false → 규칙을 끕니다.
+# - Windows 경로는 슬래시(/) 또는 작은따옴표 문자열로 쓰세요: 'D:\자료 보관\{yyyy}'
+
+[[rule]]
+name = "스크린샷"
+match = { ext = ["png", "jpg", "jpeg"], name_regex = "^(스크린샷|Screenshot|화면 캡처)" }
+dest = "~/Pictures/Screenshots/{yyyy}/{mm}"
+confirm = false
+
+[[rule]]
+name = "설치파일"
+match = { ext = ["exe", "msi", "dmg", "pkg"] }
+dest = "~/Downloads/Installers"
+confirm = true
+
+[[rule]]
+name = "문서"
+match = { ext = ["pdf", "hwp", "hwpx", "doc", "docx", "xls", "xlsx", "ppt", "pptx"] }
+dest = "~/Documents/Tidy/문서/{yyyy}-{mm}"
+
+[[rule]]
+name = "압축 파일"
+match = { ext = ["zip", "7z", "rar", "alz", "egg"] }
+dest = "~/Downloads/압축 파일"
+
+[[rule]]
+name = "Tidy 테스트"
+# 수동 테스트용: "tidy-test"로 시작하는 .txt 파일을 옮깁니다. 필요 없으면 지우세요.
+match = { ext = ["txt"], name_regex = "^tidy-test" }
+dest = "~/Documents/Tidy/테스트 결과/{yyyy}/{mm}"

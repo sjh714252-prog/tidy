@@ -8,3 +8,5 @@
 /apps/desktop/src-tauri/target
 .DS_Store
 Thumbs.db
+/config.toml
+/rules.toml

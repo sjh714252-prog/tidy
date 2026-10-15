@@ -44,14 +44,16 @@
 cargo build --workspace
 cargo test --workspace
 cargo run -p tidy-cli -- scan ~/Desktop
-cargo run -p tidy-cli -- watch --config ./config.toml
+cargo run -p tidy-cli -- watch --config ./config.toml   # --dry-run, --process-existing
+cargo run -p tidy-cli -- undo --last                     # --batch <id>, --id <n>
+cargo run -p tidy-cli -- log / pending / classify <파일>
 cargo run -p tidy-cli -- search "키워드"
 cd apps/desktop && npm run tauri dev
 ```
 
 ## 진행 상태
 - [x] M0 워크스페이스 + `tidy-cli scan` (2026-10-15)
-- [ ] M1 Watcher + Rules + Mover + Undo
+- [x] M1 Watcher + Rules + Mover + Undo (2026-10-15)
 - [ ] M2 Store + Indexer + FTS
 - [ ] M3 Tauri 앱 기본 플로우
 - [ ] M4 AI Layer + 학습 루프
