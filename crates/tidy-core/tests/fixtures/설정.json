@@ -1,0 +1,8 @@
+{
+  "name": "설정",
+  "watch": [
+    "~/Desktop",
+    "~/Downloads"
+  ],
+  "keyword": "분기 보고서"
+}

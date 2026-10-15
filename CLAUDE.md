@@ -54,7 +54,7 @@ cd apps/desktop && npm run tauri dev
 ## 진행 상태
 - [x] M0 워크스페이스 + `tidy-cli scan` (2026-10-15)
 - [x] M1 Watcher + Rules + Mover + Undo (2026-10-15)
-- [ ] M2 Store + Indexer + FTS
+- [x] M2 Store + Indexer + FTS 검색 (2026-10-15) — 토크나이저 결정: docs/fts-tokenizer.md
 - [ ] M3 Tauri 앱 기본 플로우
 - [ ] M4 AI Layer + 학습 루프
 - [ ] M5 Reporter + 재구성 diff
@@ -63,3 +63,4 @@ cd apps/desktop && npm run tauri dev
 
 ## 열린 결정
 SPEC §13 참조. 결정되면 여기와 SPEC 양쪽 갱신.
+- 한국어 FTS 토크나이저 → **결정(M2)**: trigram 주 + unicode61 보조(1~2글자 prefix). `docs/fts-tokenizer.md`.
