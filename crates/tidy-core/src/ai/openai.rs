@@ -126,7 +126,11 @@ impl LlmProvider for OpenAiProvider {
         system: &str,
         user: &str,
         schema: &Value,
+        max_tokens: u32,
     ) -> Result<LlmResponse, AiError> {
+        // Not forwarded: OpenAI-compatible servers disagree on the field
+        // name (max_tokens / max_completion_tokens) and reject unknown ones.
+        let _ = max_tokens;
         let v = match self.send(&self.body(system, user, schema, true)).await {
             // Server without json_schema support: fall back once.
             Err(AiError::Http {
@@ -182,7 +186,7 @@ mod tests {
             0,
         );
         let r = p
-            .complete_json("s", "u", &json!({"type":"object"}))
+            .complete_json("s", "u", &json!({"type":"object"}), 256)
             .await
             .unwrap();
         assert_eq!(r.value["dest"], "/a");

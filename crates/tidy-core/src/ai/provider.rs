@@ -55,6 +55,8 @@ pub struct LlmResponse {
 }
 
 /// A chat model that answers with one JSON object matching `schema`.
+/// `max_tokens` caps the answer (thinking included where the model thinks);
+/// providers without such a knob ignore it.
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
     async fn complete_json(
@@ -62,6 +64,7 @@ pub trait LlmProvider: Send + Sync {
         system: &str,
         user: &str,
         schema: &Value,
+        max_tokens: u32,
     ) -> Result<LlmResponse, AiError>;
     /// "anthropic" | "openai" | "ollama" | "mock".
     fn name(&self) -> &str;

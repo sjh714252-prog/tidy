@@ -262,6 +262,23 @@ confirm = true
 - 통계: 타입별 용량, 폴더별 용량 Top N, 중복 파일 그룹(해시 기준), 90일 이상 미접근 파일, 빈 폴더
 - **AI 재구성 제안**: 현재 트리 요약(깊이 3, 폴더별 파일 수/대표 파일명)을 보내 "제안 트리 + 이동 목록" JSON을 받음 → 사용자에게 **before/after diff** 보여줌 → 승인 시 Mover 배치 실행(배치 Undo 가능)
 - 재구성 제안은 **절대 자동 적용하지 않는다.**
+- **M5 구현 (report/)**
+  - `tidy report [폴더] [--format text|json|html]`(HTML은 stdout으로 내보냄 — 코어는 파일을 쓰지 않는다)와 앱 리포트 탭을 쓴다.
+  - 중복 파일: 같은 크기끼리만 blake3로 비교한다. 1KB 미만과 2GB 초과는 제외한다. 크기가 같으면 인덱스에 저장된 해시를 재사용한다. 보고만 하고 삭제 기능은 없다(필요하면 사용자가 폴더를 열어 직접 휴지통으로 보낸다).
+  - 미접근 파일: 수정 시각과 접근 시각 중 늦은 쪽이 `report.stale_days`(90)보다 오래된 파일이다. Windows는 접근 시각 갱신이 꺼져 있는 경우가 많아 사실상 수정 시각 기준이다.
+  - **재구성 계획은 두 출처로 만든다.**
+    1. **규칙 계획**(`--rules`): AI 없이, 지금 있는 파일에 rules.toml을 적용했을 때의 이동 목록이다(CLAUDE.md 규칙 4). `confirm = true` 규칙도 포함하는데, 계획 적용 자체가 확인이기 때문이다.
+    2. **AI 계획**(`--ai`): §8.2 프롬프트를 쓴다. 트리 요약(깊이 3 폴더별 파일 수·용량·예시 5개, 루트 파일은 최대 300개)을 보내고 `{summary, folders[{path, reason}], moves[{from, to, reason}]}`를 받는다. `max_tokens`는 16000, 시간 상한은 `ai.restructure_timeout_secs`(180s)다.
+  - AI 이동 검증(통과 못 한 항목은 `rejected`에 이유와 함께 보여 주고 절대 적용하지 않음):
+    - 루트 기준 상대 경로만 받는다. 절대 경로, 드라이브, UNC, `..`은 거부한다.
+    - 원본이 실제로 있어야 하고, "건드리지 말 폴더"(`[report] protected`와 요청별 목록)의 안팎을 건드리면 안 된다.
+    - 폴더를 자기 안으로 옮기는 것, 다른 이동과 겹치는 것, 같은 목적지로 가는 중복 이동, 빈 폴더 이동, 상한(`report.max_moves` 500) 초과도 거부한다.
+    - 폴더 이동은 안의 파일 전체를 구조 그대로 옮긴다.
+  - 계획은 `restructure_plans`에 저장한다. 미리보기는 선택한 항목 기준 before/after 트리(깊이 3)이고, 루트 밖으로 나가는 파일과 **비게 되는 폴더**(남겨 둠)를 함께 보여 준다.
+  - 적용(`--apply ID [--only 1,3]` / 앱 "선택한 N개 적용" + 확인 대화상자):
+    - 선택한 항목만 파일 단위로 펼쳐 Mover로 옮긴다. 전부 **한 배치**(`decided_by = restructure`, `rule_name = "재구성 #ID"`)이고 인덱스도 따라간다.
+    - 같은 계획은 다시 적용할 수 없다(그 배치를 되돌리면 된다).
+    - 사이에 사라진 파일과 동일한 내용이 이미 있는 파일은 건너뛰고 보고한다. 비게 된 폴더는 지우지 않는다.
 
 ### 5.8 AI Layer
 ```rust
@@ -424,10 +441,21 @@ CREATE TABLE ai_log (
   called_at INTEGER NOT NULL
 );
 
+-- (M5) 재구성 계획: 제안 → 사용자 승인 → 한 배치로 적용
+CREATE TABLE restructure_plans (
+  id INTEGER PRIMARY KEY,
+  root TEXT NOT NULL,
+  source TEXT NOT NULL,        -- rules|ai
+  created_at INTEGER NOT NULL,
+  plan_json TEXT NOT NULL,     -- 이동 목록·이유·거부 항목
+  applied_batch TEXT,          -- move_log.batch_id
+  applied_at INTEGER
+);
+
 CREATE TABLE schema_version (version INTEGER NOT NULL);
 ```
 
-마이그레이션: `schema_version`에 적용 버전을 기록하고 순서대로 적용. M1(v1)은 `move_log`, `pending`, `ignored`, M2(v2)는 `roots`, `files`, `files_fts`, `files_fts_word`를 만든다. M4(v3)는 `pending.source/suggested_name` 열과 `decisions`, `ai_log`, `learn_dismissed`를 추가한다. 나머지 테이블은 해당 마일스톤에서 추가.
+마이그레이션: `schema_version`에 적용 버전을 기록하고 순서대로 적용. M1(v1)은 `move_log`, `pending`, `ignored`, M2(v2)는 `roots`, `files`, `files_fts`, `files_fts_word`를 만든다. M4(v3)는 `pending.source/suggested_name` 열과 `decisions`, `ai_log`, `learn_dismissed`를 추가한다. M5(v4)는 `restructure_plans`를 추가한다. 나머지 테이블은 해당 마일스톤에서 추가.
 
 **DB 파일 위치**: SQLite는 파일 잠금이 필요하므로 `store.path`는 반드시 로컬 디스크여야 한다. NAS/공유 폴더/네트워크 드라이브에 두면 `disk I/O error`로 실패한다(에러 메시지에 힌트를 붙인다. M6에서 `kind = "network"` 루트 아래의 store.path는 기동 시 경고).
 
@@ -498,6 +526,13 @@ max_retries = 2                # (M4) 429/5xx/네트워크 오류 재시도
 tree_depth = 2                 # (M4) 후보 폴더 트리 깊이
 history_k = 5                  # (M4) 예시로 보내는 과거 결정 수
 candidate_roots = []           # (M4) 후보 트리에 추가할 폴더
+restructure_timeout_secs = 180 # (M5) AI 재구성 제안 시간 상한
+
+[report]                       # (M5)
+protected = []                 # 재구성이 절대 건드리지 않는 폴더
+stale_days = 90
+top_n = 10
+max_moves = 500                # AI 재구성 한 번에 받는 이동 상한
 
 [ai.profiles.home]
 classify = { provider = "anthropic", model = "claude-haiku-5-5", key_ref = "tidy/anthropic", effort = "low" }
@@ -554,6 +589,14 @@ send_content = false
 - 설정 파일 위치: `--config <경로>` → 환경변수 `TIDY_CONFIG` → OS 기본(`%APPDATA%\tidy\config.toml`). 파일이 없으면 감시 폴더 없이 시작하고 설정 탭을 연다. 사용자가 저장하기 전에는 아무것도 옮기지 않는다.
 - 동시성: 감시 루프는 자체 스레드와 DB 연결을 쓴다. UI 명령은 두 번째 연결을 쓰고, "expected move" 토큰을 감시 루프와 공유해 팝업에서 옮긴 파일을 새 파일로 오인하지 않는다. 모든 명령은 async + `spawn_blocking`이다. 감시 재시작(일시정지·설정 저장)은 보조 스레드에서 직렬화한다. 메인 스레드가 감시 스레드를 join하면, 감시 스레드가 부르는 트레이·창 API와 교착될 수 있기 때문이다.
 - 이동 기록 화면(§9.6)은 M5 범위다. M3에는 활동 탭의 실시간 로그와 "마지막 이동 되돌리기" 버튼만 있다.
+- **M5 추가**
+  - 트레이 메뉴에 "리포트"를 추가했다.
+  - **리포트 탭**
+    - 폴더를 고른다(감시·index_only 폴더 또는 다른 폴더…).
+    - 통계 카드, 종류별, 큰 폴더/파일, 중복 그룹, 오래 안 쓴 파일, 빈 폴더, 트리를 보여 준다. 경로를 누르면 탐색기에서 선택된다.
+    - 정리 제안: "규칙으로 정리 미리보기" / "AI 재구성 제안" / 지난 제안을 연다. 이동 체크박스를 바꾸면 before/after 트리가 바로 갱신된다. "선택한 N개 적용"은 확인 대화상자를 거치고, 적용 뒤에는 "이 재구성 되돌리기"가 있다.
+  - **이동 기록 탭**(§9.6): 배치 단위 타임라인(시각, 규칙/AI/확인/재구성, 개수, 되돌림 상태)을 보여 준다. 파일 목록을 펼쳐 볼 수 있고 배치별로 되돌릴 수 있다. CLI는 `tidy log --batches`, `tidy undo --batch ID`다.
+  - 리포트·재구성 객체는 코어 JSON(snake_case)을 그대로 IPC로 보낸다(`src/ipc/types.ts`에 같은 모양으로 정의).
 
 ---
 

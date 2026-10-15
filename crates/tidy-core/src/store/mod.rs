@@ -5,6 +5,7 @@ mod db;
 mod files;
 mod learn;
 mod models;
+mod plans;
 
 pub use db::{Store, StoreError, NETWORK_PATH_HINT};
 pub use models::{
@@ -14,3 +15,4 @@ pub use models::{
 
 pub(crate) use files::file_from_row;
 pub use learn::NewDecision;
+pub use plans::{BatchSummary, StoredPlan};

@@ -197,6 +197,18 @@ CREATE TABLE learn_dismissed (
   dismissed_at INTEGER NOT NULL
 );
 "#,
+    // v4 (M5): restructure plans (proposal → user approval → one batch).
+    r#"
+CREATE TABLE restructure_plans (
+  id INTEGER PRIMARY KEY,
+  root TEXT NOT NULL,
+  source TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  plan_json TEXT NOT NULL,
+  applied_batch TEXT,
+  applied_at INTEGER
+);
+"#,
 ];
 
 pub struct Store {
