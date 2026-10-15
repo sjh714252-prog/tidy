@@ -396,7 +396,7 @@ mod tests {
     #[test]
     fn prompt_has_tree_excerpt_and_logs_the_call() {
         let (tmp, ai, mock, store) = setup(json!({
-            "dest": "/x", "confidence": 0.5, "reason": "r", "new_folder": false, "suggested_rename": null
+            "dest": "~/x", "confidence": 0.5, "reason": "r", "new_folder": false, "suggested_rename": null
         }));
         let f = facts(tmp.path(), "KT 과금 메모.txt", "9월 인터넷 회선 과금 내역");
         let s = ai.suggest(&store, &f).unwrap();
@@ -424,7 +424,7 @@ mod tests {
     fn send_content_false_keeps_text_local() {
         let tmp = tempfile::tempdir().unwrap();
         let mock = Arc::new(MockProvider::new(json!({
-            "dest": "/x", "confidence": 0.5, "reason": "", "new_folder": false, "suggested_rename": null
+            "dest": "~/x", "confidence": 0.5, "reason": "", "new_folder": false, "suggested_rename": null
         })));
         let mut cfg = Config::default();
         cfg.ai.enabled = true;
