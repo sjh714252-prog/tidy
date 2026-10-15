@@ -25,6 +25,12 @@ pub enum RuleError {
         #[source]
         source: Box<toml::de::Error>,
     },
+    #[error("failed to write rules file {path}: {source}")]
+    Write {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("rule \"{rule}\": invalid name_regex: {source}")]
     Regex {
         rule: String,
@@ -184,6 +190,23 @@ impl RuleSet {
             source: Box::new(source),
         })?;
         Self::compile(file)
+    }
+
+    /// Validate `text` and, only if it compiles, write it to `path` as-is
+    /// (settings screen "raw TOML" editor). Returns the compiled rules.
+    pub fn save_text(path: &Path, text: &str) -> Result<Self, RuleError> {
+        let rules = Self::from_toml(text)?;
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent).map_err(|source| RuleError::Write {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        std::fs::write(path, text).map_err(|source| RuleError::Write {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        Ok(rules)
     }
 
     pub fn from_toml(text: &str) -> Result<Self, RuleError> {
@@ -560,6 +583,16 @@ dest = "정리/큰 파일/{ext}"
         .unwrap();
         assert_eq!(rs.rules().len(), 1);
         assert!(rs.classify(&facts(Path::new("/d/x.txt"), 1)).is_none());
+    }
+
+    #[test]
+    fn save_text_rejects_invalid_and_keeps_old_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("규칙 폴더").join("rules.toml");
+        let good = "# 주석 유지\n[[rule]]\nname='a'\nmatch={ext=['txt']}\ndest='/x'\n";
+        assert_eq!(RuleSet::save_text(&p, good).unwrap().rules().len(), 1);
+        assert!(RuleSet::save_text(&p, "[[rule]]\nname='b'\ndest='/a/{nope}'\n").is_err());
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), good);
     }
 
     #[test]

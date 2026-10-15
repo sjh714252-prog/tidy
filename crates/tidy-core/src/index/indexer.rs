@@ -229,6 +229,24 @@ impl<'a> Indexer<'a> {
         Ok(self.index_file_inner(&path, root_id, opts, now())?)
     }
 
+    /// Reflect a move in the index: drop the row at `from`, index `to`.
+    /// Called after watch/confirm/undo moves; failures are the caller's to
+    /// log (a stale index row must never block a move).
+    pub fn moved(
+        &self,
+        from: &Path,
+        to: &Path,
+        opts: &IndexOptions,
+    ) -> Result<FileOutcome, IndexError> {
+        self.store.remove_file(from)?;
+        if let Ok(canon) = dunce::canonicalize(from.parent().unwrap_or(from)) {
+            if let Some(name) = from.file_name() {
+                self.store.remove_file(&canon.join(name))?;
+            }
+        }
+        self.index_file(to, opts)
+    }
+
     fn index_file_inner(
         &self,
         path: &Path,
