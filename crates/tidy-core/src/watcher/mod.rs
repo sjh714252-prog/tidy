@@ -304,8 +304,9 @@ struct Tracked {
     since: Instant,
 }
 
-/// What was last reported for a path, so a file seen by both OS events and
-/// polling is handled once (SPEC §5.1 dedupe).
+/// What was last reported for a path, so a file seen twice in the same
+/// state (OS events and polling, or a redelivered OS event) is handled once
+/// (SPEC §5.1 dedupe).
 type Emitted = HashMap<PathBuf, ((u64, Option<SystemTime>), Instant)>;
 
 /// How long a reported (size, mtime) is remembered for dedupe.
@@ -398,6 +399,12 @@ fn stabilizer(
         });
         for (path, kind, source, stamp) in ready {
             if expected.is_expected(&path) {
+                continue;
+            }
+            // Already reported in this exact state: a late or duplicate OS
+            // event (macOS FSEvents coalesces and redelivers) or the poller
+            // seeing what events already handled. Requeues clear the entry.
+            if emitted.get(&path).is_some_and(|(s, _)| *s == stamp) {
                 continue;
             }
             emitted.insert(path.clone(), (stamp, Instant::now()));
