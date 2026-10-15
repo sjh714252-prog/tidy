@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -10,9 +11,10 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use humansize::{format_size, BINARY};
 use tidy_core::ai;
 use tidy_core::classify::{learner, AiClassifier, FileFacts, RuleSet};
+use tidy_core::config::RootKind;
 use tidy_core::engine::{new_batch_id, reindex_undo, Action};
-use tidy_core::index::{FileOutcome, IndexOptions, IndexReport, Indexer};
-use tidy_core::mover::{ExpectedMoves, Mover, UndoReport};
+use tidy_core::index::{jobs_from_config, FileOutcome, IndexOptions, IndexReport, Indexer};
+use tidy_core::mover::{ExpectedMoves, Mover, ProgressFn, TransferProgress, UndoReport};
 use tidy_core::pending::{resolve, Decision, Resolution};
 use tidy_core::report::{self, render_tree, restructure, scan, ScanOptions, Stats, TreeOptions};
 use tidy_core::search::{search, MatchedIn, Query, SearchOptions};
@@ -43,6 +45,9 @@ enum Cmd {
     Watch(WatchArgs),
     /// Undo moves (default: the most recent batch).
     Undo(UndoArgs),
+    /// Resolve moves interrupted by a crash or a lost NAS connection
+    /// (`tidy watch` also does this when it starts).
+    Recover(RecoverArgs),
     /// Show recent moves from move_log.
     Log(LogArgs),
     /// List files waiting for confirmation (rules with confirm = true), or
@@ -322,6 +327,7 @@ fn main() -> Result<()> {
         Cmd::Config => cmd_config(cli.config),
         Cmd::Watch(args) => cmd_watch(cli.config, args),
         Cmd::Undo(args) => cmd_undo(cli.config, args),
+        Cmd::Recover(args) => cmd_recover(cli.config, args),
         Cmd::Log(args) => cmd_log(cli.config, args),
         Cmd::Pending(args) => cmd_pending(cli.config, args),
         Cmd::Classify(args) => cmd_classify(cli.config, args),
@@ -499,15 +505,90 @@ fn cmd_watch(config: Option<PathBuf>, args: WatchArgs) -> Result<()> {
     let rules_path = args.rules.clone().unwrap_or(cfg.classify.rules.clone());
     eprintln!("# rules: {}", rules_path.display());
     eprintln!("# db: {}", cfg.store.db_path().display());
+    for w in cfg.watches.iter().filter(|w| w.kind == RootKind::Network) {
+        eprintln!(
+            "# network: {} (poll every {}s{}, {})",
+            w.path.display(),
+            w.poll_interval().map(|d| d.as_secs()).unwrap_or_default(),
+            if w.poll_only {
+                ", polling only"
+            } else {
+                " + events"
+            },
+            if w.index_content {
+                "content indexed"
+            } else {
+                "metadata only"
+            }
+        );
+    }
+    let progress: ProgressFn = Arc::new(|p: &TransferProgress| {
+        let pct = (p.copied * 100).checked_div(p.total).unwrap_or(100);
+        eprintln!(
+            "# {} {pct:>3}% {} / {}  {}",
+            match p.phase {
+                "copy" => "copying ",
+                "verify" => "verifying",
+                _ => "copied  ",
+            },
+            format_size(p.copied, BINARY),
+            format_size(p.total, BINARY),
+            p.dst.display()
+        );
+    });
     let opts = WatchRunOptions {
         rules: args.rules,
         process_existing: args.process_existing,
         dry_run: args.dry_run,
         index: !args.no_index,
         ai: !args.no_ai,
+        progress: Some(progress),
+        ..Default::default()
     };
     let stop = AtomicBool::new(false); // Ctrl+C ends the process
     run_watch(&cfg, &opts, ExpectedMoves::new(), &stop, |ev| match ev {
+        WatchEvent::Warning(w) => eprintln!("# warning: {w}"),
+        WatchEvent::Recovered(r) => {
+            for p in &r.completed {
+                eprintln!("# recovered: interrupted move finished -> {}", p.display());
+            }
+            for p in &r.rolled_back {
+                eprintln!(
+                    "# recovered: interrupted move rolled back, file stays at {}",
+                    p.display()
+                );
+            }
+            if r.tmp_removed > 0 {
+                eprintln!(
+                    "# recovered: removed {} leftover scratch copies",
+                    r.tmp_removed
+                );
+            }
+            for a in &r.attention {
+                eprintln!("# check: {a}");
+            }
+            if r.unresolved > 0 {
+                eprintln!(
+                    "# {} interrupted moves wait for an offline share",
+                    r.unresolved
+                );
+            }
+        }
+        WatchEvent::Root(r) => {
+            if r.online {
+                eprintln!(
+                    "# online: {}{}",
+                    r.path.display(),
+                    if r.events { "" } else { " (polling only)" }
+                );
+            } else {
+                eprintln!(
+                    "# offline: {} — paused, retrying every {}s",
+                    r.path.display(),
+                    tidy_core::watcher::RECONNECT_INTERVAL.as_secs()
+                );
+            }
+        }
         WatchEvent::Started(roots) => {
             for r in roots {
                 eprintln!("# watching: {}", r.display());
@@ -610,6 +691,42 @@ fn fmt_time(ts: i64) -> String {
         .unwrap_or_else(|| ts.to_string())
 }
 
+#[derive(Args)]
+struct RecoverArgs {
+    /// Only rows older than this count as interrupted (a long copy may be
+    /// running in another Tidy). 0 = all — only when no Tidy is running.
+    #[arg(long, default_value_t = tidy_core::mover::DEFAULT_RECOVERY_GRACE.as_secs())]
+    grace_secs: u64,
+}
+
+fn cmd_recover(config: Option<PathBuf>, args: RecoverArgs) -> Result<()> {
+    let cfg = load_config(config)?;
+    let mover = open_mover(&cfg)?;
+    let r = mover.recover_interrupted(Duration::from_secs(args.grace_secs))?;
+    for p in &r.completed {
+        println!("finished    {}", p.display());
+    }
+    for p in &r.rolled_back {
+        println!("rolled back {} (file stays here)", p.display());
+    }
+    for a in &r.attention {
+        println!("check       {a}");
+    }
+    if r.tmp_removed > 0 {
+        println!("removed {} leftover scratch copies", r.tmp_removed);
+    }
+    if r.unresolved > 0 {
+        println!(
+            "{} moves wait for an offline share; run again once it is back",
+            r.unresolved
+        );
+    }
+    if r.is_empty() {
+        println!("nothing to recover");
+    }
+    Ok(())
+}
+
 fn cmd_undo(config: Option<PathBuf>, args: UndoArgs) -> Result<()> {
     let cfg = load_config(config)?;
     let mover = open_mover(&cfg)?;
@@ -702,9 +819,11 @@ fn cmd_log(config: Option<PathBuf>, args: LogArgs) -> Result<()> {
             ),
             m.src_path.display(),
             m.dst_path.display(),
-            m.undone_at
-                .map(|t| format!("  (undone {})", fmt_time(t)))
-                .unwrap_or_default()
+            match (m.undone_at, m.in_progress) {
+                (Some(t), _) => format!("  (undone {})", fmt_time(t)),
+                (None, true) => "  (in progress / interrupted)".into(),
+                (None, false) => String::new(),
+            }
         );
     }
     Ok(())
@@ -847,31 +966,14 @@ fn cmd_index(config: Option<PathBuf>, args: IndexArgs) -> Result<()> {
     }
 
     // (path, options) per root: explicit paths use the flags, configured
-    // roots use their own settings (network roots → metadata only).
+    // roots use their own settings (network roots → metadata only, small
+    // hashes). A manual run ignores `content_index_window`.
     let base = IndexOptions::from_config(&cfg);
     let mut jobs: Vec<(PathBuf, IndexOptions)> = Vec::new();
     if args.paths.is_empty() {
-        for w in &cfg.watches {
-            jobs.push((
-                w.path.clone(),
-                IndexOptions {
-                    recursive: w.recursive,
-                    kind: w.kind,
-                    watch: true,
-                    index_content: w.index_content && !args.no_content,
-                    ..base.clone()
-                },
-            ));
-        }
-        for r in &cfg.index_only {
-            jobs.push((
-                r.path.clone(),
-                IndexOptions {
-                    recursive: r.recursive,
-                    index_content: !args.no_content,
-                    ..base.clone()
-                },
-            ));
+        for (path, mut opts) in jobs_from_config(&cfg, true) {
+            opts.index_content &= !args.no_content;
+            jobs.push((path, opts));
         }
         if jobs.is_empty() {
             bail!("no folders given and no [[watch]] / [[index_only]] roots configured");
@@ -1035,6 +1137,9 @@ fn cmd_config(path: Option<PathBuf>) -> Result<()> {
             p.display(),
             if p.exists() { "loaded" } else { "defaults" }
         );
+    }
+    for w in cfg.warnings() {
+        eprintln!("# warning: {w}");
     }
     println!("{}", toml::to_string_pretty(&cfg)?);
     Ok(())

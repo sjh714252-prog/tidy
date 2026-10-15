@@ -99,3 +99,19 @@ cargo run -p tidy-cli -- undo --batch <id>                      # 재구성 통�
 - 파일을 지우지 않고, 비게 된 폴더도 그대로 둡니다.
 
 앱에서는 리포트 탭과 이동 기록 탭에서 같은 기능을 쓸 수 있습니다.
+
+## NAS·공유 폴더 (M6)
+
+`[[watch]]`에 `kind = "network"`를 주면 NAS 폴더를 감시합니다. 예시는 `config.example.toml`에 있습니다.
+
+- **폴링**: OS 변경 알림에 더해 `poll_interval_s`(기본 120초)마다 폴더 목록을 비교합니다. 알림을 안 보내는 NAS는 `poll_only = true`로 둡니다.
+- **연결 끊김**: 그 폴더만 일시정지하고 60초마다 다시 확인합니다. 다시 연결되면 끊긴 동안 생긴 파일도 처리합니다.
+- **복사-검증 이동**: 다른 볼륨으로 옮길 때는 임시 파일로 복사한 뒤 크기·해시를 검증하고, 그다음에 원본을 정리합니다. 긴 복사는 진행률을 보여 줍니다.
+- **중단 복구**: 복사 도중 앱이 꺼지거나 연결이 끊겨도 `tidy watch` 시작 시(또는 `tidy recover`) 자동으로 정리합니다. 파일은 원래 자리 아니면 목적지, 둘 중 한 곳에 남습니다.
+- **인덱싱**: 기본은 메타데이터만입니다. 본문은 `index_content = true`와 `content_index_window`(예: `"02:00-05:00"`)로 켭니다.
+- DB(`[store] path`)는 NAS에 두면 안 됩니다. 그렇게 설정하면 시작할 때 경고합니다.
+
+```
+cargo run -p tidy-cli -- watch --config config.toml   # "# offline: …" / "# online: …" / 복사 진행률
+cargo run -p tidy-cli -- recover                      # 중단된 이동 정리(기본: 15분 지난 것만)
+```

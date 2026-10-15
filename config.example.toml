@@ -24,6 +24,21 @@ path = "~/Downloads"
 kind = "local"
 recursive = false
 
+# NAS·공유 폴더(M6). kind = "network"이면:
+#   - OS 변경 알림에 더해 poll_interval_s(기본 120초, 최소 5초)마다 폴더 목록을 비교합니다.
+#   - 연결이 끊기면 이 폴더만 일시정지하고 60초마다 다시 확인합니다. 다시 연결되면 끊긴 동안
+#     생긴 파일도 처리합니다.
+#   - 다른 볼륨으로 옮길 때는 복사 → 크기·해시 검증 → 원본 정리 순서로 옮깁니다.
+#   - 검색 인덱스는 기본으로 메타데이터만(본문 X). 해시는 작은 파일만([index] 참고).
+# [[watch]]
+# path = "Z:/공유/스캔"          # 또는 '\\nas\공유\스캔', "/Volumes/nas/스캔"
+# kind = "network"
+# recursive = true
+# poll_interval_s = 120
+# poll_only = false              # 변경 알림이 안 오는(또는 엉뚱한) NAS면 true: 폴링만
+# index_content = false          # true면 본문도 인덱싱
+# content_index_window = "02:00-05:00"   # 본문 인덱싱은 이 시간대에만(백그라운드). 수동 `tidy index`는 언제나
+
 [classify]
 # 규칙 파일. 상대 경로는 이 config.toml이 있는 폴더 기준입니다.
 rules = "rules.toml"
@@ -39,6 +54,8 @@ undo_retention_days = 30   # move_log 보관 기간(일). 지나면 로그만 �
 #   replace = 기존 사본을 OS 휴지통으로 보내고 옮김 (영구 삭제 아님)
 # 이름만 같고 내용이 다르면 항상 "이름 (1).ext"로 옮깁니다(덮어쓰기 없음).
 duplicate_policy = "skip"
+# NAS로/에서 동시에 복사·본문 읽기를 몇 개까지 할지(SPEC §5.9).
+nas_concurrency = 2
 
 [store]
 # 이동 로그·검색 인덱스 DB(SQLite). 생략하면 OS 기본 위치:
@@ -56,6 +73,8 @@ duplicate_policy = "skip"
 max_content_size_mb = 200
 # 파일당 저장하는 본문 최대 글자 수. 넘는 부분은 검색 대상에서 잘립니다.
 max_text_chars = 1000000
+# 네트워크 폴더에서는 이 크기(MB)보다 작은 파일만 해시합니다(중복 찾기·재분류 방지에 사용).
+max_hash_size_mb_network = 20
 
 [ai]
 # AI 분류(선택). 규칙에 맞지 않는 파일만 AI에 물어봅니다. 꺼져 있거나 키가 없거나

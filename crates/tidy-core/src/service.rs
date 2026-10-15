@@ -14,9 +14,9 @@ use crate::classify::{AiClassifier, RuleError, RuleSet};
 use crate::config::Config;
 use crate::engine::{new_batch_id, Action, Engine, EngineError};
 use crate::index::IndexOptions;
-use crate::mover::{ExpectedMoves, Mover};
+use crate::mover::{ExpectedMoves, Mover, ProgressFn, RecoveryReport, DEFAULT_RECOVERY_GRACE};
 use crate::store::{Store, StoreError};
-use crate::watcher::{existing_files, IgnoreFilter, WatchError, WatchOptions, Watcher};
+use crate::watcher::{existing_files, IgnoreFilter, RootState, WatchError, WatchOptions, Watcher};
 
 /// How often a locked/busy file is retried before giving up.
 pub const MAX_RETRIES: u32 = 5;
@@ -33,7 +33,7 @@ pub enum ServiceError {
     Watch(#[from] WatchError),
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct WatchRunOptions {
     /// Rules file; default `cfg.classify.rules`.
     pub rules: Option<PathBuf>,
@@ -43,6 +43,25 @@ pub struct WatchRunOptions {
     pub index: bool,
     /// Use the AI step when `[ai]` is enabled and usable (key present…).
     pub ai: bool,
+    /// Override watcher timings (tests: sub-second polling).
+    pub watch_options: Option<WatchOptions>,
+    /// Grace period before a 'moving' row counts as interrupted.
+    pub recovery_grace: Option<Duration>,
+    /// Live progress of long copy-verify moves (NAS). Called on the watch
+    /// thread while the copy runs, so it must not block.
+    pub progress: Option<ProgressFn>,
+}
+
+impl std::fmt::Debug for WatchRunOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WatchRunOptions")
+            .field("rules", &self.rules)
+            .field("process_existing", &self.process_existing)
+            .field("dry_run", &self.dry_run)
+            .field("index", &self.index)
+            .field("ai", &self.ai)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Events reported to the caller (CLI prints them, the app emits them).
@@ -53,6 +72,12 @@ pub enum WatchEvent<'a> {
     /// why it is off (rules-only mode). Not sent when AI is not enabled.
     Ai(Result<String, String>),
     Handled(&'a Path, &'a Result<Action, EngineError>),
+    /// Configuration problems worth showing (DB on a share…), at startup.
+    Warning(String),
+    /// Interrupted moves were resolved (startup, or a share came back).
+    Recovered(&'a RecoveryReport),
+    /// A watch folder went offline / came back / changed event mode.
+    Root(&'a RootState),
 }
 
 /// Run until `stop` is set (checked every 500 ms) or the watcher dies.
@@ -68,6 +93,11 @@ pub fn run_watch(
     if cfg.watches.is_empty() {
         return Err(ServiceError::NoWatchFolders);
     }
+    for w in cfg.warnings() {
+        tracing::warn!("{w}");
+        on_event(WatchEvent::Warning(w));
+    }
+    crate::netio::network_io().set_limit(usize::from(cfg.mover.nas_concurrency));
     let rules_path = opts
         .rules
         .clone()
@@ -86,7 +116,19 @@ pub fn run_watch(
             }
         }
     }
-    let mover = Mover::new(store, cfg.mover.duplicate_policy).with_expected(expected.clone());
+    let mut mover = Mover::new(store, cfg.mover.duplicate_policy).with_expected(expected.clone());
+    if let Some(p) = &opts.progress {
+        mover = mover.with_progress(Arc::clone(p));
+    }
+    let grace = opts.recovery_grace.unwrap_or(DEFAULT_RECOVERY_GRACE);
+    let recover = |mover: &Mover, on_event: &mut dyn FnMut(WatchEvent<'_>)| match mover
+        .recover_interrupted(grace)
+    {
+        Ok(r) if !r.is_empty() => on_event(WatchEvent::Recovered(&r)),
+        Ok(_) => {}
+        Err(e) => on_event(WatchEvent::Warning(format!("중단된 이동 복구 실패: {e}"))),
+    };
+    recover(&mover, &mut on_event);
     let filter = IgnoreFilter::new(&cfg.classify.ignore_globs)?;
     let mut engine = Engine::new(rules, mover, filter.clone()).dry_run(opts.dry_run);
     if opts.index {
@@ -110,13 +152,18 @@ pub fn run_watch(
 
     let (watcher, rx) = Watcher::start(
         &cfg.watches,
-        WatchOptions::from_config(&cfg.classify),
+        opts.watch_options
+            .clone()
+            .unwrap_or_else(|| WatchOptions::from_config(&cfg.classify)),
         expected,
     )?;
 
     if opts.process_existing {
         let batch = new_batch_id();
         for root in &cfg.watches {
+            if !root.path.is_dir() {
+                continue; // network folder offline: its files come later
+            }
             for path in existing_files(root, &filter) {
                 let res = engine.handle(&path, &batch);
                 on_event(WatchEvent::Handled(&path, &res));
@@ -124,10 +171,29 @@ pub fn run_watch(
         }
     }
     on_event(WatchEvent::Started(watcher.roots()));
+    let mut roots = watcher.root_states();
+    for r in roots.iter().filter(|r| !r.online) {
+        on_event(WatchEvent::Root(r));
+    }
 
     let mut retries: HashMap<PathBuf, u32> = HashMap::new();
     while !stop.load(Ordering::Relaxed) {
-        let ev = match rx.recv_timeout(Duration::from_millis(500)) {
+        let next = rx.recv_timeout(Duration::from_millis(500));
+        // Folder state changes (share lost / back).
+        let now = watcher.root_states();
+        let mut reconnected = false;
+        for (old, new) in roots.iter().zip(&now) {
+            if old.online != new.online || old.events != new.events {
+                reconnected |= new.online && !old.online;
+                on_event(WatchEvent::Root(new));
+            }
+        }
+        roots = now;
+        if reconnected {
+            // Moves to/from that share that were cut off can be resolved now.
+            recover(engine.mover(), &mut on_event);
+        }
+        let ev = match next {
             Ok(ev) => ev,
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => break,
