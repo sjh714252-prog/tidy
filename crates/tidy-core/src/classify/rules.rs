@@ -9,6 +9,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::config::expand_home;
+use crate::paths::normalize_lexical;
 
 #[derive(Debug, Error)]
 pub enum RuleError {
@@ -316,7 +317,8 @@ impl Rule {
 
     /// Render `dest` for a file. Variables are substituted into the template
     /// text first, then the result is turned into a path once; relative
-    /// results are resolved against the file's folder.
+    /// results are resolved against the file's folder and `.`/`..` are
+    /// folded away so the logged destination is a clean absolute path.
     pub fn render_dest(&self, f: &FileFacts) -> PathBuf {
         let date: DateTime<Local> = f.modified.into();
         let mut out = String::new();
@@ -337,11 +339,12 @@ impl Rule {
             }
         }
         let p = expand_home(Path::new(&out));
-        if p.is_relative() {
+        let p = if p.is_relative() {
             f.parent().join(p)
         } else {
             p
-        }
+        };
+        normalize_lexical(&p)
     }
 }
 
@@ -493,6 +496,20 @@ dest = "정리/큰 파일/{ext}"
                 .join("텍스트 문서")
                 .join("바탕 화면")
         );
+    }
+
+    /// PR #1 finding: `dest = "../정리 결과"` used to leave `..` in
+    /// `move_log` and the CLI output.
+    #[test]
+    fn parent_relative_dest_is_normalized() {
+        let rs = RuleSet::from_toml(
+            "[[rule]]\nname='t'\nmatch={ext=['txt']}\ndest='../정리 결과/{yyyy}'\n",
+        )
+        .unwrap();
+        let f = facts(&Path::new("/home/me/받은 파일").join("메모.txt"), 1);
+        let d = rs.classify(&f).unwrap().dest_dir;
+        assert!(!d.components().any(|c| c == std::path::Component::ParentDir));
+        assert!(d.starts_with(Path::new("/home/me/정리 결과")));
     }
 
     #[test]

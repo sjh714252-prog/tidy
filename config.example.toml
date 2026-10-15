@@ -41,8 +41,18 @@ undo_retention_days = 30   # move_log 보관 기간(일). 지나면 로그만 �
 duplicate_policy = "skip"
 
 [store]
-# 이동 로그 DB(SQLite). 생략하면 OS 기본 위치:
+# 이동 로그·검색 인덱스 DB(SQLite). 생략하면 OS 기본 위치:
 #   Windows: %LOCALAPPDATA%\tidy\tidy.db / macOS: ~/Library/Application Support/tidy/tidy.db
 #   Linux: ~/.local/share/tidy/tidy.db
 # 상대 경로는 이 config.toml이 있는 폴더 기준입니다.
+#
+# ★ DB는 반드시 로컬 디스크에 두세요. NAS·공유 폴더·네트워크 드라이브(Z:, \\nas\..., 마운트된
+#   공유) 위에 두면 SQLite가 파일 잠금을 얻지 못해 "disk I/O error"로 즉시 실패합니다.
+#   감시 폴더가 NAS여도 DB만은 로컬 경로(또는 생략해서 기본 위치)로 지정하세요.
 # path = "tidy.db"
+
+[index]
+# 본문 인덱싱 대상 최대 크기(MB). 이보다 큰 파일은 메타데이터(이름·크기·날짜)만 인덱싱합니다.
+max_content_size_mb = 200
+# 파일당 저장하는 본문 최대 글자 수. 넘는 부분은 검색 대상에서 잘립니다.
+max_text_chars = 1000000

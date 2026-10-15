@@ -160,7 +160,7 @@ confirm = true
   - `source_app`은 SPEC §13 결정 전까지 미지원: 지정한 규칙은 경고 후 매치되지 않음.
   - 규칙 파일의 오타(알 수 없는 키·변수, 잘못된 정규식)는 로드 시 오류로 거부.
 - `dest` 템플릿 변수: `{yyyy}` `{mm}` `{dd}` `{ext}` `{stem}` `{source_dir_name}`
-  - 날짜는 파일 수정시각(로컬 시간대). `~`는 홈으로 확장. 상대 경로는 원래 파일이 있던 폴더 기준.
+  - 날짜는 파일 수정시각(로컬 시간대). `~`는 홈으로 확장. 상대 경로는 원래 파일이 있던 폴더 기준이며, `..`/`.`는 lexical 정규화해 move_log와 출력에 깔끔한 절대경로만 남긴다(`받은 파일/../정리 결과` → `정리 결과`).
 - `confirm = false`인 규칙은 묻지 않고 이동(로그는 남김). `confirm = true`면 이동하지 않고 `pending`에 넣는다(M3 확인 UI 전까지 `tidy pending`으로 조회).
 - `enabled = false`로 규칙을 끌 수 있다. `ai_auto`는 M4에서 사용.
 
@@ -214,14 +214,18 @@ confirm = true
 - 대상: 감시 폴더 전체 + 사용자가 추가 지정한 인덱스 전용 폴더
 - 초기 전체 스캔 → 이후 Watcher 이벤트로 증분 갱신
 - 각 파일: `path, size, mtime, ctime, ext, mime, hash(blake3), text_excerpt, full_text(FTS), embedding(optional)`
-- 해시는 크기+mtime이 바뀐 경우에만 재계산. 대용량(기본 >200MB)은 해시·본문 스킵하고 메타만.
-- 텍스트 추출기는 `trait Extractor { fn supports(ext) -> bool; fn extract(path) -> Result<String> }`로 확장. 실패해도 메타 인덱싱은 유지.
+- 증분: 크기+mtime이 같으면 `last_seen_at`만 갱신하고 건너뛴다. 바뀐 경우에만 해시·본문 재처리. 대용량(기본 >200MB, `index.max_content_size_mb`)은 해시·본문 스킵하고 메타만(`text_status = skipped`). 실행이 끝나면 그 루트에서 이번 실행에 보이지 않은 행을 제거한다(파일은 건드리지 않음).
+- 텍스트 추출기는 `trait Extractor { fn supports(ext) -> bool; fn extract(path) -> Result<String> }`로 확장. 실패해도 메타 인덱싱은 유지(`text_status = failed`). 추출기 패닉은 잡아서 실패로 처리.
+  - M2 추출기: 텍스트/소스코드(UTF-8·UTF-16 BOM·CP949 자동 판별), HTML(태그 제거), PDF(pdf-extract), DOCX/PPTX(zip+XML), XLSX/XLS/ODS(calamine). 본문은 `index.max_text_chars`(기본 1,000,000자)에서 자른다.
+- CLI: `tidy index [<폴더>...] [--no-content] [--rebuild]` — 인자가 없으면 설정의 `[[watch]]`·`[[index_only]]` 루트 전부. `tidy index --status`로 인덱스 통계.
 - NAS 폴더: 기본 **메타만** 인덱싱. 본문 인덱싱은 설정으로 켜되 야간 시간대/수동 트리거 옵션 제공.
 - 우선순위: 백그라운드 저우선 스레드, 인덱싱 중 CPU/IO 상한(설정) — 사용자 작업 방해 금지.
 
 ### 5.6 Search
 - 검색창(글로벌 단축키, 기본 `Ctrl/Cmd+Shift+Space`)
-- 문법: 일반 키워드 → FTS5(파일명 가중치 > 본문). 필터 `ext:pdf` `in:~/Documents` `after:2026-09` `size:>10mb` `type:image`
+- 문법: 일반 키워드 → FTS5(파일명 가중치 3 > 본문 1, bm25). 키워드는 AND, `"따옴표"`는 구절. 필터 `ext:pdf,docx` `in:~/Documents`(공백 있으면 `in:"..."`) `after:2026-09` `before:2026-10-15` `size:>10mb` `type:image|doc|video|audio|archive|code`
+  - 토크나이저 라우팅(docs/fts-tokenizer.md): 3글자 이상 항목은 trigram 테이블, 1~2글자 항목은 unicode61 테이블 prefix 매치. 둘이 섞이면 교집합.
+  - CLI: `tidy search "질의" [-n 20] [--format json]`
 - 의미검색: 임베딩이 켜져 있으면 FTS 결과와 벡터 결과를 RRF로 병합. 자연어 질문형 입력이면 의미검색 가중치 상향.
 - 결과: 경로, 매칭 스니펫(하이라이트), 수정일. 액션: 열기 / 폴더 열기 / 이동 / 복사 경로
 - 응답 목표: 로컬 FTS 50ms 이내, 벡터 포함 300ms 이내 (10만 파일 기준)
@@ -279,19 +283,24 @@ CREATE TABLE files (
   hash TEXT,                  -- blake3 hex, NULL if skipped
   text_status TEXT NOT NULL DEFAULT 'none',  -- none|ok|unsupported|failed|skipped
   excerpt TEXT,               -- 앞 500자
+  content TEXT,               -- 추출 본문 전체(index.max_text_chars까지), FTS external content
   indexed_at INTEGER NOT NULL,
-  last_seen_at INTEGER NOT NULL
+  last_seen_at INTEGER NOT NULL  -- 마지막 인덱싱 실행에서 본 시각. 안 보인 행은 실행 후 제거
 );
 CREATE INDEX idx_files_hash ON files(hash);
 CREATE INDEX idx_files_ext ON files(ext);
 CREATE INDEX idx_files_mtime ON files(mtime);
 
--- 전문검색
-CREATE VIRTUAL TABLE files_fts USING fts5(
-  name, content, path UNINDEXED,
-  content='', tokenize='unicode61 remove_diacritics 2'
+-- 전문검색 (M2 결정, docs/fts-tokenizer.md)
+-- files.content(추출 본문)를 external content로 공유한다: 본문은 한 번만 저장되고
+-- snippet()/highlight()가 동작한다. 동기화는 files의 INSERT/DELETE/UPDATE OF name,content 트리거.
+CREATE VIRTUAL TABLE files_fts USING fts5(            -- 주: 3글자 이상 질의
+  name, content, content='files', content_rowid='id', tokenize='trigram'
 );
--- 한국어: unicode61로 1차. 형태소 품질 부족 시 trigram 토크나이저 병행 테이블 검토.
+CREATE VIRTUAL TABLE files_fts_word USING fts5(       -- 보조: 1~2글자 질의를 prefix(`*`)로
+  name, content, content='files', content_rowid='id',
+  tokenize='unicode61 remove_diacritics 2'
+);
 
 -- 임베딩 (sqlite-vec 사용 시 vec0 테이블, 아니면 BLOB)
 CREATE TABLE embeddings (
@@ -370,7 +379,9 @@ CREATE TABLE ai_log (
 CREATE TABLE schema_version (version INTEGER NOT NULL);
 ```
 
-마이그레이션: `schema_version`에 적용 버전을 기록하고 순서대로 적용. M1(v1)은 `move_log`, `pending`, `ignored`만 만든다. 나머지 테이블은 해당 마일스톤에서 추가.
+마이그레이션: `schema_version`에 적용 버전을 기록하고 순서대로 적용. M1(v1)은 `move_log`, `pending`, `ignored`, M2(v2)는 `roots`, `files`, `files_fts`, `files_fts_word`를 만든다. 나머지 테이블은 해당 마일스톤에서 추가.
+
+**DB 파일 위치**: SQLite는 파일 잠금이 필요하므로 `store.path`는 반드시 로컬 디스크여야 한다. NAS/공유 폴더/네트워크 드라이브에 두면 `disk I/O error`로 실패한다(에러 메시지에 힌트를 붙인다. M6에서 `kind = "network"` 루트 아래의 store.path는 기동 시 경고).
 
 ---
 
@@ -420,9 +431,11 @@ nas_concurrency = 2
 
 [store]
 # path = "tidy.db"             # 생략 시 <data_local_dir>/tidy/tidy.db, 상대 경로는 config.toml 폴더 기준
+                               # 반드시 로컬 디스크. 네트워크 경로면 SQLite disk I/O error
 
 [index]
-max_content_size_mb = 200
+max_content_size_mb = 200      # 초과 시 메타만
+max_text_chars = 1000000       # 파일당 저장 본문 상한(글자)
 max_hash_size_mb_network = 20
 cpu_limit_percent = 30
 
@@ -516,6 +529,6 @@ send_content = false
 ---
 
 ## 13. 열린 질문 (구현 중 결정)
-- 한국어 FTS 토크나이저: unicode61로 충분한지, trigram 병행이 필요한지 M2에서 벤치
+- ~~한국어 FTS 토크나이저: unicode61로 충분한지, trigram 병행이 필요한지 M2에서 벤치~~ → **결정(M2)**: trigram 주 + unicode61 보조(1~2글자 prefix). 근거와 측정치는 `docs/fts-tokenizer.md`.
 - sqlite-vec vs 자체 brute-force: 파일 수 기준 임계치 정하기
 - `source_app`(어느 앱이 만든 파일인지) 수집 가능 범위: macOS는 `kMDItemWhereFroms`, Windows는 Zone.Identifier ADS — M1 후반에 조사
