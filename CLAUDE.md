@@ -33,6 +33,7 @@
 - 설정은 `config.toml` → `Config` 구조체(serde). 기본값은 `Default` impl에.
 - 프론트: 함수형 React, 상태는 zustand, Tauri IPC는 `src/ipc/*.ts`에 타입과 함께 모음.
 - 커밋 메시지: `feat(core/watcher): ...`, `fix(desktop/search): ...` 형태.
+- PR: **마일스톤당 PR 하나**(브랜치도 마일스톤별). 이전 마일스톤 PR이 아직 머지 전이면 그 브랜치를 base로 쌓는다(stacked). 수동 테스트 절차는 해당 마일스톤 PR에만 적는다.
 
 ## 테스트
 - 코어 통합 테스트는 `tempfile` 디렉토리에서 생성→분류→이동→undo 전체 플로우를 돌린다.
