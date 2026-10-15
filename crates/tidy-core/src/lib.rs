@@ -12,6 +12,7 @@ pub mod config;
 pub mod engine;
 pub mod index;
 pub mod mover;
+pub mod netio;
 pub mod paths;
 pub mod pending;
 pub mod report;

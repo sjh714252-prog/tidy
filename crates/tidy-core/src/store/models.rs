@@ -62,6 +62,10 @@ pub struct MoveLogEntry {
     pub moved_at: i64,
     /// Unix seconds; `None` while the move is still in effect.
     pub undone_at: Option<i64>,
+    /// (M6) The row was written but the file transfer has not finished
+    /// (a long copy to a NAS is running, or it was interrupted by a crash
+    /// and waits for [`crate::mover::Mover::recover_interrupted`]).
+    pub in_progress: bool,
 }
 
 /// `files.text_status`: what happened to the body text of a file.
@@ -110,6 +114,9 @@ pub struct FileStamp {
     pub size: u64,
     /// Unix seconds.
     pub mtime: i64,
+    /// Body text was never attempted (`text_status = none`): indexed as
+    /// metadata only, e.g. a NAS folder outside its content window.
+    pub text_none: bool,
 }
 
 /// A file row about to be written (insert or replace by path).

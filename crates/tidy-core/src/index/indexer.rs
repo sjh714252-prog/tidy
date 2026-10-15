@@ -7,6 +7,7 @@
 //! Nothing here writes to the filesystem.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -14,7 +15,9 @@ use thiserror::Error;
 use walkdir::WalkDir;
 
 use super::extract::Extractors;
-use crate::config::{Config, RootKind};
+use chrono::NaiveTime;
+
+use crate::config::{Config, RootKind, WatchRoot};
 use crate::mover::{hash_file, TMP_MARKER};
 use crate::paths::ext_lower;
 use crate::store::{NewFile, Store, StoreError, TextStatus};
@@ -42,9 +45,15 @@ pub struct IndexOptions {
     pub index_content: bool,
     /// Above this size: metadata only.
     pub max_content_bytes: u64,
+    /// Above this size: no hash either (network roots: SPEC §5.9 "해시는
+    /// 작은 파일만", `index.max_hash_size_mb_network`).
+    pub max_hash_bytes: Option<u64>,
     /// Stored text is cut here (characters).
     pub max_text_chars: usize,
     pub ignore_globs: Vec<String>,
+    /// Configured network folders (single files inside them are indexed
+    /// with their settings, see [`IndexOptions::for_file`]).
+    pub network_roots: Vec<NetworkRoot>,
     pub skip_hidden: bool,
     /// How many files per write transaction.
     pub batch_size: usize,
@@ -59,8 +68,10 @@ impl Default for IndexOptions {
             watch: false,
             index_content: true,
             max_content_bytes: idx.max_content_size_mb * 1024 * 1024,
+            max_hash_bytes: None,
             max_text_chars: idx.max_text_chars,
             ignore_globs: crate::config::Classify::default().ignore_globs,
+            network_roots: Vec::new(),
             skip_hidden: true,
             batch_size: 500,
         }
@@ -73,9 +84,107 @@ impl IndexOptions {
             max_content_bytes: cfg.index.max_content_size_mb * 1024 * 1024,
             max_text_chars: cfg.index.max_text_chars,
             ignore_globs: cfg.classify.ignore_globs.clone(),
+            network_roots: cfg
+                .watches
+                .iter()
+                .filter(|w| w.kind == RootKind::Network)
+                .map(|w| NetworkRoot {
+                    root: w.clone(),
+                    max_hash_bytes: cfg.index.max_hash_size_mb_network * 1024 * 1024,
+                    canon: Arc::default(),
+                })
+                .collect(),
             ..Default::default()
         }
     }
+
+    /// Options for a `[[watch]]` folder. `manual` = an explicit `tidy
+    /// index` run, which ignores `content_index_window` (SPEC §5.5 "수동
+    /// 트리거"); background runs honour it at local time `now`.
+    pub fn for_watch(cfg: &Config, w: &WatchRoot, manual: bool, now: NaiveTime) -> Self {
+        let network = w.kind == RootKind::Network;
+        Self {
+            recursive: w.recursive,
+            kind: w.kind,
+            watch: true,
+            index_content: if manual {
+                w.index_content
+            } else {
+                w.content_now(now)
+            },
+            max_hash_bytes: network.then(|| cfg.index.max_hash_size_mb_network * 1024 * 1024),
+            ..Self::from_config(cfg)
+        }
+    }
+
+    fn reads_network(&self) -> bool {
+        self.kind == RootKind::Network
+    }
+
+    /// Options for one file: inside a configured network folder, that
+    /// folder's rules apply (metadata by default, content window, small
+    /// hashes only) whatever options the caller passed.
+    fn for_file(&self, path: &Path) -> std::borrow::Cow<'_, IndexOptions> {
+        use std::borrow::Cow;
+        if self.kind == RootKind::Network {
+            return Cow::Borrowed(self);
+        }
+        let hit = self
+            .network_roots
+            .iter()
+            .filter(|n| {
+                path.starts_with(&n.root.path) || n.canonical().is_some_and(|c| path.starts_with(c))
+            })
+            .max_by_key(|n| n.root.path.components().count());
+        match hit {
+            None => Cow::Borrowed(self),
+            Some(n) => Cow::Owned(IndexOptions {
+                kind: RootKind::Network,
+                index_content: n.root.content_now(chrono::Local::now().time()),
+                max_hash_bytes: Some(n.max_hash_bytes),
+                ..self.clone()
+            }),
+        }
+    }
+}
+
+/// A configured network watch folder, for [`IndexOptions::for_file`].
+#[derive(Debug, Clone)]
+pub struct NetworkRoot {
+    root: WatchRoot,
+    max_hash_bytes: u64,
+    /// Resolved on first use only (canonicalizing an offline share can
+    /// be slow).
+    canon: Arc<OnceLock<Option<PathBuf>>>,
+}
+
+impl NetworkRoot {
+    fn canonical(&self) -> Option<&Path> {
+        self.canon
+            .get_or_init(|| dunce::canonicalize(&self.root.path).ok())
+            .as_deref()
+    }
+}
+
+/// Every configured root with its options: `[[watch]]` folders by their
+/// own settings, `[[index_only]]` folders recursive with content.
+/// `manual`: see [`IndexOptions::for_watch`].
+pub fn jobs_from_config(cfg: &Config, manual: bool) -> Vec<(PathBuf, IndexOptions)> {
+    let now = chrono::Local::now().time();
+    let mut jobs = Vec::new();
+    for w in &cfg.watches {
+        jobs.push((w.path.clone(), IndexOptions::for_watch(cfg, w, manual, now)));
+    }
+    for r in &cfg.index_only {
+        jobs.push((
+            r.path.clone(),
+            IndexOptions {
+                recursive: r.recursive,
+                ..IndexOptions::from_config(cfg)
+            },
+        ));
+    }
+    jobs
 }
 
 /// What happened to one file.
@@ -215,6 +324,7 @@ impl<'a> Indexer<'a> {
     /// folder is registered as a non-watch root so the file gets a home.
     pub fn index_file(&self, path: &Path, opts: &IndexOptions) -> Result<FileOutcome, IndexError> {
         let path = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let opts = &*opts.for_file(&path);
         if !path.is_file() {
             return Err(IndexError::NotAFile(path));
         }
@@ -265,20 +375,32 @@ impl<'a> Indexer<'a> {
         let size = meta.len();
         let mtime = meta.modified().map(to_unix).unwrap_or(0);
         let existing = self.store.file_stamp(path)?;
+        let too_big = size > opts.max_content_bytes;
         if let Some(stamp) = &existing {
-            if stamp.size == size && stamp.mtime == mtime {
+            // Unchanged — unless body text is wanted now and was never
+            // extracted (a NAS folder entering its content window).
+            let text_wanted = opts.index_content && stamp.text_none && !too_big;
+            if stamp.size == size && stamp.mtime == mtime && !text_wanted {
                 self.store.touch_file(stamp.id, seen_at)?;
                 return Ok(FileOutcome::Unchanged);
             }
         }
+        // Content reads of a share take one of the NAS IO slots.
+        let _slot = opts
+            .reads_network()
+            .then(|| crate::netio::network_io().acquire());
 
         let ext = ext_lower(path);
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let too_big = size > opts.max_content_bytes;
-        let hash = if too_big { None } else { hash_file(path).ok() };
+        let hash_too_big = opts.max_hash_bytes.is_some_and(|m| size > m);
+        let hash = if too_big || hash_too_big {
+            None
+        } else {
+            hash_file(path).ok()
+        };
 
         let (text_status, content) = if !opts.index_content {
             (TextStatus::None, None)

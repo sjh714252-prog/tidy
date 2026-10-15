@@ -2,6 +2,7 @@
 //! has a default so an empty file is valid.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -91,6 +92,9 @@ pub fn write_settings(path: &Path, patch: &SettingsPatch) -> Result<(), ConfigEr
         }
         if let Some(win) = &w.content_index_window {
             t.insert("content_index_window", value(win.clone()));
+        }
+        if w.poll_only {
+            t.insert("poll_only", value(true));
         }
         watches.push(t);
     }
@@ -385,14 +389,66 @@ pub enum RootKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(from = "RawWatchRoot")]
 pub struct WatchRoot {
     pub path: PathBuf,
     pub kind: RootKind,
     pub recursive: bool,
+    /// Extract body text for search. Default: on for local folders, off
+    /// for network folders (SPEC §5.9: NAS = metadata only).
     pub index_content: bool,
+    /// Polling period. Network folders poll every 120 s by default; local
+    /// folders only poll when this is set.
     pub poll_interval_s: Option<u64>,
+    /// "HH:MM-HH:MM" (may wrap midnight): body text of this folder is only
+    /// extracted by background indexing inside the window. `tidy index`
+    /// (a manual run) ignores it.
     pub content_index_window: Option<String>,
+    /// Network folders: skip OS change events and rely on polling only
+    /// (some SMB/NFS servers send none, or bogus ones).
+    pub poll_only: bool,
+}
+
+/// `[[watch]]` as written in the file: `index_content` defaults by `kind`.
+#[derive(Deserialize)]
+#[serde(default)]
+struct RawWatchRoot {
+    path: PathBuf,
+    kind: RootKind,
+    recursive: bool,
+    index_content: Option<bool>,
+    poll_interval_s: Option<u64>,
+    content_index_window: Option<String>,
+    poll_only: bool,
+}
+
+impl Default for RawWatchRoot {
+    fn default() -> Self {
+        let d = WatchRoot::default();
+        Self {
+            path: d.path,
+            kind: d.kind,
+            recursive: d.recursive,
+            index_content: None,
+            poll_interval_s: None,
+            content_index_window: None,
+            poll_only: false,
+        }
+    }
+}
+
+impl From<RawWatchRoot> for WatchRoot {
+    fn from(r: RawWatchRoot) -> Self {
+        Self {
+            index_content: r.index_content.unwrap_or(r.kind == RootKind::Local),
+            path: r.path,
+            kind: r.kind,
+            recursive: r.recursive,
+            poll_interval_s: r.poll_interval_s,
+            content_index_window: r.content_index_window,
+            poll_only: r.poll_only,
+        }
+    }
 }
 
 impl Default for WatchRoot {
@@ -404,6 +460,68 @@ impl Default for WatchRoot {
             index_content: true,
             poll_interval_s: None,
             content_index_window: None,
+            poll_only: false,
+        }
+    }
+}
+
+/// Default polling period of network folders (SPEC §5.1).
+pub const DEFAULT_POLL_SECS: u64 = 120;
+/// Shortest accepted polling period (a NAS should not be hammered).
+pub const MIN_POLL_SECS: u64 = 5;
+
+impl WatchRoot {
+    /// How often this folder is polled, if at all: network folders always
+    /// (default 120 s), local folders only with `poll_interval_s`.
+    pub fn poll_interval(&self) -> Option<Duration> {
+        let secs = match (self.kind, self.poll_interval_s) {
+            (RootKind::Network, s) => s.unwrap_or(DEFAULT_POLL_SECS),
+            (RootKind::Local, Some(s)) => s,
+            (RootKind::Local, None) => return None,
+        };
+        Some(Duration::from_secs(secs.max(MIN_POLL_SECS)))
+    }
+
+    /// Use OS change events for this folder.
+    pub fn uses_events(&self) -> bool {
+        !(self.kind == RootKind::Network && self.poll_only)
+    }
+
+    /// Whether background indexing extracts body text at local time `now`
+    /// (honours `content_index_window`; an invalid window means "always").
+    pub fn content_now(&self, now: chrono::NaiveTime) -> bool {
+        self.index_content
+            && match self.content_index_window.as_deref().map(TimeWindow::parse) {
+                Some(Ok(w)) => w.contains(now),
+                _ => true,
+            }
+    }
+}
+
+/// A daily time window "HH:MM-HH:MM"; the end is exclusive and the window
+/// may wrap midnight ("22:00-05:00").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimeWindow {
+    pub start: chrono::NaiveTime,
+    pub end: chrono::NaiveTime,
+}
+
+impl TimeWindow {
+    pub fn parse(s: &str) -> Result<Self, String> {
+        let bad = || format!("시간대 형식은 \"HH:MM-HH:MM\"입니다: {s:?}");
+        let (a, b) = s.split_once('-').ok_or_else(bad)?;
+        let t = |x: &str| chrono::NaiveTime::parse_from_str(x.trim(), "%H:%M").map_err(|_| bad());
+        Ok(Self {
+            start: t(a)?,
+            end: t(b)?,
+        })
+    }
+
+    pub fn contains(&self, t: chrono::NaiveTime) -> bool {
+        if self.start <= self.end {
+            self.start <= t && t < self.end
+        } else {
+            t >= self.start || t < self.end
         }
     }
 }
@@ -576,6 +694,41 @@ impl Config {
         Ok(cfg)
     }
 
+    /// Problems worth telling the user at startup (SPEC §5.9, §6): the DB
+    /// on a network share (SQLite needs local file locks), network-looking
+    /// folders marked `local`, invalid content windows. Never fatal.
+    pub fn warnings(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let db = self.store.db_path();
+        // Lexical only: resolving a share that is offline can block for
+        // a long time, and this runs at startup.
+        let under_network_root = self
+            .watches
+            .iter()
+            .any(|w| w.kind == RootKind::Network && db.starts_with(&w.path));
+        if under_network_root || crate::paths::looks_like_network(&db) {
+            out.push(format!(
+                "DB 파일이 네트워크 위치에 있습니다: {} — SQLite는 로컬 디스크에서만 안정적으로 동작합니다. [store] path를 로컬 경로로 바꾸세요.",
+                db.display()
+            ));
+        }
+        for w in &self.watches {
+            if w.kind == RootKind::Local && crate::paths::looks_like_network(&w.path) {
+                out.push(format!(
+                    "감시 폴더가 네트워크 위치로 보입니다: {} — kind = \"network\"로 두면 폴링·복사-검증 이동을 씁니다.",
+                    w.path.display()
+                ));
+            }
+            if let Some(Err(e)) = w.content_index_window.as_deref().map(TimeWindow::parse) {
+                out.push(format!(
+                    "{}: content_index_window {e} (무시하고 항상 본문 인덱싱)",
+                    w.path.display()
+                ));
+            }
+        }
+        out
+    }
+
     /// Default location: `<config_dir>/tidy/config.toml`.
     pub fn default_path() -> Option<PathBuf> {
         dirs::config_dir().map(|d| d.join("tidy").join("config.toml"))
@@ -644,6 +797,77 @@ duplicate_policy = "rename"
     }
 
     #[test]
+    fn network_roots_default_to_metadata_only_and_poll() {
+        let c = Config::from_toml(
+            r#"
+[[watch]]
+path = "Z:/공유/업무"
+kind = "network"
+
+[[watch]]
+path = "//nas/사진"
+kind = "network"
+index_content = true
+poll_interval_s = 1
+poll_only = true
+content_index_window = "22:00-05:00"
+
+[[watch]]
+path = "~/Desktop"
+"#,
+        )
+        .unwrap();
+        let (nas, photos, desk) = (&c.watches[0], &c.watches[1], &c.watches[2]);
+        assert!(!nas.index_content);
+        assert_eq!(nas.poll_interval(), Some(Duration::from_secs(120)));
+        assert!(nas.uses_events());
+        assert!(photos.index_content && !photos.uses_events());
+        assert_eq!(
+            photos.poll_interval(),
+            Some(Duration::from_secs(MIN_POLL_SECS))
+        );
+        let t = |h, m| chrono::NaiveTime::from_hms_opt(h, m, 0).unwrap();
+        assert!(photos.content_now(t(23, 0)) && photos.content_now(t(4, 59)));
+        assert!(!photos.content_now(t(5, 0)) && !photos.content_now(t(12, 0)));
+        assert!(!nas.content_now(t(3, 0)));
+        assert!(desk.index_content && desk.poll_interval().is_none());
+    }
+
+    #[test]
+    fn time_window_parse() {
+        let w = TimeWindow::parse("02:00-05:00").unwrap();
+        let t = |h| chrono::NaiveTime::from_hms_opt(h, 0, 0).unwrap();
+        assert!(w.contains(t(2)) && w.contains(t(4)) && !w.contains(t(5)) && !w.contains(t(1)));
+        assert!(TimeWindow::parse("2시-5시").is_err());
+        assert!(TimeWindow::parse("02:00").is_err());
+    }
+
+    #[test]
+    fn warns_about_db_under_network_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let nas = dir.path().join("나스 공유");
+        std::fs::create_dir(&nas).unwrap();
+        let mut c = Config::default();
+        c.watches.push(WatchRoot {
+            path: nas.clone(),
+            kind: RootKind::Network,
+            ..Default::default()
+        });
+        assert!(c.warnings().is_empty());
+        c.store.path = Some(nas.join("tidy.db"));
+        let w = c.warnings();
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(w[0].contains("로컬"));
+        c.store.path = None;
+        c.watches.push(WatchRoot {
+            path: PathBuf::from(r"\\nas\공유"),
+            content_index_window: Some("밤".into()),
+            ..Default::default()
+        });
+        assert_eq!(c.warnings().len(), 2);
+    }
+
+    #[test]
     fn relative_rules_and_db_resolve_against_config_dir() {
         let dir = tempfile::tempdir().unwrap();
         let sub = dir.path().join("설정 폴더");
@@ -677,6 +901,8 @@ duplicate_policy = "rename"
                     kind: RootKind::Network,
                     recursive: true,
                     poll_interval_s: Some(120),
+                    poll_only: true,
+                    content_index_window: Some("02:00-05:00".into()),
                     ..Default::default()
                 },
             ],
@@ -692,6 +918,11 @@ duplicate_policy = "rename"
         assert_eq!(c.watches[0].path, patch.watches[0].path);
         assert_eq!(c.watches[1].kind, RootKind::Network);
         assert_eq!(c.watches[1].poll_interval_s, Some(120));
+        assert!(c.watches[1].poll_only && c.watches[1].index_content);
+        assert_eq!(
+            c.watches[1].content_index_window.as_deref(),
+            Some("02:00-05:00")
+        );
         assert_eq!(c.mover.duplicate_policy, DuplicatePolicy::Rename);
         assert!(c.general.quiet_mode);
         assert_eq!(c.general.hotkey, "CmdOrCtrl+Alt+K");

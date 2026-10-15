@@ -5,13 +5,20 @@
 //! move fails), so there is never a move without an undo record.
 //! Nothing here deletes user data: the only removals are
 //! - the source of a cross-volume move, after the copy was size+hash verified,
-//! - our own `.tidy-tmp.*` scratch copies,
+//! - our own `.tidy-tmp.*` scratch copies (also leftovers of an interrupted
+//!   copy, see [`Mover::recover_interrupted`]),
+//! - our own verified copy at the destination when the source could not be
+//!   removed (the file stays at its source, so it is never in two places),
+//! - the source of an interrupted move whose verified copy is already in
+//!   place with the same logged hash (finishing that move),
 //! - `duplicate_policy = "replace"`, which sends the identical existing copy
 //!   to the OS trash (`trash` crate), never `remove_file`.
 
+mod recover;
+mod transfer;
 mod undo;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -20,7 +27,11 @@ use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
+pub use recover::{RecoveryReport, DEFAULT_RECOVERY_GRACE};
+pub use transfer::{ProgressFn, TransferProgress};
 pub use undo::{UndoConflict, UndoReport};
+
+use transfer::{transfer, TransferOpts};
 
 use crate::config::DuplicatePolicy;
 use crate::paths::normalize_lexical;
@@ -145,10 +156,39 @@ impl ExpectedMoves {
     }
 }
 
+/// Destinations of transfers running in this process (recovery must not
+/// mistake them for interrupted ones).
+static IN_FLIGHT: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
+
+struct InFlight(PathBuf);
+
+impl InFlight {
+    fn start(dst: &Path) -> Self {
+        let mut g = IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+        g.get_or_insert_with(HashSet::new).insert(dst.to_path_buf());
+        Self(dst.to_path_buf())
+    }
+
+    fn contains(dst: &Path) -> bool {
+        let g = IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+        g.as_ref().is_some_and(|s| s.contains(dst))
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        let mut g = IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(s) = g.as_mut() {
+            s.remove(&self.0);
+        }
+    }
+}
+
 pub struct Mover {
     store: Store,
     policy: DuplicatePolicy,
     expected: Arc<ExpectedMoves>,
+    transfer: TransferOpts,
 }
 
 impl Mover {
@@ -157,7 +197,21 @@ impl Mover {
             store,
             policy,
             expected: ExpectedMoves::new(),
+            transfer: TransferOpts::default(),
         }
+    }
+
+    /// Report the progress of long copy-verify transfers (NAS moves).
+    pub fn with_progress(mut self, f: ProgressFn) -> Self {
+        self.transfer.progress = Some(f);
+        self
+    }
+
+    /// Always copy + verify instead of `rename`, even on one volume.
+    /// For tests and for shares whose server-side rename is unreliable.
+    pub fn copy_always(mut self, on: bool) -> Self {
+        self.transfer.copy_always = on;
+        self
     }
 
     pub fn with_expected(mut self, expected: Arc<ExpectedMoves>) -> Self {
@@ -223,12 +277,15 @@ impl Mover {
             }
         }
 
-        // Log first, then move; withdraw the row if the move fails.
-        let log_id = self.store.insert_move(&NewMove {
+        // Log first ('moving'), then move, then mark it done; withdraw the
+        // row if the move fails. A crash in between is found by
+        // `recover_interrupted`.
+        let _flight = InFlight::start(&dst);
+        let log_id = self.store.begin_move(&NewMove {
             batch_id: req.batch_id.clone(),
             src_path: src.clone(),
             dst_path: dst.clone(),
-            hash: Some(hash),
+            hash: Some(hash.clone()),
             size: Some(meta.len()),
             decided_by: req.decided_by,
             rule_name: req.rule_name.clone(),
@@ -236,10 +293,11 @@ impl Mover {
         })?;
         self.expected.expect(src);
         self.expected.expect(&dst);
-        if let Err(e) = transfer(src, &dst) {
+        if let Err(e) = transfer(src, &dst, Some(&hash), &self.transfer) {
             self.store.withdraw_move(log_id)?;
             return Err(e);
         }
+        self.store.complete_move(log_id)?;
         tracing::info!(src = %src.display(), dst = %dst.display(), "moved");
         Ok(MoveOutcome::Moved {
             log_id,
@@ -247,61 +305,6 @@ impl Mover {
             dst,
         })
     }
-}
-
-/// Move one file: `rename` on the same volume, otherwise copy to a temp
-/// name next to `dst`, verify size + blake3, rename into place and only then
-/// remove the source (SPEC §5.4 step 2). Never overwrites `dst`.
-fn transfer(src: &Path, dst: &Path) -> Result<(), MoverError> {
-    if dst.exists() {
-        return Err(MoverError::DestinationExists(dst.to_path_buf()));
-    }
-    match fs::rename(src, dst) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == io::ErrorKind::CrossesDevices => copy_verify_move(src, dst),
-        Err(e) => Err(MoverError::io("rename", src)(e)),
-    }
-}
-
-pub(crate) fn copy_verify_move(src: &Path, dst: &Path) -> Result<(), MoverError> {
-    let dir = dst.parent().unwrap_or_else(|| Path::new(""));
-    let name = dst
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let tmp = dir.join(format!(
-        ".{name}{TMP_MARKER}{}",
-        uuid::Uuid::new_v4().simple()
-    ));
-
-    let result = (|| {
-        let src_meta = fs::metadata(src).map_err(MoverError::io("stat", src))?;
-        let src_hash = hash_file(src)?;
-        fs::copy(src, &tmp).map_err(MoverError::io("copy", src))?;
-        if let Ok(mtime) = src_meta.modified() {
-            if let Ok(f) = File::options().write(true).open(&tmp) {
-                let _ = f.set_modified(mtime);
-            }
-        }
-        let tmp_len = fs::metadata(&tmp)
-            .map_err(MoverError::io("stat", &tmp))?
-            .len();
-        if tmp_len != src_meta.len() || hash_file(&tmp)? != src_hash {
-            return Err(MoverError::VerifyFailed(src.to_path_buf()));
-        }
-        if dst.exists() {
-            return Err(MoverError::DestinationExists(dst.to_path_buf()));
-        }
-        fs::rename(&tmp, dst).map_err(MoverError::io("rename", &tmp))
-    })();
-
-    if let Err(e) = result {
-        // Only our own scratch copy is cleaned up; the source is untouched.
-        let _ = fs::remove_file(&tmp);
-        return Err(e);
-    }
-    // The verified copy is in place; the original can now go.
-    fs::remove_file(src).map_err(MoverError::io("remove source after verified copy", src))
 }
 
 /// Validate a user/AI-supplied new name; keep the original extension when
@@ -508,24 +511,6 @@ mod tests {
     }
 
     #[test]
-    fn copy_verify_move_preserves_content_and_mtime() {
-        let dir = tempfile::tempdir().unwrap();
-        let src = dir.path().join("원본 파일.bin");
-        let data: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
-        fs::write(&src, &data).unwrap();
-        let mtime = fs::metadata(&src).unwrap().modified().unwrap();
-        let dst_dir = dir.path().join("다른 볼륨");
-        fs::create_dir(&dst_dir).unwrap();
-        let dst = dst_dir.join("원본 파일.bin");
-        copy_verify_move(&src, &dst).unwrap();
-        assert!(!src.exists());
-        assert_eq!(fs::read(&dst).unwrap(), data);
-        assert_eq!(fs::metadata(&dst).unwrap().modified().unwrap(), mtime);
-        // No scratch files left behind.
-        assert_eq!(fs::read_dir(&dst_dir).unwrap().count(), 1);
-    }
-
-    #[test]
     fn rename_move_keeps_extension_and_rejects_paths() {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("scan0001.pdf");
@@ -563,10 +548,35 @@ mod tests {
         fs::write(&a, "a").unwrap();
         fs::write(&b, "b").unwrap();
         assert!(matches!(
-            transfer(&a, &b),
+            transfer(&a, &b, None, &TransferOpts::default()),
             Err(MoverError::DestinationExists(_))
         ));
         assert_eq!(fs::read_to_string(&b).unwrap(), "b");
         assert!(a.exists());
+    }
+
+    #[test]
+    fn copy_always_moves_are_logged_done_and_undoable() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("바탕 화면").join("큰 파일.bin");
+        fs::create_dir_all(src.parent().unwrap()).unwrap();
+        fs::write(&src, vec![7u8; 2_000_000]).unwrap();
+        let nas = dir.path().join("NAS 공유").join("보관");
+        let m = mover().copy_always(true);
+        let MoveOutcome::Moved { log_id, dst, .. } = m.move_file(&req(&src, &nas)).unwrap() else {
+            panic!()
+        };
+        let e = m.store().get_move(log_id).unwrap().unwrap();
+        assert!(!e.in_progress);
+        assert!(!InFlight::contains(&dst));
+        assert_eq!(
+            m.store().placed_hash(&dst).unwrap(),
+            Some(hash_file(&dst).unwrap())
+        );
+        let r = m.undo_last().unwrap().unwrap();
+        assert_eq!(r.restored.len(), 1);
+        assert_eq!(fs::read(&src).unwrap().len(), 2_000_000);
+        assert_eq!(fs::read_dir(&nas).unwrap().count(), 0);
+        assert_eq!(m.store().placed_hash(&dst).unwrap(), None);
     }
 }
