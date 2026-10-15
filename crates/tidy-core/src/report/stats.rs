@@ -34,6 +34,16 @@ pub struct Stats {
     pub empty_dirs: Vec<String>,
     /// Files not modified within `stale_after`.
     pub stale_files: u64,
+    /// The `top_n` longest-unused files (later of modified / accessed).
+    pub stale: Vec<StaleFile>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StaleFile {
+    pub path: String,
+    pub bytes: u64,
+    /// Unix seconds of the last modification or access.
+    pub last_used: i64,
 }
 
 impl Stats {
@@ -44,6 +54,7 @@ impl Stats {
         let mut empty: Vec<String> = Vec::new();
         let now = SystemTime::now();
         let mut stale = 0u64;
+        let mut stale_list: Vec<StaleFile> = Vec::new();
 
         walk(tree, "", &mut |path, node| {
             for f in &node.files {
@@ -62,6 +73,11 @@ impl Stats {
                 });
                 if is_stale(f, now, stale_after) {
                     stale += 1;
+                    stale_list.push(StaleFile {
+                        path: join(path, &f.name),
+                        bytes: f.size,
+                        last_used: last_used(f).map(unix).unwrap_or(0),
+                    });
                 }
             }
             if !path.is_empty() {
@@ -83,6 +99,8 @@ impl Stats {
         dirs.sort_by_key(|d| std::cmp::Reverse(d.bytes));
         dirs.truncate(top_n);
         empty.sort();
+        stale_list.sort_by_key(|f| f.last_used);
+        stale_list.truncate(top_n);
 
         Stats {
             total_files: tree.file_count,
@@ -94,18 +112,33 @@ impl Stats {
             largest_dirs: dirs,
             empty_dirs: empty,
             stale_files: stale,
+            stale: stale_list,
         }
     }
 }
 
+fn last_used(f: &FileNode) -> Option<SystemTime> {
+    match (f.modified, f.accessed) {
+        (Some(m), Some(a)) => Some(m.max(a)),
+        (m, a) => m.or(a),
+    }
+}
+
+fn unix(t: SystemTime) -> i64 {
+    t.duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// SPEC §5.7 "N일 이상 미접근": not modified or opened within `after`.
 fn is_stale(f: &FileNode, now: SystemTime, after: Duration) -> bool {
-    match f.modified.and_then(|m| now.duration_since(m).ok()) {
+    match last_used(f).and_then(|m| now.duration_since(m).ok()) {
         Some(age) => age > after,
         None => false,
     }
 }
 
-fn join(dir: &str, name: &str) -> String {
+pub(crate) fn join(dir: &str, name: &str) -> String {
     if dir.is_empty() {
         name.to_string()
     } else {
@@ -113,7 +146,7 @@ fn join(dir: &str, name: &str) -> String {
     }
 }
 
-fn walk<'a>(node: &'a DirNode, path: &str, f: &mut impl FnMut(&str, &'a DirNode)) {
+pub(crate) fn walk<'a>(node: &'a DirNode, path: &str, f: &mut impl FnMut(&str, &'a DirNode)) {
     f(path, node);
     for (name, child) in &node.dirs {
         walk(child, &join(path, name), f);

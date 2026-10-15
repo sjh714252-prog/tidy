@@ -52,6 +52,9 @@ cargo run -p tidy-cli -- index <폴더 또는 파일>   # --rebuild는 전체 �
 cargo run -p tidy-cli -- search "키워드"
 cargo run -p tidy-cli -- ai status / ai key set tidy/anthropic / ai test <파일> / ai log
 cargo run -p tidy-cli -- learn [--accept N | --dismiss N]   # 학습 규칙 제안
+cargo run -p tidy-cli -- report [폴더] [--format text|json|html]
+cargo run -p tidy-cli -- restructure [폴더] --rules|--ai  → --apply ID [--only 1,3]   # 승인 전엔 아무것도 안 옮김
+cargo run -p tidy-cli -- log --batches / undo --batch <id>
 cd apps/desktop && npm ci && npm run tauri dev   # 클라우드: npm run build + (src-tauri) cargo clippy 까지만
 ```
 
@@ -61,7 +64,7 @@ cd apps/desktop && npm ci && npm run tauri dev   # 클라우드: npm run build +
 - [x] M2 Store + Indexer + FTS 검색 (2026-10-15) — 토크나이저 결정: docs/fts-tokenizer.md
 - [x] M3 Tauri 앱 기본 플로우 (2026-10-15) — 실행 확인은 Windows 로컬에서
 - [x] M4 AI Layer + 학습 루프 (2026-10-15) — 실제 API 확인은 로컬에서 (`tidy ai test`)
-- [ ] M5 Reporter + 재구성 diff
+- [x] M5 Reporter + 재구성 diff (2026-10-15) — 리포트·규칙/AI 재구성(승인 후 한 배치 적용)·이동 기록
 - [ ] M6 NAS 폴링/복사-검증 이동
 - [ ] M7 의미검색 + 패키징
 

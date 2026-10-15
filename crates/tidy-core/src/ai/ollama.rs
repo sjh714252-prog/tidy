@@ -42,12 +42,13 @@ impl LlmProvider for OllamaProvider {
         system: &str,
         user: &str,
         schema: &Value,
+        max_tokens: u32,
     ) -> Result<LlmResponse, AiError> {
         let body = json!({
             "model": self.model,
             "stream": false,
             "format": schema,
-            "options": { "temperature": 0 },
+            "options": { "temperature": 0, "num_predict": max_tokens },
             "messages": [
                 { "role": "system", "content": system },
                 { "role": "user", "content": user }
@@ -109,6 +110,7 @@ mod tests {
                 "s",
                 "u",
                 &json!({"type":"object","properties":{"dest":{"type":"string"}}}),
+                256,
             )
             .await
             .unwrap();
@@ -128,7 +130,10 @@ mod tests {
             Some("http://127.0.0.1:9".into()),
             0,
         );
-        let e = p.complete_json("s", "u", &json!({})).await.unwrap_err();
+        let e = p
+            .complete_json("s", "u", &json!({}), 256)
+            .await
+            .unwrap_err();
         assert!(matches!(e, AiError::Network { .. }), "{e}");
     }
 }

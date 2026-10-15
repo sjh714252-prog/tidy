@@ -81,3 +81,21 @@ cargo run -p tidy-cli -- learn --accept 1             # rules.toml 맨 앞에 �
 ```
 
 앱에서는 설정 > AI 분류에서 제공자, 모델, 키, 기준값을 정하고 "연결 테스트"로 확인할 수 있습니다. 학습 제안은 대기열 탭 위에 카드로 나타납니다.
+
+## 리포트와 재구성 (M5)
+
+```
+cargo run -p tidy-cli -- report ~/Desktop                       # 트리·통계·중복·오래 안 쓴 파일
+cargo run -p tidy-cli -- report ~/Desktop --format html > 리포트.html
+cargo run -p tidy-cli -- restructure ~/Desktop --rules          # 규칙대로 정리하면? (AI 불필요)
+cargo run -p tidy-cli -- restructure ~/Desktop --ai             # AI 재구성 제안 (before/after diff)
+cargo run -p tidy-cli -- restructure --apply 2 --only 1,3       # 승인한 항목만, 한 배치로 이동
+cargo run -p tidy-cli -- log --batches                          # 이동 기록
+cargo run -p tidy-cli -- undo --batch <id>                      # 재구성 통째로 되돌리기
+```
+
+- 재구성 제안은 **승인 전에는 아무것도 옮기지 않습니다.**
+- 적용하면 한 배치로 기록되므로 한 번에 되돌릴 수 있습니다.
+- 파일을 지우지 않고, 비게 된 폴더도 그대로 둡니다.
+
+앱에서는 리포트 탭과 이동 기록 탭에서 같은 기능을 쓸 수 있습니다.

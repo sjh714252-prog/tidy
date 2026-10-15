@@ -5,5 +5,5 @@ pub mod ai;
 pub mod learner;
 pub mod rules;
 
-pub use ai::{AiClassifier, AiSuggestion};
+pub use ai::{AiCall, AiClassifier, AiSuggestion};
 pub use rules::{Classification, FileFacts, Rule, RuleError, RuleSet};
