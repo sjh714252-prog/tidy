@@ -11,6 +11,7 @@ const LABEL: Record<ActivityKind, string> = {
   no_rule: "규칙 없음",
   skipped: "건너뜀",
   error: "오류",
+  warning: "주의",
   info: "알림",
 };
 

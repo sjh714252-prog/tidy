@@ -11,7 +11,7 @@ use tauri_plugin_opener::OpenerExt;
 use tidy_core::classify::{learner, AiClassifier, RuleSet};
 use tidy_core::config::{
     write_ai_settings, write_settings, AiPatch, ProviderConfig, ProviderKind, RootKind,
-    SettingsPatch, WatchRoot,
+    SettingsPatch, TimeWindow, WatchRoot,
 };
 use tidy_core::engine::{new_batch_id, reindex_undo};
 use tidy_core::index::IndexOptions;
@@ -71,6 +71,8 @@ pub struct StatusDto {
     pub ai_state: &'static str,
     /// Provider / model when ready, the reason otherwise.
     pub ai_detail: Option<String>,
+    /// Network watch folders that are unreachable right now (paused).
+    pub offline: Vec<String>,
 }
 
 fn status(app: &AppHandle) -> StatusDto {
@@ -122,6 +124,17 @@ fn status(app: &AppHandle) -> StatusDto {
         ai_detail: match ai {
             Some(Ok(m)) | Some(Err(m)) if inner.cfg.ai.enabled => Some(m),
             _ => None,
+        },
+        offline: if running {
+            state
+                .offline
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .map(|p| s(p))
+                .collect()
+        } else {
+            Vec::new()
         },
     }
 }
@@ -437,6 +450,13 @@ pub async fn pick_folder(app: AppHandle, start: Option<String>) -> CmdResult<Opt
     .await
 }
 
+/// Whether a folder looks like a network share (UNC, remote drive, SMB/NFS
+/// mount) — the default "종류" when the user adds a folder.
+#[tauri::command]
+pub async fn is_network_path(path: String) -> CmdResult<bool> {
+    blocking(move || Ok(tidy_core::paths::looks_like_network(Path::new(&path)))).await
+}
+
 // ── settings ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -448,6 +468,12 @@ pub struct WatchDto {
     pub recursive: bool,
     pub index_content: bool,
     pub poll_interval_s: Option<u64>,
+    /// Network folders: polling only, no OS events.
+    #[serde(default)]
+    pub poll_only: bool,
+    /// "HH:MM-HH:MM": background body-text indexing only in this window.
+    #[serde(default)]
+    pub content_index_window: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -494,6 +520,8 @@ pub async fn get_settings(app: AppHandle) -> CmdResult<SettingsDto> {
                     recursive: w.recursive,
                     index_content: w.index_content,
                     poll_interval_s: w.poll_interval_s,
+                    poll_only: w.poll_only,
+                    content_index_window: w.content_index_window.clone(),
                 })
                 .collect(),
             rules_path: s(&cfg.classify.rules),
@@ -555,17 +583,28 @@ pub async fn save_settings(app: AppHandle, args: SaveSettingsArgs) -> CmdResult<
             if path.is_empty() {
                 continue;
             }
+            let network = w.kind == "network";
+            let window = w
+                .content_index_window
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            if let Some(win) = &window {
+                TimeWindow::parse(win).map_err(|e| format!("{path}: 본문 인덱싱 시간대 — {e}"))?;
+            }
             watches.push(WatchRoot {
                 path: PathBuf::from(path),
-                kind: if w.kind == "network" {
+                kind: if network {
                     RootKind::Network
                 } else {
                     RootKind::Local
                 },
                 recursive: w.recursive,
                 index_content: w.index_content,
-                poll_interval_s: w.poll_interval_s,
-                content_index_window: None,
+                poll_interval_s: w.poll_interval_s.filter(|s| *s > 0),
+                content_index_window: window.filter(|_| network),
+                poll_only: network && w.poll_only,
             });
         }
         let hotkey = if args.hotkey.trim().is_empty() {

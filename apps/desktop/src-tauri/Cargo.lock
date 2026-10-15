@@ -4754,6 +4754,7 @@ dependencies = [
  "globset",
  "humansize",
  "keyring",
+ "libc",
  "notify",
  "pdf-extract",
  "quick-xml 0.41.0",
@@ -4770,6 +4771,7 @@ dependencies = [
  "trash",
  "uuid",
  "walkdir",
+ "windows-sys 0.60.2",
  "zip",
 ]
 
