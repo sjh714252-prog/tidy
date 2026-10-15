@@ -47,15 +47,17 @@ cargo run -p tidy-cli -- scan ~/Desktop
 cargo run -p tidy-cli -- watch --config ./config.toml   # --dry-run, --process-existing
 cargo run -p tidy-cli -- undo --last                     # --batch <id>, --id <n>
 cargo run -p tidy-cli -- log / pending / classify <파일>
+cargo run -p tidy-cli -- pending --move <ID> [--to DIR] / --skip <ID> / --ignore <ID>
+cargo run -p tidy-cli -- index <폴더 또는 파일>   # --rebuild는 전체 인덱스 삭제 후 재생성
 cargo run -p tidy-cli -- search "키워드"
-cd apps/desktop && npm run tauri dev
+cd apps/desktop && npm ci && npm run tauri dev   # 클라우드: npm run build + (src-tauri) cargo clippy 까지만
 ```
 
 ## 진행 상태
 - [x] M0 워크스페이스 + `tidy-cli scan` (2026-10-15)
 - [x] M1 Watcher + Rules + Mover + Undo (2026-10-15)
 - [x] M2 Store + Indexer + FTS 검색 (2026-10-15) — 토크나이저 결정: docs/fts-tokenizer.md
-- [ ] M3 Tauri 앱 기본 플로우
+- [x] M3 Tauri 앱 기본 플로우 (2026-10-15) — 실행 확인은 Windows 로컬에서
 - [ ] M4 AI Layer + 학습 루프
 - [ ] M5 Reporter + 재구성 diff
 - [ ] M6 NAS 폴링/복사-검증 이동
