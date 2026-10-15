@@ -1,0 +1,48 @@
+# Tidy 설정 예시 (SPEC §7). 복사해서 config.toml로 사용하세요:
+#   cp config.example.toml config.toml      (Windows: copy config.example.toml config.toml)
+#   tidy watch --config config.toml
+#
+# 경로 작성 팁
+# - "~"는 홈 폴더로 바뀝니다 (예: "~/Desktop" → C:\Users\<이름>\Desktop).
+# - Windows 경로는 슬래시(/)로 쓰거나 작은따옴표 문자열을 쓰세요.
+#   'C:\Users\홍 길동\OneDrive\바탕 화면'   ← 작은따옴표: 역슬래시 그대로
+#   "C:/Users/홍 길동/OneDrive/바탕 화면"   ← 큰따옴표: 슬래시 사용
+#   (큰따옴표 안의 역슬래시는 TOML 이스케이프로 해석되어 오류가 납니다.)
+# - OneDrive 백업을 켠 한국어 Windows의 바탕화면은 보통
+#   C:\Users\<이름>\OneDrive\바탕 화면 입니다. 실제 위치를 확인하세요.
+
+[general]
+language = "ko"
+
+[[watch]]
+path = "~/Desktop"
+kind = "local"
+recursive = false        # 하위 폴더까지 감시하려면 true
+
+[[watch]]
+path = "~/Downloads"
+kind = "local"
+recursive = false
+
+[classify]
+# 규칙 파일. 상대 경로는 이 config.toml이 있는 폴더 기준입니다.
+rules = "rules.toml"
+# 파일 크기/수정시각이 이 시간(초) 동안 변하지 않아야 처리합니다(다운로드 중 파일 보호).
+stabilize_secs = 3
+ignore_globs = ["*.tmp", "*.crdownload", "*.part", "~$*", ".DS_Store", "Thumbs.db", "desktop.ini"]
+
+[mover]
+undo_retention_days = 30   # move_log 보관 기간(일). 지나면 로그만 지워지고 파일은 그대로.
+# 목적지에 '내용이 같은' 파일이 이미 있을 때:
+#   skip    = 옮기지 않고 그대로 둠 (기본)
+#   rename  = "이름 (1).ext"로 옮김
+#   replace = 기존 사본을 OS 휴지통으로 보내고 옮김 (영구 삭제 아님)
+# 이름만 같고 내용이 다르면 항상 "이름 (1).ext"로 옮깁니다(덮어쓰기 없음).
+duplicate_policy = "skip"
+
+[store]
+# 이동 로그 DB(SQLite). 생략하면 OS 기본 위치:
+#   Windows: %LOCALAPPDATA%\tidy\tidy.db / macOS: ~/Library/Application Support/tidy/tidy.db
+#   Linux: ~/.local/share/tidy/tidy.db
+# 상대 경로는 이 config.toml이 있는 폴더 기준입니다.
+# path = "tidy.db"
