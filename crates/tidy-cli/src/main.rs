@@ -8,7 +8,8 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use humansize::{format_size, BINARY};
-use tidy_core::classify::{FileFacts, RuleSet};
+use tidy_core::ai;
+use tidy_core::classify::{learner, AiClassifier, FileFacts, RuleSet};
 use tidy_core::engine::{new_batch_id, reindex_undo, Action};
 use tidy_core::index::{FileOutcome, IndexOptions, IndexReport, Indexer};
 use tidy_core::mover::{ExpectedMoves, Mover, UndoReport};
@@ -16,7 +17,7 @@ use tidy_core::pending::{resolve, Decision, Resolution};
 use tidy_core::report::{render_tree, scan, ScanOptions, Stats, TreeOptions};
 use tidy_core::search::{search, MatchedIn, Query, SearchOptions};
 use tidy_core::service::{run_watch, WatchEvent, WatchRunOptions};
-use tidy_core::store::Store;
+use tidy_core::store::{PendingSource, Store};
 use tidy_core::Config;
 
 #[derive(Parser)]
@@ -53,6 +54,52 @@ enum Cmd {
     Index(IndexArgs),
     /// Full-text search over the index.
     Search(SearchArgs),
+    /// AI status, API keys (OS keychain), test call, call log.
+    #[command(subcommand)]
+    Ai(AiCmd),
+    /// Rule suggestions learned from your decisions (--accept / --dismiss).
+    Learn(LearnArgs),
+}
+
+#[derive(Subcommand)]
+enum AiCmd {
+    /// Show whether the AI step is usable and why not.
+    Status,
+    /// Store or remove an API key in the OS keychain.
+    #[command(subcommand)]
+    Key(KeyCmd),
+    /// Ask the AI where a file belongs (moves nothing; costs one call).
+    Test {
+        file: PathBuf,
+        /// Rules file (default: classify.rules from the config).
+        #[arg(long)]
+        rules: Option<PathBuf>,
+    },
+    /// Recent AI calls: tokens, cost, latency, errors (no contents).
+    Log {
+        #[arg(short = 'n', long, default_value_t = 20)]
+        limit: usize,
+    },
+}
+
+#[derive(Subcommand)]
+enum KeyCmd {
+    /// Read the key from the terminal (not echoed) or stdin and store it
+    /// under KEY_REF (e.g. tidy/anthropic, as in the profile's key_ref).
+    Set { key_ref: String },
+    /// Remove the stored key.
+    Delete { key_ref: String },
+}
+
+#[derive(Args)]
+#[group(multiple = false)]
+struct LearnArgs {
+    /// Add suggestion N (as listed) to the top of rules.toml.
+    #[arg(long, value_name = "N")]
+    accept: Option<usize>,
+    /// Never suggest N again.
+    #[arg(long, value_name = "N")]
+    dismiss: Option<usize>,
 }
 
 #[derive(Args)]
@@ -105,6 +152,9 @@ struct PendingArgs {
     /// Destination folder for --move instead of the suggestion.
     #[arg(long, requires = "move", value_name = "DIR")]
     to: Option<PathBuf>,
+    /// New file name for --move (keeps the extension if none is given).
+    #[arg(long, requires = "move", value_name = "NAME")]
+    rename: Option<String>,
     /// Drop entry ID from the queue and leave the file (this time only).
     #[arg(long, value_name = "ID", conflicts_with = "ignore")]
     skip: Option<i64>,
@@ -127,6 +177,9 @@ struct WatchArgs {
     /// Do not update the search index for handled/moved files.
     #[arg(long)]
     no_index: bool,
+    /// Rules only: never ask the AI, even if [ai] is enabled.
+    #[arg(long)]
+    no_ai: bool,
 }
 
 #[derive(Args)]
@@ -212,6 +265,8 @@ fn main() -> Result<()> {
         Cmd::Classify(args) => cmd_classify(cli.config, args),
         Cmd::Index(args) => cmd_index(cli.config, args),
         Cmd::Search(args) => cmd_search(cli.config, args),
+        Cmd::Ai(cmd) => cmd_ai(cli.config, cmd),
+        Cmd::Learn(args) => cmd_learn(cli.config, args),
     }
 }
 
@@ -385,6 +440,7 @@ fn cmd_watch(config: Option<PathBuf>, args: WatchArgs) -> Result<()> {
         process_existing: args.process_existing,
         dry_run: args.dry_run,
         index: !args.no_index,
+        ai: !args.no_ai,
     };
     let stop = AtomicBool::new(false); // Ctrl+C ends the process
     run_watch(&cfg, &opts, ExpectedMoves::new(), &stop, |ev| match ev {
@@ -397,6 +453,8 @@ fn cmd_watch(config: Option<PathBuf>, args: WatchArgs) -> Result<()> {
                 if args.dry_run { " (dry run)" } else { "" }
             );
         }
+        WatchEvent::Ai(Ok(m)) => eprintln!("# ai: {m}"),
+        WatchEvent::Ai(Err(e)) => eprintln!("# ai: off — {e} (rules only)"),
         WatchEvent::Handled(path, res) => report_action(res, path),
     })?;
     Ok(())
@@ -409,23 +467,30 @@ fn report_action(res: &Result<Action, tidy_core::engine::EngineError>, path: &Pa
             dst,
             rule,
             batch_id,
+            confidence,
             ..
         }) => println!(
-            "moved     {} -> {}  [{}] batch {}",
+            "moved     {} -> {}  [{}{}] batch {}",
             src.display(),
             dst.display(),
             rule,
+            pct(*confidence),
             short(batch_id)
         ),
         Ok(Action::Pending {
             path,
             rule,
             suggested,
+            confidence,
+            reason,
+            ..
         }) => println!(
-            "pending   {} (suggested {})  [{}] confirm=true",
+            "pending   {} (suggested {})  [{}{}] {}",
             path.display(),
             suggested.display(),
-            rule
+            rule,
+            pct(*confidence),
+            reason.as_deref().unwrap_or("confirm=true")
         ),
         Ok(Action::WouldMove {
             path,
@@ -453,11 +518,18 @@ fn report_action(res: &Result<Action, tidy_core::engine::EngineError>, path: &Pa
             tracing::info!(path = %path.display(), rule, "already in place")
         }
         Ok(Action::NoRule(p)) => println!("no rule   {}", p.display()),
+        Ok(Action::AiFailed { path, error }) => {
+            println!("no rule   {} (AI unavailable: {error})", path.display())
+        }
         Ok(Action::Skipped { path, reason }) => {
             println!("skipped   {} ({reason})", path.display())
         }
         Err(e) => eprintln!("error     {}: {e:#}", path.display()),
     }
+}
+
+fn pct(c: Option<f64>) -> String {
+    c.map(|c| format!(" {:.0}%", c * 100.0)).unwrap_or_default()
 }
 
 fn short(id: &str) -> &str {
@@ -562,6 +634,7 @@ fn cmd_pending(config: Option<PathBuf>, args: PendingArgs) -> Result<()> {
             id,
             Decision::Move {
                 dest_dir: args.to.map(|p| tidy_core::config::expand_home(&p)),
+                new_name: args.rename,
             },
         ))
     } else if let Some(id) = args.skip {
@@ -606,8 +679,16 @@ fn cmd_pending(config: Option<PathBuf>, args: PendingArgs) -> Result<()> {
         println!("no pending files");
     }
     for p in items {
+        let who = match p.source {
+            PendingSource::Rule => format!("rule: {}", p.reason.as_deref().unwrap_or("")),
+            PendingSource::Ai => format!(
+                "AI{}: {}",
+                pct(p.confidence),
+                p.reason.as_deref().unwrap_or("")
+            ),
+        };
         println!(
-            "#{:<4} {}  {} -> {}  [{}]{}",
+            "#{:<4} {}  {} -> {}{}  [{}]{}",
             p.id,
             fmt_time(p.created_at),
             p.path.display(),
@@ -615,7 +696,11 @@ fn cmd_pending(config: Option<PathBuf>, args: PendingArgs) -> Result<()> {
                 .as_deref()
                 .map(|d| d.display().to_string())
                 .unwrap_or_default(),
-            p.reason.as_deref().unwrap_or(""),
+            p.suggested_name
+                .as_deref()
+                .map(|n| format!(" (rename: {n})"))
+                .unwrap_or_default(),
+            who,
             if p.path.exists() { "" } else { "  (file gone)" }
         );
     }
@@ -869,5 +954,166 @@ fn cmd_config(path: Option<PathBuf>) -> Result<()> {
         );
     }
     println!("{}", toml::to_string_pretty(&cfg)?);
+    Ok(())
+}
+
+fn cmd_ai(config: Option<PathBuf>, cmd: AiCmd) -> Result<()> {
+    match cmd {
+        AiCmd::Key(KeyCmd::Set { key_ref }) => {
+            let key = if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                rpassword::prompt_password(format!("API key for {key_ref}: "))?
+            } else {
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)?;
+                line
+            };
+            ai::keys::set_key(&key_ref, &key)?;
+            // Read back to confirm without ever printing the key.
+            if !ai::keys::has_key(&key_ref) {
+                bail!("the keychain did not keep the key for {key_ref}");
+            }
+            println!("stored in the OS keychain: {key_ref}");
+            Ok(())
+        }
+        AiCmd::Key(KeyCmd::Delete { key_ref }) => {
+            ai::keys::delete_key(&key_ref)?;
+            println!("removed: {key_ref}");
+            Ok(())
+        }
+        AiCmd::Status => {
+            let cfg = load_config(config)?;
+            let a = &cfg.ai;
+            println!(
+                "enabled: {}   profile: {}   auto_threshold: {}   send_content: {}",
+                a.enabled,
+                a.active_profile,
+                a.auto_threshold,
+                a.send_content()
+            );
+            match a.active().and_then(|p| p.classify.as_ref()) {
+                Some(pc) => {
+                    println!(
+                        "classify: {} / {}{}",
+                        pc.provider.as_str(),
+                        pc.model,
+                        pc.base_url
+                            .as_deref()
+                            .map(|u| format!(" @ {u}"))
+                            .unwrap_or_default()
+                    );
+                    if let Some(r) = &pc.key_ref {
+                        println!(
+                            "key {r}: {}",
+                            if ai::keys::has_key(r) {
+                                "stored"
+                            } else {
+                                "MISSING"
+                            }
+                        );
+                    }
+                }
+                None => println!("classify: (no model in profile \"{}\")", a.active_profile),
+            }
+            let rules = RuleSet::load(&cfg.classify.rules).unwrap_or_default();
+            match AiClassifier::from_config(&cfg, &rules) {
+                Ok(_) => println!("state: ready"),
+                Err(e) => println!("state: off — {e} (rules only)"),
+            }
+            if let Ok(store) = Store::open(&cfg.store.db_path()) {
+                let (calls, failed, inp, out, cost) = store.ai_usage()?;
+                println!(
+                    "usage: {calls} calls ({failed} failed), {inp} in / {out} out tokens, ~${cost:.4}"
+                );
+            }
+            Ok(())
+        }
+        AiCmd::Test { file, rules } => {
+            let cfg = load_config(config)?;
+            let rules = load_rules(&cfg, rules)?;
+            let ai = AiClassifier::from_config(&cfg, &rules)?;
+            let store = Store::open(&cfg.store.db_path())?;
+            let path = tidy_core::config::expand_home(&file);
+            let facts = FileFacts::from_path(&path)
+                .with_context(|| format!("reading {}", path.display()))?;
+            let s = ai.suggest(&store, &facts)?;
+            println!("{}", serde_json::to_string_pretty(&s)?);
+            println!(
+                "auto-move allowed: {}",
+                if ai.auto_allowed(&s) {
+                    "yes"
+                } else {
+                    "no (would ask)"
+                }
+            );
+            Ok(())
+        }
+        AiCmd::Log { limit } => {
+            let cfg = load_config(config)?;
+            let store = Store::open(&cfg.store.db_path())?;
+            for e in store.recent_ai_log(limit)? {
+                println!(
+                    "{}  {:<9} {:<20} {:<8} {:>6}/{:<5} tok {:>6} ms  {}{}",
+                    fmt_time(e.called_at),
+                    e.provider,
+                    e.model,
+                    e.purpose,
+                    e.input_tokens.map(|v| v.to_string()).unwrap_or("-".into()),
+                    e.output_tokens.map(|v| v.to_string()).unwrap_or("-".into()),
+                    e.latency_ms.unwrap_or(0),
+                    e.cost_usd.map(|c| format!("${c:.5} ")).unwrap_or_default(),
+                    if e.ok {
+                        e.result.unwrap_or_default()
+                    } else {
+                        format!("ERROR {}", e.error.unwrap_or_default())
+                    }
+                );
+            }
+            Ok(())
+        }
+    }
+}
+
+fn cmd_learn(config: Option<PathBuf>, args: LearnArgs) -> Result<()> {
+    let cfg = load_config(config)?;
+    let store = Store::open(&cfg.store.db_path())?;
+    let rules = RuleSet::load(&cfg.classify.rules).unwrap_or_default();
+    let threshold = cfg.classify.learn_threshold;
+    let list = learner::suggestions(&store, &rules, threshold)?;
+    let pick = |n: usize| {
+        list.get(n.wrapping_sub(1))
+            .with_context(|| format!("no suggestion #{n} (see `tidy learn`)"))
+    };
+    if let Some(n) = args.accept {
+        let s = pick(n)?;
+        learner::accept(&store, &cfg.classify.rules, threshold, &s.key)?;
+        println!(
+            "added to {}:\n{}",
+            cfg.classify.rules.display(),
+            s.rule_toml
+        );
+        println!("restart `tidy watch` (or save settings in the app) to use it");
+        return Ok(());
+    }
+    if let Some(n) = args.dismiss {
+        let s = pick(n)?;
+        learner::dismiss(&store, &s.key)?;
+        println!("dismissed: {}", s.rule_name);
+        return Ok(());
+    }
+    if list.is_empty() {
+        println!(
+            "no suggestions yet (a pattern needs {threshold} identical decisions in the queue)"
+        );
+    }
+    for (i, s) in list.iter().enumerate() {
+        println!(
+            "{}. {}  ({}회: {})\n{}",
+            i + 1,
+            s.rule_name,
+            s.count,
+            s.examples.join(", "),
+            s.rule_toml
+        );
+    }
     Ok(())
 }

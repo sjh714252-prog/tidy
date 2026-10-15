@@ -26,6 +26,10 @@ blake3.workspace = true
 uuid.workspace = true
 trash.workspace = true
 dunce.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+keyring.workspace = true
 # M2 extractors (SPEC §5.5): pure-Rust, no external CLIs.
 zip = { version = "8", default-features = false, features = ["deflate"] }
 quick-xml = "0.41"

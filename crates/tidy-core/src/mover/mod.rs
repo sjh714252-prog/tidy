@@ -46,6 +46,8 @@ pub enum MoverError {
     DestinationExists(PathBuf),
     #[error("copy verification failed for {0} (size or hash mismatch); source left untouched")]
     VerifyFailed(PathBuf),
+    #[error("invalid new file name: {0:?}")]
+    InvalidName(String),
     #[error("could not send {path} to trash: {msg}")]
     Trash { path: PathBuf, msg: String },
 }
@@ -92,6 +94,10 @@ pub struct MoveRequest {
     pub decided_by: DecidedBy,
     pub rule_name: Option<String>,
     pub ai_confidence: Option<f64>,
+    /// Give the file a new name (confirm popup "이름 바꿔 이동"). A plain
+    /// name without separators; the original extension is kept when the
+    /// new name has none.
+    pub new_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -174,14 +180,18 @@ impl Mover {
         if !meta.is_file() {
             return Err(MoverError::NotAFile(src.clone()));
         }
-        let name = src
+        let original = src
             .file_name()
             .ok_or_else(|| MoverError::NotAFile(src.clone()))?;
+        let name: std::ffi::OsString = match &req.new_name {
+            Some(n) => renamed(n, src)?.into(),
+            None => original.to_os_string(),
+        };
 
         // Whatever the caller passes, the logged paths never contain `..`.
         let dest_dir = normalize_lexical(&req.dest_dir);
         if let Some(parent) = src.parent() {
-            if same_dir(parent, &dest_dir) {
+            if same_dir(parent, &dest_dir) && name.as_os_str() == original {
                 return Ok(MoveOutcome::AlreadyInPlace(src.clone()));
             }
         }
@@ -189,7 +199,7 @@ impl Mover {
         let hash = hash_file(src)?;
         fs::create_dir_all(&dest_dir).map_err(MoverError::io("create dir", &dest_dir))?;
 
-        let mut dst = dest_dir.join(name);
+        let mut dst = dest_dir.join(&name);
         if dst.exists() {
             if hash_file(&dst)? == hash {
                 match self.policy {
@@ -294,6 +304,24 @@ pub(crate) fn copy_verify_move(src: &Path, dst: &Path) -> Result<(), MoverError>
     fs::remove_file(src).map_err(MoverError::io("remove source after verified copy", src))
 }
 
+/// Validate a user/AI-supplied new name; keep the original extension when
+/// the new name has none ("보고서" + `a.hwp` → "보고서.hwp").
+fn renamed(new_name: &str, src: &Path) -> Result<String, MoverError> {
+    let n = new_name.trim();
+    if n.is_empty()
+        || n == "."
+        || n == ".."
+        || n.contains(['/', '\\', ':', '\0'])
+        || n.chars().count() > 200
+    {
+        return Err(MoverError::InvalidName(new_name.to_string()));
+    }
+    Ok(match (Path::new(n).extension(), src.extension()) {
+        (None, Some(ext)) => format!("{n}.{}", ext.to_string_lossy()),
+        _ => n.to_string(),
+    })
+}
+
 /// blake3 hex digest of a file.
 pub fn hash_file(path: &Path) -> Result<String, MoverError> {
     let mut f = File::open(path).map_err(MoverError::io("open", path))?;
@@ -362,6 +390,7 @@ mod tests {
             decided_by: DecidedBy::Rule,
             rule_name: Some("test".into()),
             ai_confidence: None,
+            new_name: None,
         }
     }
 
@@ -494,6 +523,36 @@ mod tests {
         assert_eq!(fs::metadata(&dst).unwrap().modified().unwrap(), mtime);
         // No scratch files left behind.
         assert_eq!(fs::read_dir(&dst_dir).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn rename_move_keeps_extension_and_rejects_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("scan0001.pdf");
+        fs::write(&src, "x").unwrap();
+        let m = mover();
+        let mut r = req(&src, &dir.path().join("영수증"));
+        r.new_name = Some("2026-10 택시 영수증".into());
+        let MoveOutcome::Moved { dst, .. } = m.move_file(&r).unwrap() else {
+            panic!()
+        };
+        assert_eq!(
+            dst,
+            dir.path().join("영수증").join("2026-10 택시 영수증.pdf")
+        );
+
+        let other = dir.path().join("b.txt");
+        fs::write(&other, "y").unwrap();
+        let mut bad = req(&other, dir.path());
+        bad.new_name = Some("../탈출.txt".into());
+        assert!(matches!(m.move_file(&bad), Err(MoverError::InvalidName(_))));
+        // Renaming in place is a move too (logged, undoable).
+        let mut inplace = req(&other, dir.path());
+        inplace.new_name = Some("새 이름.txt".into());
+        assert!(matches!(
+            m.move_file(&inplace).unwrap(),
+            MoveOutcome::Moved { .. }
+        ));
     }
 
     #[test]

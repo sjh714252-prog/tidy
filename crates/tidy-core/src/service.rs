@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use thiserror::Error;
 
-use crate::classify::{RuleError, RuleSet};
+use crate::classify::{AiClassifier, RuleError, RuleSet};
 use crate::config::Config;
 use crate::engine::{new_batch_id, Action, Engine, EngineError};
 use crate::index::IndexOptions;
@@ -41,12 +41,17 @@ pub struct WatchRunOptions {
     pub dry_run: bool,
     /// Keep the search index current (default on in the app and CLI).
     pub index: bool,
+    /// Use the AI step when `[ai]` is enabled and usable (key present…).
+    pub ai: bool,
 }
 
 /// Events reported to the caller (CLI prints them, the app emits them).
 pub enum WatchEvent<'a> {
     /// Watching started on these canonical folders.
     Started(&'a [PathBuf]),
+    /// AI step state at startup: `Ok("anthropic / claude-haiku-5-5")`, or
+    /// why it is off (rules-only mode). Not sent when AI is not enabled.
+    Ai(Result<String, String>),
     Handled(&'a Path, &'a Result<Action, EngineError>),
 }
 
@@ -86,6 +91,21 @@ pub fn run_watch(
     let mut engine = Engine::new(rules, mover, filter.clone()).dry_run(opts.dry_run);
     if opts.index {
         engine = engine.with_index(IndexOptions::from_config(cfg));
+    }
+    if opts.ai && cfg.ai.enabled {
+        // Re-read the rules for the AI's view (ai_auto folders, tree roots).
+        let rules = RuleSet::load(&rules_path)?;
+        match AiClassifier::from_config(cfg, &rules) {
+            Ok(ai) => {
+                on_event(WatchEvent::Ai(Ok(format!(
+                    "{} / {}",
+                    ai.provider_name(),
+                    ai.model()
+                ))));
+                engine = engine.with_ai(ai);
+            }
+            Err(e) => on_event(WatchEvent::Ai(Err(e.to_string()))),
+        }
     }
 
     let (watcher, rx) = Watcher::start(

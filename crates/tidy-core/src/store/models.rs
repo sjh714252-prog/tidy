@@ -155,12 +155,120 @@ pub struct IndexStats {
     pub total_bytes: u64,
 }
 
+/// Who put a file in the queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PendingSource {
+    /// A rule with `confirm = true` (`reason` = rule name).
+    Rule,
+    /// An AI suggestion below the auto threshold (`reason` = model's reason).
+    Ai,
+}
+
+impl PendingSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PendingSource::Rule => "rule",
+            PendingSource::Ai => "ai",
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        if s == "ai" {
+            PendingSource::Ai
+        } else {
+            PendingSource::Rule
+        }
+    }
+}
+
 /// A row of `pending` (file waiting for user confirmation).
 #[derive(Debug, Clone, Serialize)]
 pub struct PendingEntry {
     pub id: i64,
     pub path: PathBuf,
     pub suggested_dest: Option<PathBuf>,
+    /// Rule name (source = rule) or the AI's one-line reason (source = ai).
     pub reason: Option<String>,
     pub created_at: i64,
+    pub source: PendingSource,
+    /// AI confidence 0..1 (source = ai).
+    pub confidence: Option<f64>,
+    /// AI-suggested new file name, if any.
+    pub suggested_name: Option<String>,
+}
+
+/// Input for [`Store::upsert_pending_entry`](super::Store::upsert_pending_entry).
+#[derive(Debug, Clone, Copy)]
+pub struct NewPending<'a> {
+    pub path: &'a std::path::Path,
+    pub suggested_dest: Option<&'a std::path::Path>,
+    pub reason: Option<&'a str>,
+    pub source: PendingSource,
+    pub confidence: Option<f64>,
+    pub suggested_name: Option<&'a str>,
+}
+
+/// What the user did with a queued file (`decisions.action`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionAction {
+    Move,
+    RenameMove,
+    Skip,
+    Ignore,
+}
+
+impl DecisionAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DecisionAction::Move => "move",
+            DecisionAction::RenameMove => "rename_move",
+            DecisionAction::Skip => "skip",
+            DecisionAction::Ignore => "ignore",
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "rename_move" => DecisionAction::RenameMove,
+            "skip" => DecisionAction::Skip,
+            "ignore" => DecisionAction::Ignore,
+            _ => DecisionAction::Move,
+        }
+    }
+}
+
+/// A row of `decisions` (learner input, SPEC §5.2).
+#[derive(Debug, Clone, Serialize)]
+pub struct Decision {
+    pub id: i64,
+    pub file_name: String,
+    pub ext: Option<String>,
+    pub src_dir: PathBuf,
+    pub suggested_dest: Option<PathBuf>,
+    /// `None` for skip / ignore.
+    pub chosen_dest: Option<PathBuf>,
+    pub action: DecisionAction,
+    pub source: PendingSource,
+    pub decided_at: i64,
+}
+
+/// One AI call (`ai_log`). Never contains keys or file contents.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct AiLogEntry {
+    pub id: i64,
+    pub provider: String,
+    pub model: String,
+    /// classify | embed | restructure | test
+    pub purpose: String,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub cost_usd: Option<f64>,
+    pub latency_ms: Option<u64>,
+    pub ok: bool,
+    pub error: Option<String>,
+    /// Short summary of the answer (destination + confidence).
+    pub result: Option<String>,
+    pub called_at: i64,
 }

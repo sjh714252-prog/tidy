@@ -6,6 +6,7 @@
 //! Invariant (SPEC §4): nothing in this crate changes the filesystem except
 //! the `mover` module, and every move is recorded in `move_log`.
 
+pub mod ai;
 pub mod classify;
 pub mod config;
 pub mod engine;
