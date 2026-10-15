@@ -10,8 +10,10 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use humansize::{format_size, BINARY};
 use tidy_core::classify::{FileFacts, RuleSet};
 use tidy_core::engine::{new_batch_id, Action, Engine};
+use tidy_core::index::{FileOutcome, IndexOptions, IndexReport, Indexer};
 use tidy_core::mover::{Mover, UndoReport};
 use tidy_core::report::{render_tree, scan, ScanOptions, Stats, TreeOptions};
+use tidy_core::search::{search, MatchedIn, Query, SearchOptions};
 use tidy_core::store::Store;
 use tidy_core::watcher::{existing_files, IgnoreFilter, WatchOptions, Watcher};
 use tidy_core::Config;
@@ -48,6 +50,48 @@ enum Cmd {
     Pending,
     /// Show which rule would apply to the given files (moves nothing).
     Classify(ClassifyArgs),
+    /// Index folders (metadata + body text) for `tidy search`.
+    Index(IndexArgs),
+    /// Full-text search over the index.
+    Search(SearchArgs),
+}
+
+#[derive(Args)]
+struct IndexArgs {
+    /// Folders to index (default: all [[watch]] and [[index_only]] roots).
+    paths: Vec<PathBuf>,
+    /// Do not descend into subfolders.
+    #[arg(long)]
+    no_recursive: bool,
+    /// Metadata only, skip body text (what network roots do by default).
+    #[arg(long)]
+    no_content: bool,
+    /// Drop the whole index first and rebuild it.
+    #[arg(long)]
+    rebuild: bool,
+    /// Print index statistics and exit.
+    #[arg(long)]
+    status: bool,
+    /// Forget a folder (and its files) instead of indexing it.
+    #[arg(long)]
+    forget: bool,
+    /// Output format.
+    #[arg(short, long, value_enum, default_value_t = Format::Text)]
+    format: Format,
+}
+
+#[derive(Args)]
+struct SearchArgs {
+    /// Query: words, "phrases" and filters (ext:pdf in:~/Documents after:2026-09
+    /// before:2026-10 size:>10mb type:image|doc|video|audio|archive|code).
+    #[arg(required = true, num_args = 1..)]
+    query: Vec<String>,
+    /// Maximum number of results.
+    #[arg(short = 'n', long, default_value_t = 20)]
+    limit: usize,
+    /// Output format.
+    #[arg(short, long, value_enum, default_value_t = Format::Text)]
+    format: Format,
 }
 
 #[derive(Args)]
@@ -144,6 +188,8 @@ fn main() -> Result<()> {
         Cmd::Log(args) => cmd_log(cli.config, args),
         Cmd::Pending => cmd_pending(cli.config),
         Cmd::Classify(args) => cmd_classify(cli.config, args),
+        Cmd::Index(args) => cmd_index(cli.config, args),
+        Cmd::Search(args) => cmd_search(cli.config, args),
     }
 }
 
@@ -564,6 +610,199 @@ fn cmd_classify(config: Option<PathBuf>, args: ClassifyArgs) -> Result<()> {
                 if c.confirm { " confirm=true" } else { "" }
             ),
             None => println!("{} -> (no rule)", p.display()),
+        }
+    }
+    Ok(())
+}
+
+fn open_store(cfg: &Config) -> Result<Store> {
+    let db = cfg.store.db_path();
+    Store::open(&db).with_context(|| format!("opening {}", db.display()))
+}
+
+fn cmd_index(config: Option<PathBuf>, args: IndexArgs) -> Result<()> {
+    let cfg = load_config(config)?;
+    let store = open_store(&cfg)?;
+    let verbose = tracing::enabled!(tracing::Level::INFO);
+
+    if args.status {
+        return print_index_status(&store, &cfg, args.format);
+    }
+    if args.forget {
+        for p in &args.paths {
+            let p = dunce::canonicalize(tidy_core::config::expand_home(p)).unwrap_or(p.clone());
+            store.remove_root(&p)?;
+            println!("forgot    {}", p.display());
+        }
+        return Ok(());
+    }
+    if args.rebuild {
+        store.clear_index()?;
+        eprintln!("# index cleared");
+    }
+
+    // (path, options) per root: explicit paths use the flags, configured
+    // roots use their own settings (network roots → metadata only).
+    let base = IndexOptions::from_config(&cfg);
+    let mut jobs: Vec<(PathBuf, IndexOptions)> = Vec::new();
+    if args.paths.is_empty() {
+        for w in &cfg.watches {
+            jobs.push((
+                w.path.clone(),
+                IndexOptions {
+                    recursive: w.recursive,
+                    kind: w.kind,
+                    watch: true,
+                    index_content: w.index_content && !args.no_content,
+                    ..base.clone()
+                },
+            ));
+        }
+        for r in &cfg.index_only {
+            jobs.push((
+                r.path.clone(),
+                IndexOptions {
+                    recursive: r.recursive,
+                    index_content: !args.no_content,
+                    ..base.clone()
+                },
+            ));
+        }
+        if jobs.is_empty() {
+            bail!("no folders given and no [[watch]] / [[index_only]] roots configured");
+        }
+    } else {
+        for p in &args.paths {
+            jobs.push((
+                tidy_core::config::expand_home(p),
+                IndexOptions {
+                    recursive: !args.no_recursive,
+                    index_content: !args.no_content,
+                    ..base.clone()
+                },
+            ));
+        }
+    }
+
+    eprintln!("# db: {}", cfg.store.db_path().display());
+    let indexer = Indexer::new(&store);
+    let mut reports = Vec::new();
+    for (path, opts) in &jobs {
+        if !path.is_dir() {
+            eprintln!("skip      {} (not a folder)", path.display());
+            continue;
+        }
+        let report = indexer
+            .index_root(path, opts, |p, o| {
+                if verbose {
+                    let tag = match o {
+                        FileOutcome::Added(s) => format!("added ({})", s.as_str()),
+                        FileOutcome::Updated(s) => format!("updated ({})", s.as_str()),
+                        FileOutcome::Unchanged => "unchanged".to_string(),
+                    };
+                    eprintln!("{tag:<22} {}", p.display());
+                }
+            })
+            .with_context(|| format!("indexing {}", path.display()))?;
+        if matches!(args.format, Format::Text) {
+            print_index_report(&report);
+        }
+        reports.push(report);
+    }
+    if matches!(args.format, Format::Json) {
+        println!("{}", serde_json::to_string_pretty(&reports)?);
+    }
+    Ok(())
+}
+
+fn print_index_report(r: &IndexReport) {
+    println!(
+        "indexed   {}  files {} (added {}, updated {}, unchanged {}, removed {})  \
+         text ok {} / failed {} / unsupported {} / too big {}  in {:.1}s",
+        r.root.display(),
+        r.scanned,
+        r.added,
+        r.updated,
+        r.unchanged,
+        r.removed,
+        r.text_ok,
+        r.text_failed,
+        r.text_unsupported,
+        r.text_skipped,
+        r.elapsed_ms as f64 / 1000.0
+    );
+    if !r.errors.is_empty() {
+        eprintln!("{} entries could not be indexed:", r.errors.len());
+        for e in r.errors.iter().take(10) {
+            eprintln!("  {e}");
+        }
+    }
+}
+
+fn print_index_status(store: &Store, cfg: &Config, format: Format) -> Result<()> {
+    let st = store.index_stats()?;
+    match format {
+        Format::Json => println!("{}", serde_json::to_string_pretty(&st)?),
+        Format::Text => println!(
+            "db: {}\nroots: {}   files: {}   with text: {}   total size: {}",
+            cfg.store.db_path().display(),
+            st.roots,
+            st.files,
+            st.with_text,
+            format_size(st.total_bytes, BINARY)
+        ),
+    }
+    Ok(())
+}
+
+fn cmd_search(config: Option<PathBuf>, args: SearchArgs) -> Result<()> {
+    let cfg = load_config(config)?;
+    let store = open_store(&cfg)?;
+    let query = Query::parse(&args.query.join(" "));
+    if query.is_empty() {
+        bail!("empty query");
+    }
+    let opts = SearchOptions {
+        limit: args.limit,
+        ..Default::default()
+    };
+    let hits = search(&store, &query, &opts)?;
+    match args.format {
+        Format::Json => println!("{}", serde_json::to_string_pretty(&hits)?),
+        Format::Text => {
+            if hits.is_empty() {
+                let st = store.index_stats()?;
+                println!(
+                    "no results ({} files indexed; run `tidy index <folder>` first?)",
+                    st.files
+                );
+            }
+            for (i, h) in hits.iter().enumerate() {
+                let dir = h
+                    .file
+                    .path
+                    .parent()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                let tag = match h.matched_in {
+                    MatchedIn::Name => "name",
+                    MatchedIn::Content => "body",
+                    MatchedIn::Both => "name+body",
+                    MatchedIn::Filter => "filter",
+                };
+                println!(
+                    "{:>2}. {}  {:>9}  {}  [{}]",
+                    i + 1,
+                    h.name_highlight,
+                    format_size(h.file.size, BINARY),
+                    fmt_time(h.file.mtime),
+                    tag
+                );
+                println!("    {dir}");
+                if !h.snippet.is_empty() {
+                    println!("    {}", h.snippet.replace('\n', " "));
+                }
+            }
         }
     }
     Ok(())

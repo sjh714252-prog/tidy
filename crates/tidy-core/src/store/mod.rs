@@ -2,7 +2,13 @@
 //! can run as separate processes against the same database.
 
 mod db;
+mod files;
 mod models;
 
-pub use db::{Store, StoreError};
-pub use models::{DecidedBy, MoveLogEntry, NewMove, PendingEntry};
+pub use db::{Store, StoreError, NETWORK_PATH_HINT};
+pub use models::{
+    DecidedBy, FileRecord, FileStamp, IndexStats, MoveLogEntry, NewFile, NewMove, PendingEntry,
+    TextStatus,
+};
+
+pub(crate) use files::file_from_row;

@@ -64,6 +64,97 @@ pub struct MoveLogEntry {
     pub undone_at: Option<i64>,
 }
 
+/// `files.text_status`: what happened to the body text of a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextStatus {
+    /// Not attempted (metadata-only root).
+    None,
+    /// Text extracted and indexed.
+    Ok,
+    /// No extractor for this file type.
+    Unsupported,
+    /// An extractor exists but failed; metadata is still indexed.
+    Failed,
+    /// Larger than `index.max_content_size_mb`; metadata only.
+    Skipped,
+}
+
+impl TextStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TextStatus::None => "none",
+            TextStatus::Ok => "ok",
+            TextStatus::Unsupported => "unsupported",
+            TextStatus::Failed => "failed",
+            TextStatus::Skipped => "skipped",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "none" => TextStatus::None,
+            "ok" => TextStatus::Ok,
+            "unsupported" => TextStatus::Unsupported,
+            "failed" => TextStatus::Failed,
+            "skipped" => TextStatus::Skipped,
+            _ => return None,
+        })
+    }
+}
+
+/// What the indexer needs to decide whether a file changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileStamp {
+    pub id: i64,
+    pub size: u64,
+    /// Unix seconds.
+    pub mtime: i64,
+}
+
+/// A file row about to be written (insert or replace by path).
+#[derive(Debug, Clone)]
+pub struct NewFile {
+    pub path: PathBuf,
+    pub root_id: i64,
+    pub name: String,
+    pub ext: Option<String>,
+    pub mime: Option<String>,
+    pub size: u64,
+    pub mtime: i64,
+    pub ctime: Option<i64>,
+    pub hash: Option<String>,
+    pub text_status: TextStatus,
+    pub excerpt: Option<String>,
+    /// Full extracted text (already truncated by the indexer).
+    pub content: Option<String>,
+}
+
+/// A row of `files` without the body text.
+#[derive(Debug, Clone, Serialize)]
+pub struct FileRecord {
+    pub id: i64,
+    pub path: PathBuf,
+    pub root_id: i64,
+    pub name: String,
+    pub ext: Option<String>,
+    pub mime: Option<String>,
+    pub size: u64,
+    pub mtime: i64,
+    pub hash: Option<String>,
+    pub text_status: TextStatus,
+    pub excerpt: Option<String>,
+    pub indexed_at: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct IndexStats {
+    pub roots: u64,
+    pub files: u64,
+    pub with_text: u64,
+    pub total_bytes: u64,
+}
+
 /// A row of `pending` (file waiting for user confirmation).
 #[derive(Debug, Clone, Serialize)]
 pub struct PendingEntry {

@@ -23,6 +23,7 @@ use thiserror::Error;
 pub use undo::{UndoConflict, UndoReport};
 
 use crate::config::DuplicatePolicy;
+use crate::paths::normalize_lexical;
 use crate::store::{DecidedBy, NewMove, Store, StoreError};
 
 /// Marker in the names of temporary copies; the watcher ignores them.
@@ -177,16 +178,18 @@ impl Mover {
             .file_name()
             .ok_or_else(|| MoverError::NotAFile(src.clone()))?;
 
+        // Whatever the caller passes, the logged paths never contain `..`.
+        let dest_dir = normalize_lexical(&req.dest_dir);
         if let Some(parent) = src.parent() {
-            if same_dir(parent, &req.dest_dir) {
+            if same_dir(parent, &dest_dir) {
                 return Ok(MoveOutcome::AlreadyInPlace(src.clone()));
             }
         }
 
         let hash = hash_file(src)?;
-        fs::create_dir_all(&req.dest_dir).map_err(MoverError::io("create dir", &req.dest_dir))?;
+        fs::create_dir_all(&dest_dir).map_err(MoverError::io("create dir", &dest_dir))?;
 
-        let mut dst = req.dest_dir.join(name);
+        let mut dst = dest_dir.join(name);
         if dst.exists() {
             if hash_file(&dst)? == hash {
                 match self.policy {
@@ -384,6 +387,27 @@ mod tests {
         assert_eq!(e.dst_path, dst);
         assert_eq!(e.size, Some("내용".len() as u64));
         assert!(m.expected().is_expected(&src));
+    }
+
+    #[test]
+    fn dest_with_dot_dot_is_logged_normalized() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = dir.path().join("받은 파일");
+        fs::create_dir(&inbox).unwrap();
+        let src = inbox.join("메모.txt");
+        fs::write(&src, "x").unwrap();
+        let dest = inbox.join("..").join("정리 결과").join("2026");
+        let m = mover();
+        let MoveOutcome::Moved { log_id, dst, .. } = m.move_file(&req(&src, &dest)).unwrap() else {
+            panic!()
+        };
+        assert_eq!(
+            dst,
+            dir.path().join("정리 결과").join("2026").join("메모.txt")
+        );
+        let e = m.store().get_move(log_id).unwrap().unwrap();
+        assert!(!e.dst_path.to_string_lossy().contains(".."));
+        assert_eq!(e.dst_path, dst);
     }
 
     #[test]
