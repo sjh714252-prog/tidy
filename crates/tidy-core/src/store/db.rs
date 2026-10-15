@@ -4,7 +4,7 @@ use std::time::Duration;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use thiserror::Error;
 
-use super::models::{DecidedBy, MoveLogEntry, NewMove, PendingEntry};
+use super::models::{DecidedBy, MoveLogEntry, NewMove, NewPending, PendingEntry, PendingSource};
 
 /// Hint appended to SQLite disk I/O errors. SQLite needs real file locks,
 /// which SMB/NFS shares and some mounted folders do not provide, so a
@@ -158,6 +158,44 @@ CREATE TRIGGER files_au AFTER UPDATE OF name, content ON files BEGIN
   INSERT INTO files_fts(rowid, name, content) VALUES (new.id, new.name, new.content);
   INSERT INTO files_fts_word(rowid, name, content) VALUES (new.id, new.name, new.content);
 END;
+"#,
+    // v3 (M4): AI suggestions in the queue, user decisions (learner), AI call log.
+    r#"
+ALTER TABLE pending ADD COLUMN source TEXT NOT NULL DEFAULT 'rule';
+ALTER TABLE pending ADD COLUMN suggested_name TEXT;
+
+CREATE TABLE decisions (
+  id INTEGER PRIMARY KEY,
+  file_name TEXT NOT NULL,
+  ext TEXT,
+  src_dir TEXT NOT NULL,
+  suggested_dest TEXT,
+  chosen_dest TEXT,
+  action TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'rule',
+  decided_at INTEGER NOT NULL
+);
+CREATE INDEX idx_decisions_ext ON decisions(ext);
+
+CREATE TABLE ai_log (
+  id INTEGER PRIMARY KEY,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  cost_usd REAL,
+  latency_ms INTEGER,
+  ok INTEGER NOT NULL,
+  error TEXT,
+  result TEXT,
+  called_at INTEGER NOT NULL
+);
+
+CREATE TABLE learn_dismissed (
+  key TEXT PRIMARY KEY,
+  dismissed_at INTEGER NOT NULL
+);
 "#,
 ];
 
@@ -387,27 +425,62 @@ impl Store {
 
     // ── pending ─────────────────────────────────────────────────────────
 
+    /// Queue a file for confirmation by a rule with `confirm = true`.
     pub fn upsert_pending(
         &self,
         path: &Path,
         suggested_dest: Option<&Path>,
         reason: Option<&str>,
     ) -> Result<(), StoreError> {
-        let dest = suggested_dest.map(path_str).transpose()?;
+        self.upsert_pending_entry(&NewPending {
+            path,
+            suggested_dest,
+            reason,
+            source: PendingSource::Rule,
+            confidence: None,
+            suggested_name: None,
+        })
+    }
+
+    pub fn upsert_pending_entry(&self, p: &NewPending<'_>) -> Result<(), StoreError> {
+        let dest = p.suggested_dest.map(path_str).transpose()?;
         self.conn.execute(
-            "INSERT INTO pending (path, suggested_dest, reason, created_at)
-             VALUES (?1, ?2, ?3, ?4)
+            "INSERT INTO pending (path, suggested_dest, reason, source, confidence,
+                                  suggested_name, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(path) DO UPDATE SET suggested_dest = excluded.suggested_dest,
-                                             reason = excluded.reason",
-            params![path_str(path)?, dest, reason, now()],
+                                             reason = excluded.reason,
+                                             source = excluded.source,
+                                             confidence = excluded.confidence,
+                                             suggested_name = excluded.suggested_name",
+            params![
+                path_str(p.path)?,
+                dest,
+                p.reason,
+                p.source.as_str(),
+                p.confidence,
+                p.suggested_name,
+                now()
+            ],
         )?;
         Ok(())
     }
 
+    pub fn get_pending_by_path(&self, path: &Path) -> Result<Option<PendingEntry>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                &format!("{SELECT_PENDING} WHERE path = ?1"),
+                [path_str(path)?],
+                pending_from_row,
+            )
+            .optional()?)
+    }
+
     pub fn list_pending(&self) -> Result<Vec<PendingEntry>, StoreError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, path, suggested_dest, reason, created_at FROM pending ORDER BY id",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare(&format!("{SELECT_PENDING} ORDER BY id"))?;
         let rows = stmt.query_map([], pending_from_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
@@ -416,7 +489,7 @@ impl Store {
         Ok(self
             .conn
             .query_row(
-                "SELECT id, path, suggested_dest, reason, created_at FROM pending WHERE id = ?1",
+                &format!("{SELECT_PENDING} WHERE id = ?1"),
                 [id],
                 pending_from_row,
             )
@@ -467,6 +540,9 @@ impl Store {
     }
 }
 
+const SELECT_PENDING: &str = "SELECT id, path, suggested_dest, reason, created_at, source, \
+                              confidence, suggested_name FROM pending";
+
 fn pending_from_row(r: &Row<'_>) -> rusqlite::Result<PendingEntry> {
     Ok(PendingEntry {
         id: r.get(0)?,
@@ -474,6 +550,9 @@ fn pending_from_row(r: &Row<'_>) -> rusqlite::Result<PendingEntry> {
         suggested_dest: r.get::<_, Option<String>>(2)?.map(PathBuf::from),
         reason: r.get(3)?,
         created_at: r.get(4)?,
+        source: PendingSource::parse(&r.get::<_, String>(5)?),
+        confidence: r.get(6)?,
+        suggested_name: r.get(7)?,
     })
 }
 

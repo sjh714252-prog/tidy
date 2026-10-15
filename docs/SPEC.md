@@ -113,7 +113,7 @@ tidy/
 │   │       ├── index/      # extract/*.rs, embed.rs, indexer.rs
 │   │       ├── search/     # fts.rs, semantic.rs, query.rs
 │   │       ├── report/     # tree.rs, dup.rs, stale.rs, restructure.rs
-│   │       ├── ai/         # provider.rs, anthropic.rs, openai.rs, ollama.rs, prompts.rs
+│   │       ├── ai/         # provider.rs, anthropic.rs, openai.rs, ollama.rs, prompts.rs, keys.rs, mock.rs
 │   │       └── store/      # db.rs, migrations/, models.rs
 │   └── tidy-cli/           # 디버그/헤드리스용 CLI
 ├── apps/
@@ -185,9 +185,25 @@ confirm = true
 - `confidence >= config.ai.auto_threshold`(기본 0.9) **이고** 규칙에 `ai_auto = true`로 허용된 폴더일 때만 자동 이동. 그 외엔 확인 팝업.
 - `new_folder = true`면 항상 확인.
 
+**M4 구현 (classify/ai.rs, engine.rs)**
+- AI는 **규칙에 맞는 파일이 없을 때만** 부른다. AI가 꺼져 있거나 키가 없으면 M1과 똑같이 동작한다(규칙에 맞지 않는 파일은 그대로 둔다). "Ask user"로 가는 것은 AI가 제안을 냈을 때뿐이다.
+- AI 실패(오프라인, 키 오류, 타임아웃, 거절, 스키마 불일치)는 `Action::AiFailed`가 되어 파일을 그대로 둔다. 실패는 `ai_log`에 남기고, 감시 루프나 UI를 막지 않는다. 한 건의 상한은 `ai.timeout_secs`(재시도 포함)다.
+- `ai_auto` 폴더: `ai_auto = true` 규칙의 `dest`에서 첫 템플릿 변수 앞까지의 고정 부분이다(예: `~/Documents/업무/{yyyy}` → `~/Documents/업무`). AI 목적지가 그 아래이고, 이미 존재하는 폴더이며, `new_folder = false`일 때만 자동 이동한다. 이 이동은 `move_log.decided_by = ai`, `ai_confidence`로 기록되어 Undo할 수 있다.
+- 응답 검증: `dest`는 `~` 확장 후 절대 경로여야 하고 `..`은 정리한다. 존재하지 않는 폴더면 모델이 뭐라고 했든 `new_folder = true`로 본다. `confidence`는 0..1로 자른다. `suggested_rename`은 구분자가 없는 파일 이름만 받는다.
+- 후보 폴더 트리: 규칙 `dest`의 고정 부분, `[[index_only]]` 폴더, `ai.candidate_roots`를 `ai.tree_depth`(기본 2)까지 펼친다. 숨김 폴더는 빼고 최대 150줄이다. 최근 이동 목적지 10개, 비슷한 과거 결정 `ai.history_k`(기본 5)건도 함께 보낸다.
+- 비용 방지: AI가 대기열에 올린 파일이 다시 저장 이벤트를 내도 AI를 다시 부르지 않는다.
+- 사용자가 고른 결과(이동/이름 바꿔 이동/건너뜀/무시)는 규칙 확인과 AI 확인 모두 `decisions`에 남긴다(`source = rule|ai`).
+
 **Learner (학습 루프)**
 - 사용자가 확인 팝업에서 내린 결정을 `decisions` 테이블에 저장.
 - 같은 `(ext, name 패턴 또는 원본폴더)` 조합으로 같은 `dest`가 3회(설정 가능) 쌓이면 "이 규칙을 자동화할까요?" 제안 → 수락 시 `rules.toml`에 규칙 추가.
+- **M4 구현 (classify/learner.rs)**
+  - 이름 패턴은 파일 이름에서 첫 숫자나 구분 문자(`_ - . ( [ {`) 앞까지 잘라낸 부분이다. 2글자 이상이어야 한다(`KT과금내역서_2026-09.xlsx` → `KT과금내역서`).
+  - 원본 폴더 패턴은 같은 확장자, 같은 목적지에 이름 패턴 제안이 이미 있으면 따로 내지 않는다.
+  - 이미 기존 규칙이 묻지 않고 같은 곳으로 보내는 패턴이면 제안하지 않는다.
+  - 수락하면 `match = { ext, name_regex = "^접두어" }` 또는 `{ ext, from_dir }`, `confirm = false`인 규칙을 `rules.toml`의 **첫 규칙 앞**에 주석과 함께 넣는다. 더 구체적인 규칙이 먼저 매치되도록 하기 위해서다. 파일은 검증을 통과해야만 쓴다.
+  - "다시 묻지 않기"는 `learn_dismissed`에 남긴다.
+  - CLI는 `tidy learn [--accept N | --dismiss N]`이고, 앱에서는 대기열 탭 위의 제안 카드로 처리한다.
 
 ### 5.3 Confirm UI (사용자 확인)
 - 트레이 알림 → 클릭 시 작은 팝업: 파일명, 미리보기(텍스트 앞부분/이미지 썸네일), 제안 목적지, 이유, 대안 폴더 3개
@@ -198,6 +214,7 @@ confirm = true
   - 트레이 알림을 클릭하는 단계 없이, 확인이 필요한 파일이 생기면 팝업 창을 화면 오른쪽 아래에 **포커스를 뺏지 않고** 바로 띄운다(OS 알림 클릭 → 창 열기가 플랫폼마다 불안정해서). 조용 모드면 띄우지 않는다.
   - 액션은 이동 / 다른 곳…(폴더 선택) / 건너뜀 / 무시. "이름 바꿔 이동", 미리보기(썸네일), 대안 폴더 3개는 AI 제안이 생기는 M4에서 추가한다.
   - 처리 로직은 코어 `pending::resolve` 하나이며 CLI(`tidy pending --move/--skip/--ignore <ID> [--to DIR]`)와 같다. 이동은 `decided_by = user`로 `move_log`에 남고 Undo 가능.
+- **M4 추가**: AI 제안이면 "AI 82%" 배지와 이유, 새 이름 제안을 보여 준다. "이름 바꿔 이동"(CLI `--rename NAME`)은 새 이름에 확장자가 없으면 원래 확장자를 붙이며, `decisions.action = rename_move`로 남긴다. 미리보기 썸네일과 대안 폴더 3개는 아직 없다(응답 스키마에 대안이 없음 — 필요해지면 스키마부터 바꾼다).
   - 건너뜀 = 대기열에서만 뺀다(파일이 다시 바뀌면 재분류). 무시 = `ignored` 테이블에 넣어 그 경로는 다시 정리하지 않는다.
 
 ### 5.4 Mover + Undo
@@ -260,6 +277,18 @@ pub trait EmbeddingProvider: Send + Sync {
 }
 ```
 - 구현체: `AnthropicProvider`, `OpenAiProvider`(OpenAI 호환 엔드포인트 — 다른 벤더도 커버), `OllamaProvider`(로컬)
+- **M4 구현**
+  - 실제 트레이트는 `complete_json(system, user, schema: &serde_json::Value) -> Result<LlmResponse { value, usage, model }, AiError>`이다. 사용량과 응답 모델을 `ai_log`에 남기려고 위 스케치보다 정보를 더 돌려준다.
+  - `EmbeddingProvider`는 선언만 해 두었고, 구현은 M7에서 한다.
+  - Anthropic은 공식 Rust SDK가 없어 raw HTTP로 부른다. 요청은 `POST /v1/messages`, 헤더는 `x-api-key`와 `anthropic-version: 2023-06-01`이다. 답은 `output_config.format = {type: json_schema}`로 JSON만 받는다. 프로필의 `effort`(예: `"low"`)는 `output_config.effort`로 보낸다. `stop_reason = refusal`은 실패로 처리한다.
+  - OpenAI 호환은 `/chat/completions`에 `response_format = json_schema(strict)`로 보낸다. 400/422가 오면 한 번만 `json_object` 모드로 다시 보낸다(스키마는 프롬프트에 넣는다).
+  - Ollama는 `/api/chat`에 `format = 스키마`, `stream = false`, `temperature = 0`으로 보낸다.
+  - HTTP는 `reqwest`(rustls/ring, OpenSSL·cmake 불필요)를 쓴다. 408/409/429/5xx(529 포함)와 네트워크 오류는 지수 백오프로 재시도하고(`retry-after` 존중, 최대 8s), 횟수는 `ai.max_retries`(기본 2)다. 400 같은 클라이언트 오류는 재시도하지 않는다. 별도 레이트 리미터는 아직 없다(429 재시도로 대신한다).
+  - 엔진은 동기 코드라서 `AiClassifier`가 자체 current-thread tokio 런타임으로 `block_on`한다. 감시 스레드나 `spawn_blocking` 스레드에서만 부르고, async 컨텍스트 안에서는 부르지 않는다.
+  - 키 저장: `keyring` 3을 쓴다. Windows는 자격 증명 관리자, macOS는 키체인, Linux는 커널 keyutils다. `key_ref = "service/user"`이고 `/`가 없으면 service는 `tidy`다. 키는 로그·설정·UI 응답 어디에도 나가지 않는다(`Debug` 출력도 가린다). 앱의 키 입력칸은 쓰기 전용이고, 화면에는 "저장됨" 여부만 보인다.
+  - 비용 추정: 알려진 Claude 모델 단가표(`ai::estimate_cost_usd`)로 계산한다. Ollama는 0이고, 모르는 모델은 NULL이다.
+  - `ai_log`에는 제공자, 모델, 목적(classify/test), 토큰, 비용, 지연, 성공 여부, 오류, 결과 요약(목적지와 확신도)만 남긴다. 파일 본문과 프롬프트는 남기지 않는다.
+  - 자동화된 테스트는 `MockProvider`와 로컬 가짜 HTTP 서버만 쓴다. 실제 API는 수동 테스트(`tidy ai test <파일>`, 앱 "연결 테스트")로만 확인한다.
 - 설정에서 **분류용 모델**과 **임베딩 모델**을 따로 지정. 예: 분류는 클라우드, 임베딩은 로컬.
 - 프로필: `[ai.profiles.work]`, `[ai.profiles.home]` — 회사 PC에서는 로컬 전용 프로필 강제 가능. `send_content = false`면 본문을 AI에 보내지 않고 메타만 보냄.
 - 키는 OS 키체인(`keyring` crate)에 저장. config.toml에는 키 이름만.
@@ -357,8 +386,13 @@ CREATE TABLE decisions (
   suggested_dest TEXT,
   chosen_dest TEXT,            -- NULL = 건너뜀
   action TEXT NOT NULL,        -- move|skip|ignore|rename_move
+  source TEXT NOT NULL DEFAULT 'rule',  -- (M4) rule|ai: 누가 대기열에 올렸나
   decided_at INTEGER NOT NULL
 );
+CREATE INDEX idx_decisions_ext ON decisions(ext);
+
+-- (M4) 학습 제안 "다시 묻지 않기"
+CREATE TABLE learn_dismissed (key TEXT PRIMARY KEY, dismissed_at INTEGER NOT NULL);
 
 -- 대기열
 CREATE TABLE pending (
@@ -368,7 +402,9 @@ CREATE TABLE pending (
   reason TEXT,
   confidence REAL,
   alternatives TEXT,           -- JSON array
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  source TEXT NOT NULL DEFAULT 'rule',  -- (M4) rule: reason=규칙 이름 / ai: reason=AI 이유
+  suggested_name TEXT                   -- (M4) AI 새 이름 제안
 );
 
 -- 영구 무시
@@ -382,14 +418,16 @@ CREATE TABLE ai_log (
   id INTEGER PRIMARY KEY,
   provider TEXT, model TEXT, purpose TEXT,   -- classify|embed|restructure
   input_tokens INTEGER, output_tokens INTEGER,
+  cost_usd REAL, latency_ms INTEGER,          -- (M4)
   ok INTEGER NOT NULL, error TEXT,
+  result TEXT,                                -- (M4) "목적지 (82%)" 요약, 본문 없음
   called_at INTEGER NOT NULL
 );
 
 CREATE TABLE schema_version (version INTEGER NOT NULL);
 ```
 
-마이그레이션: `schema_version`에 적용 버전을 기록하고 순서대로 적용. M1(v1)은 `move_log`, `pending`, `ignored`, M2(v2)는 `roots`, `files`, `files_fts`, `files_fts_word`를 만든다. 나머지 테이블은 해당 마일스톤에서 추가.
+마이그레이션: `schema_version`에 적용 버전을 기록하고 순서대로 적용. M1(v1)은 `move_log`, `pending`, `ignored`, M2(v2)는 `roots`, `files`, `files_fts`, `files_fts_word`를 만든다. M4(v3)는 `pending.source/suggested_name` 열과 `decisions`, `ai_log`, `learn_dismissed`를 추가한다. 나머지 테이블은 해당 마일스톤에서 추가.
 
 **DB 파일 위치**: SQLite는 파일 잠금이 필요하므로 `store.path`는 반드시 로컬 디스크여야 한다. NAS/공유 폴더/네트워크 드라이브에 두면 `disk I/O error`로 실패한다(에러 메시지에 힌트를 붙인다. M6에서 `kind = "network"` 루트 아래의 store.path는 기동 시 경고).
 
@@ -455,9 +493,14 @@ active_profile = "home"
 auto_threshold = 0.9
 send_content = true
 content_chars = 1500
+timeout_secs = 20              # (M4) 한 건 상한(재시도 포함)
+max_retries = 2                # (M4) 429/5xx/네트워크 오류 재시도
+tree_depth = 2                 # (M4) 후보 폴더 트리 깊이
+history_k = 5                  # (M4) 예시로 보내는 과거 결정 수
+candidate_roots = []           # (M4) 후보 트리에 추가할 폴더
 
 [ai.profiles.home]
-classify = { provider = "anthropic", model = "claude-haiku-5-5", key_ref = "tidy/anthropic" }
+classify = { provider = "anthropic", model = "claude-haiku-5-5", key_ref = "tidy/anthropic", effort = "low" }
 embed    = { provider = "ollama", model = "nomic-embed-text", base_url = "http://localhost:11434" }
 
 [ai.profiles.work]
@@ -552,4 +595,5 @@ send_content = false
 ## 13. 열린 질문 (구현 중 결정)
 - ~~한국어 FTS 토크나이저: unicode61로 충분한지, trigram 병행이 필요한지 M2에서 벤치~~ → **결정(M2)**: trigram 주 + unicode61 보조(1~2글자 prefix). 근거와 측정치는 `docs/fts-tokenizer.md`.
 - sqlite-vec vs 자체 brute-force: 파일 수 기준 임계치 정하기
+- Linux 키 저장소: M4는 커널 keyutils(빌드 의존성 없음)를 쓰므로 재부팅하면 키가 사라진다. Linux 데스크톱 배포(M7) 때 Secret Service(dbus) 사용을 검토한다. Windows와 macOS는 영구 저장이다.
 - `source_app`(어느 앱이 만든 파일인지) 수집 가능 범위: macOS는 `kMDItemWhereFroms`, Windows는 Zone.Identifier ADS — M1 후반에 조사

@@ -13,6 +13,9 @@
 #   상대 경로를 쓰면 원래 파일이 있던 폴더 기준입니다.
 # - confirm = true  → 옮기지 않고 확인 대기열에 넣습니다(`tidy pending`으로 확인).
 # - enabled = false → 규칙을 끕니다.
+# - ai_auto = true  → (AI 사용 시) AI가 확신할 때 이 규칙의 목적지 폴더 안으로는 묻지 않고 옮겨도 됨.
+#   기준 폴더는 dest에서 첫 {변수} 앞까지입니다(예: "~/Documents/Tidy/문서/{yyyy}-{mm}" → "~/Documents/Tidy/문서").
+#   그 밖의 AI 제안은 항상 확인 팝업으로 묻습니다.
 # - Windows 경로는 슬래시(/) 또는 작은따옴표 문자열로 쓰세요: 'D:\자료 보관\{yyyy}'
 
 [[rule]]

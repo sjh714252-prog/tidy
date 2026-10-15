@@ -68,6 +68,7 @@ fn watch_index_confirm_undo() {
             run_watch(&cfg, &opts, expected, &stop, |ev| {
                 let msg = match ev {
                     WatchEvent::Started(_) => "started".to_string(),
+                    WatchEvent::Ai(_) => "ai".to_string(),
                     WatchEvent::Handled(_, Ok(Action::Moved { .. })) => "moved".into(),
                     WatchEvent::Handled(_, Ok(Action::Pending { .. })) => "pending".into(),
                     WatchEvent::Handled(p, other) => format!("{} {other:?}", p.display()),
@@ -109,6 +110,7 @@ fn watch_index_confirm_undo() {
         pending[0].id,
         &Decision::Move {
             dest_dir: Some(elsewhere.clone()),
+            new_name: None,
         },
         "ui-batch",
         Some(&idx),

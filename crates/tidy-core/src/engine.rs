@@ -1,14 +1,18 @@
 //! Engine: one file in → classify → (confirm? pending : move). Shared by
-//! `tidy watch`, `--process-existing` and (later) the Tauri app.
+//! `tidy watch`, `--process-existing` and the Tauri app.
+//!
+//! Pipeline (SPEC §5.2): rules → (no rule) AI → (no AI, AI failure or low
+//! confidence) ask the user. Without AI the engine behaves exactly as in M1:
+//! files no rule matches are left alone.
 
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use crate::classify::{FileFacts, RuleSet};
+use crate::classify::{AiClassifier, FileFacts, RuleSet};
 use crate::index::{IndexOptions, Indexer};
 use crate::mover::{hash_file, MoveOutcome, MoveRequest, Mover, MoverError};
-use crate::store::{DecidedBy, StoreError};
+use crate::store::{DecidedBy, NewPending, PendingSource, StoreError};
 use crate::watcher::IgnoreFilter;
 
 #[derive(Debug, Error)]
@@ -37,20 +41,30 @@ impl EngineError {
 }
 
 /// What happened to one file.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     Moved {
         src: PathBuf,
         dst: PathBuf,
+        /// Rule name, or "AI" for an automatic AI move.
         rule: String,
         batch_id: String,
         log_id: i64,
+        by: DecidedBy,
+        /// AI confidence (AI moves only).
+        confidence: Option<f64>,
     },
-    /// Rule has `confirm = true`: queued in `pending`, not moved.
+    /// Waiting for the user: a rule with `confirm = true`, or an AI
+    /// suggestion that may not move on its own.
     Pending {
         path: PathBuf,
+        /// Rule name, or "AI".
         rule: String,
         suggested: PathBuf,
+        source: PendingSource,
+        confidence: Option<f64>,
+        /// The AI's one-line reason.
+        reason: Option<String>,
     },
     /// `--dry-run`: what would happen.
     WouldMove {
@@ -69,6 +83,12 @@ pub enum Action {
         rule: String,
     },
     NoRule(PathBuf),
+    /// No rule matched and the AI could not help (offline, no key, timeout,
+    /// bad answer): treated like [`Action::NoRule`], the file stays.
+    AiFailed {
+        path: PathBuf,
+        error: String,
+    },
     Skipped {
         path: PathBuf,
         reason: &'static str,
@@ -83,6 +103,8 @@ pub struct Engine {
     /// When set, every handled file is reflected in the search index
     /// (moved files under their new path, the rest in place).
     index: Option<IndexOptions>,
+    /// AI step for files no rule matches (None = rules-only mode).
+    ai: Option<AiClassifier>,
 }
 
 pub fn new_batch_id() -> String {
@@ -97,6 +119,7 @@ impl Engine {
             filter,
             dry_run: false,
             index: None,
+            ai: None,
         }
     }
 
@@ -109,6 +132,16 @@ impl Engine {
     pub fn with_index(mut self, opts: IndexOptions) -> Self {
         self.index = Some(opts);
         self
+    }
+
+    /// Ask `ai` about files no rule matches.
+    pub fn with_ai(mut self, ai: AiClassifier) -> Self {
+        self.ai = Some(ai);
+        self
+    }
+
+    pub fn ai(&self) -> Option<&AiClassifier> {
+        self.ai.as_ref()
     }
 
     pub fn mover(&self) -> &Mover {
@@ -145,7 +178,7 @@ impl Engine {
             source,
         })?;
         let Some(c) = self.rules.classify(&facts) else {
-            return Ok(Action::NoRule(path.to_path_buf()));
+            return self.ai_step(&facts, batch_id);
         };
         if self.dry_run {
             return Ok(Action::WouldMove {
@@ -155,11 +188,7 @@ impl Engine {
                 confirm: c.confirm,
             });
         }
-
-        // A file the user brought back with `tidy undo` stays where it is
-        // (works across processes because it is checked in the DB).
-        let undone = store.undone_hashes(path)?;
-        if !undone.is_empty() && undone.contains(&hash_file(path)?) {
+        if self.was_undone(path)? {
             return skipped("restored by undo; left in place");
         }
 
@@ -169,33 +198,135 @@ impl Engine {
                 path: path.to_path_buf(),
                 rule: c.rule_name,
                 suggested: c.dest_dir,
+                source: PendingSource::Rule,
+                confidence: None,
+                reason: None,
             });
         }
+        self.move_to(
+            path,
+            c.dest_dir,
+            batch_id,
+            &c.rule_name,
+            DecidedBy::Rule,
+            None,
+        )
+    }
 
+    /// A file the user brought back with `tidy undo` stays where it is
+    /// (works across processes because it is checked in the DB).
+    fn was_undone(&self, path: &Path) -> Result<bool, EngineError> {
+        let undone = self.mover.store().undone_hashes(path)?;
+        Ok(!undone.is_empty() && undone.contains(&hash_file(path)?))
+    }
+
+    /// No rule matched: ask the AI (if any). Failures fall back to leaving
+    /// the file alone — never an error for the caller (CLAUDE.md rule 4).
+    fn ai_step(&self, facts: &FileFacts, batch_id: &str) -> Result<Action, EngineError> {
+        let path = &facts.path;
+        let Some(ai) = &self.ai else {
+            return Ok(Action::NoRule(path.clone()));
+        };
+        let store = self.mover.store();
+        // Already waiting for the user's answer to an AI suggestion: don't
+        // pay for the same question again on every save.
+        if let Some(p) = store.get_pending_by_path(path)? {
+            if p.source == PendingSource::Ai {
+                return Ok(Action::Skipped {
+                    path: path.clone(),
+                    reason: "already waiting for confirmation",
+                });
+            }
+        }
+        if !self.dry_run && self.was_undone(path)? {
+            return Ok(Action::Skipped {
+                path: path.clone(),
+                reason: "restored by undo; left in place",
+            });
+        }
+        let s = match ai.suggest(store, facts) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(path = %path.display(), "AI suggestion failed: {e}");
+                return Ok(Action::AiFailed {
+                    path: path.clone(),
+                    error: e.to_string(),
+                });
+            }
+        };
+        let auto = ai.auto_allowed(&s);
+        if self.dry_run {
+            return Ok(Action::WouldMove {
+                path: path.clone(),
+                rule: format!("AI {:.0}%", s.confidence * 100.0),
+                dest_dir: s.dest_dir,
+                confirm: !auto,
+            });
+        }
+        if auto {
+            return self.move_to(
+                path,
+                s.dest_dir,
+                batch_id,
+                "AI",
+                DecidedBy::Ai,
+                Some(s.confidence),
+            );
+        }
+        store.upsert_pending_entry(&NewPending {
+            path,
+            suggested_dest: Some(&s.dest_dir),
+            reason: Some(&s.reason),
+            source: PendingSource::Ai,
+            confidence: Some(s.confidence),
+            suggested_name: s.suggested_rename.as_deref(),
+        })?;
+        Ok(Action::Pending {
+            path: path.clone(),
+            rule: "AI".into(),
+            suggested: s.dest_dir,
+            source: PendingSource::Ai,
+            confidence: Some(s.confidence),
+            reason: Some(s.reason),
+        })
+    }
+
+    fn move_to(
+        &self,
+        path: &Path,
+        dest_dir: PathBuf,
+        batch_id: &str,
+        rule: &str,
+        by: DecidedBy,
+        confidence: Option<f64>,
+    ) -> Result<Action, EngineError> {
         let out = self.mover.move_file(&MoveRequest {
             src: path.to_path_buf(),
-            dest_dir: c.dest_dir,
+            dest_dir,
             batch_id: batch_id.to_string(),
-            decided_by: DecidedBy::Rule,
-            rule_name: Some(c.rule_name.clone()),
-            ai_confidence: None,
+            decided_by: by,
+            rule_name: (by == DecidedBy::Rule).then(|| rule.to_string()),
+            ai_confidence: confidence,
+            new_name: None,
         })?;
         Ok(match out {
             MoveOutcome::Moved { log_id, src, dst } => Action::Moved {
                 src,
                 dst,
-                rule: c.rule_name,
+                rule: rule.to_string(),
                 batch_id: batch_id.to_string(),
                 log_id,
+                by,
+                confidence,
             },
             MoveOutcome::SkippedDuplicate { src, existing } => Action::Duplicate {
                 src,
                 existing,
-                rule: c.rule_name,
+                rule: rule.to_string(),
             },
             MoveOutcome::AlreadyInPlace(path) => Action::AlreadyInPlace {
                 path,
-                rule: c.rule_name,
+                rule: rule.to_string(),
             },
         })
     }
@@ -209,7 +340,8 @@ pub fn reindex_for(store: &crate::store::Store, action: &Action, opts: &IndexOpt
         Action::Pending { path, .. }
         | Action::Duplicate { src: path, .. }
         | Action::AlreadyInPlace { path, .. }
-        | Action::NoRule(path) => indexer.index_file(path, opts).map(drop),
+        | Action::NoRule(path)
+        | Action::AiFailed { path, .. } => indexer.index_file(path, opts).map(drop),
         Action::WouldMove { .. } | Action::Skipped { .. } => Ok(()),
     };
     if let Err(e) = res {
