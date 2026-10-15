@@ -1,0 +1,495 @@
+# 파일 자동 정리 프로그램 — 설계 스펙 (v0.1)
+
+> 가칭: **Tidy** (추후 변경 가능)
+> 작성일: 2026-10-15
+> 용도: 이 문서는 Claude Code가 구현 기준으로 삼는 단일 소스(Single Source of Truth)다. 구현 중 결정이 바뀌면 이 문서를 먼저 갱신한다.
+
+---
+
+## 1. 목표
+
+바탕화면과 사용자가 지정한 폴더(로컬·NAS 마운트)를 **상시 감시**하면서,
+
+1. 새 파일이 생기면 **규칙 → AI 판단 → 사용자 확인** 순으로 목적지를 정해 이동시키고,
+2. 폴더 전체 구조를 **트리/통계 리포트**로 뽑아 재구성안을 제안하며,
+3. 파일 메타데이터와 **본문 내용까지 인덱싱**해 즉시 검색을 제공한다.
+
+AI는 선택 사항이다. API 키나 로컬 모델이 없어도 규칙 엔진 + 검색은 완전히 동작해야 한다.
+
+---
+
+## 2. 범위
+
+### 2.1 1차 (MVP)
+- 폴더 감시 (로컬 이벤트 + NAS 폴링 하이브리드)
+- 규칙 기반 분류 (확장자 / 파일명 패턴 / 출처 / 크기 / 날짜)
+- AI 분류 제안 (클라우드 API + Ollama 로컬) — 키 없으면 비활성
+- 사용자 확인 UI (트레이 알림 → 승인/수정/건너뜀)
+- 이동 실행 + **전체 이동 로그 + 되돌리기(Undo)**
+- 인덱싱: 메타데이터 + 텍스트 본문(txt, md, pdf, docx, xlsx, pptx, csv, json, 소스코드, html)
+- 전문검색 (SQLite FTS5) + 선택적 의미검색(임베딩)
+- 구조 리포트: 트리, 용량, 파일 타입 분포, 중복(해시), 오래된 파일
+- AI 재구성 제안 → 미리보기(diff) → 적용/거부
+- 트레이 상주, 글로벌 단축키로 검색창
+- 학습 루프: 같은 패턴에 같은 답이 N회 쌓이면 자동 규칙 승격 제안
+
+### 2.2 2차 (1차 완성 후)
+- 이미지 OCR / 이미지 내용 설명(비전 모델) 인덱싱
+- 스캔 PDF OCR
+- NAS 측 헤드리스 에이전트(Docker) — NAS가 직접 감시·인덱싱, PC 앱은 결과 동기화
+- 멀티 디바이스 인덱스 공유
+- 자연어 명령 ("지난달 받은 KT 관련 엑셀 전부 프로젝트 폴더로")
+
+### 2.3 하지 않는 것
+- 클라우드 스토리지 API 직접 연동(구글드라이브 등) — 마운트된 폴더로만 취급
+- 파일 삭제 자동화 — 삭제는 항상 사용자 명시 조작, 휴지통 경유
+- 암호화 파일 본문 해독
+
+---
+
+## 3. 기술 스택
+
+| 영역 | 선택 | 이유 |
+|---|---|---|
+| 코어 | **Rust** | 파일 감시·해시·텍스트 추출·DB를 한 라이브러리로. NAS 데몬으로 재사용 |
+| UI | **Tauri 2** + React + TypeScript | 트레이·글로벌 단축키·네이티브 알림 기본 지원, 가벼움 |
+| DB | SQLite (rusqlite, bundled) + FTS5 | 단일 파일, 의존성 없음 |
+| 벡터 | sqlite-vec (또는 초기엔 BLOB + 코사인 brute-force) | 개인용 규모에선 충분 |
+| 파일 감시 | `notify` crate (+ `notify-debouncer-full`) | 크로스플랫폼 |
+| 텍스트 추출 | pdf-extract / docx(zip+xml) / calamine(xlsx) / 자체 파서 | 순수 Rust 우선, 실패 시 외부 CLI 폴백 옵션 |
+| LLM | 자체 `LlmProvider` 트레이트 → Anthropic / OpenAI / Ollama 구현 | 교체 가능 |
+| 설정 | TOML (`config.toml`) | 사람이 읽고 수정 가능 |
+| 로깅 | `tracing` + 파일 롤링 | |
+
+---
+
+## 4. 아키텍처
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Tauri App (tray-resident)                               │
+│  ┌──────────────┐  ┌───────────────┐  ┌──────────────┐  │
+│  │ Search Window│  │ Confirm Popup │  │ Report/Settings│ │
+│  └──────┬───────┘  └──────┬────────┘  └──────┬───────┘  │
+│         └────────── Tauri IPC (commands/events) ─────┐  │
+└──────────────────────────────────────────────────────┼──┘
+                                                       │
+┌──────────────────────────────────────────────────────┼──┐
+│ tidy-core (Rust lib)                                  ▼  │
+│  ┌────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐    │
+│  │Watcher │→ │Classifier│→ │ Mover    │  │ Reporter │    │
+│  │(event+ │  │rules→AI  │  │+UndoLog  │  │tree/dup  │    │
+│  │ poll)  │  └────┬─────┘  └──────────┘  └──────────┘    │
+│  └───┬────┘       │                                      │
+│      ▼            ▼                                      │
+│  ┌────────┐  ┌──────────┐  ┌──────────────────────────┐  │
+│  │Indexer │  │ AI Layer │  │ Store (SQLite+FTS5+vec)  │  │
+│  │extract │  │Provider  │  │                          │  │
+│  │+embed  │  │trait     │  │                          │  │
+│  └────────┘  └──────────┘  └──────────────────────────┘  │
+└──────────────────────────────────────────────────────────┘
+```
+
+**원칙**
+- `tidy-core`는 UI를 모른다. 모든 기능은 코어 API로 노출되고, Tauri는 얇은 어댑터다.
+- 코어는 `tidy-cli`로도 호출 가능해야 한다(테스트·NAS 데몬 전환 대비).
+- 모든 파일시스템 변경은 **Mover**를 통해서만 일어난다. 다른 모듈은 파일을 쓰거나 옮기지 않는다.
+
+### 4.1 워크스페이스 구조
+```
+tidy/
+├── Cargo.toml              # workspace
+├── crates/
+│   ├── tidy-core/          # 핵심 라이브러리
+│   │   └── src/
+│   │       ├── lib.rs
+│   │       ├── config.rs
+│   │       ├── watcher/    # 이벤트 + 폴링
+│   │       ├── classify/   # rules.rs, ai.rs, learner.rs
+│   │       ├── mover/      # mover.rs, undo.rs
+│   │       ├── index/      # extract/*.rs, embed.rs, indexer.rs
+│   │       ├── search/     # fts.rs, semantic.rs, query.rs
+│   │       ├── report/     # tree.rs, dup.rs, stale.rs, restructure.rs
+│   │       ├── ai/         # provider.rs, anthropic.rs, openai.rs, ollama.rs, prompts.rs
+│   │       └── store/      # db.rs, migrations/, models.rs
+│   └── tidy-cli/           # 디버그/헤드리스용 CLI
+├── apps/
+│   └── desktop/            # Tauri 2 + React
+│       ├── src-tauri/
+│       └── src/
+├── docs/
+│   └── SPEC.md (이 문서)
+└── CLAUDE.md
+```
+
+---
+
+## 5. 모듈 상세
+
+### 5.1 Watcher
+- 입력: `config.watch[]` (경로, 종류 `local|network`, 폴링 간격, 재귀 여부, 제외 패턴)
+- `local`: `notify` 이벤트. `network`: `notify` 시도 + **주기 폴링**(기본 120s, mtime/size 스냅샷 비교) 병행. 둘 다에서 같은 파일이 잡히면 dedupe.
+- **안정화 대기**: 생성 이벤트 후 파일 크기가 N초(기본 3s) 동안 변하지 않을 때까지 처리 보류. 임시 파일(`*.tmp`, `*.crdownload`, `*.part`, `~$*`, `.DS_Store`, `Thumbs.db`) 무시.
+- 출력: `FileEvent { path, kind: Created|Modified|Removed|Renamed, source: Watch|Poll, at }` → 내부 채널
+- 자기 자신이 옮긴 파일로 인한 이벤트는 무시(Mover가 발행하는 "expected move" 토큰으로 식별).
+
+### 5.2 Classifier
+파이프라인: **Rules → (매칭 없으면) AI → (AI 없거나 confidence 낮으면) Ask user**
+
+**규칙 (rules.toml, 우선순위 순)**
+```toml
+[[rule]]
+name = "스크린샷"
+match = { ext = ["png","jpg"], name_regex = "^(스크린샷|Screenshot|화면 캡처)" }
+dest = "~/Pictures/Screenshots/{yyyy}/{mm}"
+confirm = false
+
+[[rule]]
+name = "설치파일"
+match = { ext = ["exe","msi","dmg","pkg"] }
+dest = "~/Downloads/Installers"
+confirm = true
+```
+- 매치 조건: `ext`, `name_regex`, `min_size`, `max_size`, `older_than_days`, `source_app`(가능한 OS에서만), `from_dir`
+- `dest` 템플릿 변수: `{yyyy}` `{mm}` `{dd}` `{ext}` `{stem}` `{source_dir_name}`
+- `confirm = false`인 규칙은 묻지 않고 이동(로그는 남김).
+
+**AI 분류 요청에 보내는 정보** (프라이버시·비용 위해 최소화)
+- 파일명, 확장자, 크기, 생성시각, 원본 폴더
+- 본문 앞 N자(기본 1,500자, 설정 가능) — 텍스트 추출 가능할 때만
+- 현재 목적지 후보 폴더 트리(깊이 2~3, 최근 사용 폴더 우선)
+- 최근 사용자 결정 이력 k건(유사 파일에 대한)
+
+**AI 응답 스키마 (JSON 강제)**
+```json
+{
+  "dest": "~/Documents/업무/KT/과금",
+  "confidence": 0.82,
+  "reason": "파일명과 본문에 KT 과금 관련 표가 포함",
+  "new_folder": false,
+  "suggested_rename": null
+}
+```
+- `confidence >= config.ai.auto_threshold`(기본 0.9) **이고** 규칙에 `ai_auto = true`로 허용된 폴더일 때만 자동 이동. 그 외엔 확인 팝업.
+- `new_folder = true`면 항상 확인.
+
+**Learner (학습 루프)**
+- 사용자가 확인 팝업에서 내린 결정을 `decisions` 테이블에 저장.
+- 같은 `(ext, name 패턴 또는 원본폴더)` 조합으로 같은 `dest`가 3회(설정 가능) 쌓이면 "이 규칙을 자동화할까요?" 제안 → 수락 시 `rules.toml`에 규칙 추가.
+
+### 5.3 Confirm UI (사용자 확인)
+- 트레이 알림 → 클릭 시 작은 팝업: 파일명, 미리보기(텍스트 앞부분/이미지 썸네일), 제안 목적지, 이유, 대안 폴더 3개
+- 액션: **이동 / 다른 곳 선택 / 이름 바꿔 이동 / 건너뜀(이번만) / 무시(이 파일 영구)**
+- 미응답 파일은 **대기열(Pending)** 에 쌓이고 검색창에서 일괄 처리 가능.
+- 조용 모드(설정): 알림 없이 Pending에만 쌓음.
+
+### 5.4 Mover + Undo
+- 이동 절차:
+  1. 목적지 충돌 검사 → 동일 해시면 중복 처리 정책(건너뜀/덮어쓰기/이름 뒤 `(1)`), 다른 파일이면 이름 변경
+  2. 같은 볼륨: `rename`. 다른 볼륨/NAS: `dest.tmp.<uuid>`로 복사 → 크기·해시 검증 → 원자적 rename → 원본 삭제
+  3. `move_log`에 기록 (before/after 경로, 해시, 결정 출처 `rule|ai|user|restructure`, 배치 ID)
+- **Undo**: 단건/배치 단위 되돌리기. 원본 위치에 다른 파일이 생겼으면 충돌 알림. 최근 30일(설정) 보관.
+- 절대 삭제하지 않는다. "삭제"는 OS 휴지통으로 보내는 것만 허용(`trash` crate).
+
+### 5.5 Indexer
+- 대상: 감시 폴더 전체 + 사용자가 추가 지정한 인덱스 전용 폴더
+- 초기 전체 스캔 → 이후 Watcher 이벤트로 증분 갱신
+- 각 파일: `path, size, mtime, ctime, ext, mime, hash(blake3), text_excerpt, full_text(FTS), embedding(optional)`
+- 해시는 크기+mtime이 바뀐 경우에만 재계산. 대용량(기본 >200MB)은 해시·본문 스킵하고 메타만.
+- 텍스트 추출기는 `trait Extractor { fn supports(ext) -> bool; fn extract(path) -> Result<String> }`로 확장. 실패해도 메타 인덱싱은 유지.
+- NAS 폴더: 기본 **메타만** 인덱싱. 본문 인덱싱은 설정으로 켜되 야간 시간대/수동 트리거 옵션 제공.
+- 우선순위: 백그라운드 저우선 스레드, 인덱싱 중 CPU/IO 상한(설정) — 사용자 작업 방해 금지.
+
+### 5.6 Search
+- 검색창(글로벌 단축키, 기본 `Ctrl/Cmd+Shift+Space`)
+- 문법: 일반 키워드 → FTS5(파일명 가중치 > 본문). 필터 `ext:pdf` `in:~/Documents` `after:2026-09` `size:>10mb` `type:image`
+- 의미검색: 임베딩이 켜져 있으면 FTS 결과와 벡터 결과를 RRF로 병합. 자연어 질문형 입력이면 의미검색 가중치 상향.
+- 결과: 경로, 매칭 스니펫(하이라이트), 수정일. 액션: 열기 / 폴더 열기 / 이동 / 복사 경로
+- 응답 목표: 로컬 FTS 50ms 이내, 벡터 포함 300ms 이내 (10만 파일 기준)
+
+### 5.7 Reporter
+- 트리 출력(깊이 제한, 용량/파일 수 표시, 텍스트/JSON/HTML 내보내기)
+- 통계: 타입별 용량, 폴더별 용량 Top N, 중복 파일 그룹(해시 기준), 90일 이상 미접근 파일, 빈 폴더
+- **AI 재구성 제안**: 현재 트리 요약(깊이 3, 폴더별 파일 수/대표 파일명)을 보내 "제안 트리 + 이동 목록" JSON을 받음 → 사용자에게 **before/after diff** 보여줌 → 승인 시 Mover 배치 실행(배치 Undo 가능)
+- 재구성 제안은 **절대 자동 적용하지 않는다.**
+
+### 5.8 AI Layer
+```rust
+#[async_trait]
+pub trait LlmProvider: Send + Sync {
+    async fn complete_json(&self, system: &str, user: &str, schema: &str) -> Result<serde_json::Value>;
+    fn name(&self) -> &str;
+}
+#[async_trait]
+pub trait EmbeddingProvider: Send + Sync {
+    async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>>;
+    fn dim(&self) -> usize;
+}
+```
+- 구현체: `AnthropicProvider`, `OpenAiProvider`(OpenAI 호환 엔드포인트 — 다른 벤더도 커버), `OllamaProvider`(로컬)
+- 설정에서 **분류용 모델**과 **임베딩 모델**을 따로 지정. 예: 분류는 클라우드, 임베딩은 로컬.
+- 프로필: `[ai.profiles.work]`, `[ai.profiles.home]` — 회사 PC에서는 로컬 전용 프로필 강제 가능. `send_content = false`면 본문을 AI에 보내지 않고 메타만 보냄.
+- 키는 OS 키체인(`keyring` crate)에 저장. config.toml에는 키 이름만.
+- 레이트 리밋·재시도·타임아웃(기본 20s). 실패 시 규칙/Ask user로 폴백, 절대 블로킹하지 않음.
+- 모든 AI 요청/응답 요약은 `ai_log`에 남김(토큰 수, 비용 추정, 결과).
+
+### 5.9 NAS 처리 정책 (1차)
+- 네트워크 경로는 사용자가 `kind = "network"`로 명시(자동 감지는 보조: UNC 경로, 마운트 타입 확인).
+- 감시: 이벤트 + 폴링. 연결 끊김 시 해당 경로만 일시정지하고 재연결 폴링(60s).
+- 이동: 복사-검증-삭제 방식. 진행률 표시. 중단 시 `.tmp` 정리.
+- 인덱싱: 메타 기본, 본문 옵트인. 해시는 작은 파일(기본 <20MB)만.
+- 성능 상한: NAS 동시 IO 1~2개로 제한.
+- 2차에서 NAS 측 에이전트로 대체 가능하도록, Watcher/Indexer는 "원격 소스"를 플러그인 형태로 받을 수 있게 인터페이스를 열어둔다.
+
+---
+
+## 6. 데이터 모델 (SQLite)
+
+```sql
+-- 인덱싱된 파일
+CREATE TABLE files (
+  id INTEGER PRIMARY KEY,
+  path TEXT NOT NULL UNIQUE,
+  root_id INTEGER NOT NULL REFERENCES roots(id),
+  name TEXT NOT NULL,
+  ext TEXT,
+  mime TEXT,
+  size INTEGER NOT NULL,
+  mtime INTEGER NOT NULL,
+  ctime INTEGER,
+  hash TEXT,                  -- blake3 hex, NULL if skipped
+  text_status TEXT NOT NULL DEFAULT 'none',  -- none|ok|unsupported|failed|skipped
+  excerpt TEXT,               -- 앞 500자
+  indexed_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL
+);
+CREATE INDEX idx_files_hash ON files(hash);
+CREATE INDEX idx_files_ext ON files(ext);
+CREATE INDEX idx_files_mtime ON files(mtime);
+
+-- 전문검색
+CREATE VIRTUAL TABLE files_fts USING fts5(
+  name, content, path UNINDEXED,
+  content='', tokenize='unicode61 remove_diacritics 2'
+);
+-- 한국어: unicode61로 1차. 형태소 품질 부족 시 trigram 토크나이저 병행 테이블 검토.
+
+-- 임베딩 (sqlite-vec 사용 시 vec0 테이블, 아니면 BLOB)
+CREATE TABLE embeddings (
+  file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+  model TEXT NOT NULL,
+  dim INTEGER NOT NULL,
+  vec BLOB NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+-- 감시/인덱스 루트
+CREATE TABLE roots (
+  id INTEGER PRIMARY KEY,
+  path TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL,          -- local|network
+  watch INTEGER NOT NULL,      -- 0/1
+  index_content INTEGER NOT NULL,
+  poll_interval_s INTEGER
+);
+
+-- 이동 로그 (Undo 근거)
+CREATE TABLE move_log (
+  id INTEGER PRIMARY KEY,
+  batch_id TEXT NOT NULL,
+  src_path TEXT NOT NULL,
+  dst_path TEXT NOT NULL,
+  hash TEXT,
+  size INTEGER,
+  decided_by TEXT NOT NULL,    -- rule|ai|user|restructure
+  rule_name TEXT,
+  ai_confidence REAL,
+  moved_at INTEGER NOT NULL,
+  undone_at INTEGER
+);
+CREATE INDEX idx_move_batch ON move_log(batch_id);
+
+-- 사용자 결정 (학습용)
+CREATE TABLE decisions (
+  id INTEGER PRIMARY KEY,
+  file_name TEXT NOT NULL,
+  ext TEXT,
+  src_dir TEXT NOT NULL,
+  suggested_dest TEXT,
+  chosen_dest TEXT,            -- NULL = 건너뜀
+  action TEXT NOT NULL,        -- move|skip|ignore|rename_move
+  decided_at INTEGER NOT NULL
+);
+
+-- 대기열
+CREATE TABLE pending (
+  id INTEGER PRIMARY KEY,
+  path TEXT NOT NULL UNIQUE,
+  suggested_dest TEXT,
+  reason TEXT,
+  confidence REAL,
+  alternatives TEXT,           -- JSON array
+  created_at INTEGER NOT NULL
+);
+
+-- 영구 무시
+CREATE TABLE ignored (
+  path TEXT PRIMARY KEY,
+  added_at INTEGER NOT NULL
+);
+
+-- AI 호출 로그
+CREATE TABLE ai_log (
+  id INTEGER PRIMARY KEY,
+  provider TEXT, model TEXT, purpose TEXT,   -- classify|embed|restructure
+  input_tokens INTEGER, output_tokens INTEGER,
+  ok INTEGER NOT NULL, error TEXT,
+  called_at INTEGER NOT NULL
+);
+
+CREATE TABLE schema_version (version INTEGER NOT NULL);
+```
+
+---
+
+## 7. 설정 파일 (`config.toml`)
+
+```toml
+[general]
+language = "ko"
+hotkey = "CmdOrCtrl+Shift+Space"
+quiet_mode = false
+start_on_login = true
+
+[[watch]]
+path = "~/Desktop"
+kind = "local"
+recursive = false
+index_content = true
+
+[[watch]]
+path = "~/Downloads"
+kind = "local"
+recursive = false
+index_content = true
+
+[[watch]]
+path = "Z:/공유/업무"           # 또는 "/Volumes/nas/업무"
+kind = "network"
+recursive = true
+poll_interval_s = 120
+index_content = false          # NAS는 메타만
+content_index_window = "02:00-05:00"
+
+[[index_only]]
+path = "~/Documents"
+recursive = true
+
+[classify]
+stabilize_secs = 3
+learn_threshold = 3
+ignore_globs = ["*.tmp", "*.crdownload", "*.part", "~$*", ".DS_Store", "Thumbs.db"]
+
+[mover]
+undo_retention_days = 30
+duplicate_policy = "skip"      # skip|rename|replace
+nas_concurrency = 2
+
+[index]
+max_content_size_mb = 200
+max_hash_size_mb_network = 20
+cpu_limit_percent = 30
+
+[ai]
+enabled = true
+active_profile = "home"
+auto_threshold = 0.9
+send_content = true
+content_chars = 1500
+
+[ai.profiles.home]
+classify = { provider = "anthropic", model = "claude-haiku-5-5", key_ref = "tidy/anthropic" }
+embed    = { provider = "ollama", model = "nomic-embed-text", base_url = "http://localhost:11434" }
+
+[ai.profiles.work]
+classify = { provider = "ollama", model = "qwen3:8b", base_url = "http://localhost:11434" }
+embed    = { provider = "ollama", model = "nomic-embed-text", base_url = "http://localhost:11434" }
+send_content = false
+```
+
+---
+
+## 8. AI 프롬프트 설계
+
+### 8.1 분류 (system)
+```
+너는 파일 정리 보조자다. 주어진 파일 정보와 사용자의 폴더 구조, 과거 결정을 보고
+이 파일이 들어가야 할 가장 적절한 폴더를 하나 고른다.
+- 기존 폴더를 우선한다. 새 폴더는 정말 필요할 때만 제안하고 new_folder=true로 표시한다.
+- 사용자 과거 결정과 일관되게 판단한다.
+- 확신이 없으면 confidence를 낮게 준다. 거짓 확신 금지.
+- 반드시 아래 JSON 스키마로만 응답한다.
+```
+### 8.2 재구성 (system)
+```
+너는 폴더 구조 컨설턴트다. 주어진 트리 요약을 보고 더 찾기 쉬운 구조를 제안한다.
+- 폴더 깊이는 최대 3을 권장한다.
+- 이동 목록은 {from, to} 배열로, 삭제는 절대 제안하지 않는다.
+- 변경 이유를 폴더 단위로 짧게 설명한다.
+- 사용자가 명시한 "건드리지 말 폴더"는 제외한다.
+```
+프롬프트 본문은 `ai/prompts.rs`에 상수로 두고 테스트 케이스와 함께 관리한다.
+
+---
+
+## 9. UI 화면 목록 (Tauri/React)
+
+1. **트레이 메뉴**: 검색 열기 / 대기 N건 / 일시정지 / 리포트 / 설정 / 종료
+2. **검색창**: 입력 + 결과 리스트 + 우측 미리보기. 키보드 전용 조작 가능.
+3. **확인 팝업**: 5.3 참조. 작은 창, 항상 위.
+4. **대기열**: 테이블, 다중 선택 후 일괄 이동/건너뜀.
+5. **리포트**: 트리 뷰, 통계 카드, 중복 그룹, 재구성 제안 diff(before/after 트리 + 이동 목록 체크박스).
+6. **이동 기록 / Undo**: 배치 단위 타임라인, 되돌리기 버튼.
+7. **설정**: 감시 폴더, 규칙 편집(폼 + raw TOML), AI 프로필/키, 단축키.
+
+---
+
+## 10. 개발 마일스톤
+
+| 단계 | 산출물 | 완료 기준 |
+|---|---|---|
+| M0 | 워크스페이스, CI, `tidy-cli scan <dir>` | 트리·통계 텍스트 출력 |
+| M1 | Watcher + Rules + Mover + Undo (CLI) | 바탕화면에 파일 생성 → 규칙대로 이동, `undo` 동작 |
+| M2 | Store + Indexer + FTS 검색 (CLI) | `tidy-cli search "키워드"` 본문 포함 결과 |
+| M3 | Tauri 앱: 트레이, 검색창, 확인 팝업, 대기열 | 상시 실행 상태에서 전체 플로우 |
+| M4 | AI Layer: Provider 3종, 분류, 학습 루프 | 키 없을 때 완전 동작 + 키 있을 때 AI 제안 |
+| M5 | Reporter UI + AI 재구성 diff/적용 | 배치 Undo 포함 |
+| M6 | NAS 폴링·복사-검증 이동·메타 인덱싱 | 마운트 끊김/복구 테스트 통과 |
+| M7 | 임베딩 의미검색, 설치 패키지(win/mac/linux) | 1차 릴리스 |
+
+각 마일스톤은 CLI로 먼저 검증한 뒤 UI를 붙인다.
+
+---
+
+## 11. 비기능 요구사항
+- 메모리 상주 150MB 이하(인덱싱 중 제외), 유휴 CPU 1% 이하
+- 10만 파일 인덱스에서 검색 응답 목표(5.6)
+- 모든 파일 조작은 로그 + Undo 가능. 데이터 손실 0을 최우선.
+- 크래시 시 재시작해도 Pending/Undo 로그 유지(WAL 모드)
+- 오프라인 완전 동작(AI 제외)
+- 경로·본문 등 개인 데이터는 로컬 DB 외부로 나가지 않음(AI 프로필이 허용한 범위 제외)
+
+---
+
+## 12. 테스트 전략
+- 코어: 임시 디렉토리 기반 통합 테스트(생성→분류→이동→undo), 추출기별 샘플 파일 fixture
+- Watcher: 폴링 경로는 가짜 네트워크 디렉토리로 시뮬레이션
+- AI: `MockProvider`로 결정론적 응답. 실제 API는 수동 테스트만.
+- 크로스플랫폼 경로 처리(UNC, 한글 경로, 긴 경로) 단위 테스트 필수
+
+---
+
+## 13. 열린 질문 (구현 중 결정)
+- 한국어 FTS 토크나이저: unicode61로 충분한지, trigram 병행이 필요한지 M2에서 벤치
+- sqlite-vec vs 자체 brute-force: 파일 수 기준 임계치 정하기
+- `source_app`(어느 앱이 만든 파일인지) 수집 가능 범위: macOS는 `kMDItemWhereFroms`, Windows는 Zone.Identifier ADS — M1 후반에 조사
