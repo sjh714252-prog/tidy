@@ -208,3 +208,29 @@ fn incremental_reindex_size_limit_and_removal() {
     assert!(hits(&store, "감마").is_empty());
     assert_eq!(names(&hits(&store, "가.txt")), vec!["가.txt"]);
 }
+
+/// `tidy index <file>` / watch-moved files: a file outside every root gets
+/// its folder registered as a root and becomes searchable on its own.
+#[test]
+fn index_single_file_outside_any_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("정리 된 곳").join("2026");
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("단독 메모.txt");
+    fs::write(&file, "보안점검 체크리스트 단독 파일").unwrap();
+    fs::write(dir.join("옆 파일.txt"), "보안점검 아님 옆 파일").unwrap();
+
+    let store = Store::open_in_memory().unwrap();
+    let idx = Indexer::new(&store);
+    let out = idx.index_file(&file, &IndexOptions::default()).unwrap();
+    assert_eq!(out, FileOutcome::Added(TextStatus::Ok));
+    assert_eq!(
+        idx.index_file(&file, &IndexOptions::default()).unwrap(),
+        FileOutcome::Unchanged
+    );
+    let hits = search(&store, &Query::parse("보안점검"), &SearchOptions::default()).unwrap();
+    // Only the given file is indexed, not its neighbour.
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].file.path.ends_with("단독 메모.txt"));
+    assert!(idx.index_file(&dir, &IndexOptions::default()).is_err());
+}

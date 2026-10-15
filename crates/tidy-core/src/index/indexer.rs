@@ -24,6 +24,8 @@ use crate::watcher::IgnoreFilter;
 pub enum IndexError {
     #[error("root does not exist or is not a directory: {0}")]
     NotADirectory(PathBuf),
+    #[error("not a file: {0}")]
+    NotAFile(PathBuf),
     #[error(transparent)]
     Store(#[from] StoreError),
     #[error("invalid ignore globs: {0}")]
@@ -207,14 +209,23 @@ impl<'a> Indexer<'a> {
         Ok(report)
     }
 
-    /// Index (or refresh) a single file under an already registered root.
-    /// Used for incremental updates after a watcher event or a move.
+    /// Index (or refresh) a single file. Used by `tidy index <file>` and for
+    /// incremental updates after a watcher event or a move. If no registered
+    /// root contains the file (e.g. a rule moved it to `~/Pictures/...`), its
+    /// folder is registered as a non-watch root so the file gets a home.
     pub fn index_file(&self, path: &Path, opts: &IndexOptions) -> Result<FileOutcome, IndexError> {
         let path = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        let root_id = self
-            .store
-            .root_for_path(&path)?
-            .ok_or_else(|| StoreError::UnknownRoot(path.clone()))?;
+        if !path.is_file() {
+            return Err(IndexError::NotAFile(path));
+        }
+        let root_id = match self.store.root_for_path(&path)? {
+            Some(id) => id,
+            None => {
+                let parent = path.parent().unwrap_or_else(|| Path::new(""));
+                self.store
+                    .upsert_root(parent, opts.kind, false, opts.index_content)?
+            }
+        };
         Ok(self.index_file_inner(&path, root_id, opts, now())?)
     }
 

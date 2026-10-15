@@ -50,7 +50,7 @@ enum Cmd {
     Pending,
     /// Show which rule would apply to the given files (moves nothing).
     Classify(ClassifyArgs),
-    /// Index folders (metadata + body text) for `tidy search`.
+    /// Index folders or single files (metadata + body text) for `tidy search`.
     Index(IndexArgs),
     /// Full-text search over the index.
     Search(SearchArgs),
@@ -58,21 +58,25 @@ enum Cmd {
 
 #[derive(Args)]
 struct IndexArgs {
-    /// Folders to index (default: all [[watch]] and [[index_only]] roots).
+    /// Folders or files to index (default: all [[watch]] and [[index_only]]
+    /// roots). A file outside every indexed folder registers its own folder
+    /// as a root (that folder is not walked; only the given file is indexed).
     paths: Vec<PathBuf>,
-    /// Do not descend into subfolders.
+    /// Do not descend into subfolders (folders only).
     #[arg(long)]
     no_recursive: bool,
     /// Metadata only, skip body text (what network roots do by default).
     #[arg(long)]
     no_content: bool,
-    /// Drop the whole index first and rebuild it.
+    /// Drop the WHOLE index (every root) first, then index the given paths.
+    /// To re-extract a single changed file, just run `tidy index <file>`.
     #[arg(long)]
     rebuild: bool,
     /// Print index statistics and exit.
     #[arg(long)]
     status: bool,
-    /// Forget a folder (and its files) instead of indexing it.
+    /// Forget a folder (and its files) or a single file instead of indexing it.
+    /// Only index rows are removed; files on disk are untouched.
     #[arg(long)]
     forget: bool,
     /// Output format.
@@ -631,7 +635,14 @@ fn cmd_index(config: Option<PathBuf>, args: IndexArgs) -> Result<()> {
     if args.forget {
         for p in &args.paths {
             let p = dunce::canonicalize(tidy_core::config::expand_home(p)).unwrap_or(p.clone());
-            store.remove_root(&p)?;
+            if p.is_file() {
+                if !store.remove_file(&p)? {
+                    eprintln!("not indexed: {}", p.display());
+                    continue;
+                }
+            } else {
+                store.remove_root(&p)?;
+            }
             println!("forgot    {}", p.display());
         }
         return Ok(());
@@ -688,19 +699,21 @@ fn cmd_index(config: Option<PathBuf>, args: IndexArgs) -> Result<()> {
     let indexer = Indexer::new(&store);
     let mut reports = Vec::new();
     for (path, opts) in &jobs {
+        if path.is_file() {
+            let outcome = indexer
+                .index_file(path, opts)
+                .with_context(|| format!("indexing {}", path.display()))?;
+            println!("{:<22} {}", outcome_tag(&outcome), path.display());
+            continue;
+        }
         if !path.is_dir() {
-            eprintln!("skip      {} (not a folder)", path.display());
+            eprintln!("skip      {} (no such file or folder)", path.display());
             continue;
         }
         let report = indexer
             .index_root(path, opts, |p, o| {
                 if verbose {
-                    let tag = match o {
-                        FileOutcome::Added(s) => format!("added ({})", s.as_str()),
-                        FileOutcome::Updated(s) => format!("updated ({})", s.as_str()),
-                        FileOutcome::Unchanged => "unchanged".to_string(),
-                    };
-                    eprintln!("{tag:<22} {}", p.display());
+                    eprintln!("{:<22} {}", outcome_tag(o), p.display());
                 }
             })
             .with_context(|| format!("indexing {}", path.display()))?;
@@ -713,6 +726,14 @@ fn cmd_index(config: Option<PathBuf>, args: IndexArgs) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&reports)?);
     }
     Ok(())
+}
+
+fn outcome_tag(o: &FileOutcome) -> String {
+    match o {
+        FileOutcome::Added(s) => format!("added ({})", s.as_str()),
+        FileOutcome::Updated(s) => format!("updated ({})", s.as_str()),
+        FileOutcome::Unchanged => "unchanged".to_string(),
+    }
 }
 
 fn print_index_report(r: &IndexReport) {
