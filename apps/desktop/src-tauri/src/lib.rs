@@ -24,7 +24,14 @@ pub fn run() {
     let config_path = state::config_path_from_env();
     tracing::info!(config = %config_path.display(), "starting");
 
+    let first_run = !config_path.exists();
+
     tauri::Builder::default()
+        // Register state before any window exists: Tauri 2 creates the
+        // windows from tauri.conf.json *before* `setup` runs, so the webview
+        // can invoke commands while setup is still executing. Managing the
+        // state here (not in setup) avoids "state() called before manage()".
+        .manage(AppState::new(config_path.clone()))
         // A second launch just brings the running instance forward.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             windows::show_main(app, "activity");
@@ -42,8 +49,6 @@ pub fn run() {
         )
         .setup(move |app| {
             let handle = app.handle().clone();
-            let first_run = !config_path.exists();
-            app.manage(AppState::new(config_path.clone()));
             tray::create(&handle)?;
             let hotkey = handle.state::<AppState>().config().general.hotkey;
             windows::register_hotkey(&handle, &hotkey);
