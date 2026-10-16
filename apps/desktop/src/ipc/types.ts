@@ -67,6 +67,9 @@ export interface Resolution {
   batchId: string | null;
 }
 
+/** serde `Result<T, String>`: `{ Ok: T }` or `{ Err: string }`. */
+export type BatchResult<T> = { Ok: T } | { Err: string };
+
 export interface UndoResult {
   /** [from, to] pairs. */
   restored: [string, string][];
