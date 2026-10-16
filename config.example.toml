@@ -84,3 +84,8 @@ send_content = false
 # OpenAI 호환 서버 예시
 # [ai.profiles.openai]
 # classify = { provider = "openai", model = "<모델 이름>", key_ref = "tidy/openai", base_url = "https://api.openai.com/v1" }
+
+[report]
+# 재구성(규칙/AI 정리 제안)이 절대 건드리지 않는 폴더. 앱에서는 요청마다 더 추가할 수 있습니다.
+protected = []           # 예: ['C:\Users\나\바탕 화면\진행 중']
+stale_days = 90          # 이 기간 동안 안 쓴 파일을 '오래 안 쓴 파일'로 표시

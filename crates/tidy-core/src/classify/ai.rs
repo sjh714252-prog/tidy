@@ -26,6 +26,18 @@ use crate::index::Extractors;
 use crate::paths::normalize_lexical;
 use crate::store::{AiLogEntry, Store};
 
+/// One JSON request through [`AiClassifier::call`].
+#[derive(Debug, Clone, Copy)]
+pub struct AiCall<'a> {
+    /// `ai_log.purpose`: classify | test | restructure.
+    pub purpose: &'static str,
+    pub system: &'a str,
+    pub user: &'a str,
+    pub schema: &'a serde_json::Value,
+    pub max_tokens: u32,
+    pub timeout: Duration,
+}
+
 /// Validated AI answer.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct AiSuggestion {
@@ -80,6 +92,9 @@ impl std::fmt::Debug for AiClassifier {
             .finish()
     }
 }
+
+/// Room for (adaptive) thinking plus a short JSON answer.
+const CLASSIFY_MAX_TOKENS: u32 = 2048;
 
 /// Lines of the candidate tree are capped so the prompt stays small.
 const MAX_TREE_LINES: usize = 150;
@@ -155,41 +170,19 @@ impl AiClassifier {
     pub fn suggest(&self, store: &Store, facts: &FileFacts) -> Result<AiSuggestion, AiError> {
         let input = self.build_input(store, facts);
         let user = prompts::classify_user(&input);
-        let schema = prompts::classify_schema();
-        let started = Instant::now();
-        let fut = self
-            .provider
-            .complete_json(prompts::CLASSIFY_SYSTEM, &user, &schema);
-        let res: Result<LlmResponse, AiError> = self
-            .rt
-            .block_on(async { tokio::time::timeout(self.settings.timeout, fut).await })
-            .unwrap_or(Err(AiError::Timeout(self.settings.timeout.as_secs())));
-
-        let (usage, model) = match &res {
-            Ok(r) => (r.usage, r.model.clone()),
-            Err(_) => (Usage::default(), self.provider.model().to_string()),
+        let call = AiCall {
+            purpose: "classify",
+            system: prompts::CLASSIFY_SYSTEM,
+            user: &user,
+            schema: &prompts::classify_schema(),
+            max_tokens: CLASSIFY_MAX_TOKENS,
+            timeout: self.settings.timeout,
         };
-        let outcome = res.and_then(|r| validate(r.value));
-        let log = AiLogEntry {
-            provider: self.provider.name().to_string(),
-            model: model.clone(),
-            purpose: "classify".into(),
-            input_tokens: usage.input_tokens,
-            output_tokens: usage.output_tokens,
-            cost_usd: estimate_cost_usd(self.provider.name(), &model, usage),
-            latency_ms: Some(started.elapsed().as_millis() as u64),
-            ok: outcome.is_ok(),
-            error: outcome.as_ref().err().map(|e| e.to_string()),
-            result: outcome
-                .as_ref()
-                .ok()
-                .map(|s| format!("{} ({:.0}%)", s.dest_dir.display(), s.confidence * 100.0)),
-            ..Default::default()
-        };
-        if let Err(e) = store.insert_ai_log(&log) {
-            tracing::warn!("ai_log write failed: {e}");
-        }
-        outcome
+        self.call(store, &call, |v| {
+            let s = validate(v)?;
+            let summary = format!("{} ({:.0}%)", s.dest_dir.display(), s.confidence * 100.0);
+            Ok((s, Some(summary)))
+        })
     }
 
     /// One tiny request to check model, key and network ("연결 테스트").
@@ -201,34 +194,58 @@ impl AiClassifier {
             "required": ["ok"],
             "additionalProperties": false
         });
+        let call = AiCall {
+            purpose: "test",
+            system: "Connectivity check. Answer with the JSON object {\"ok\": true}.",
+            user: "ping",
+            schema: &schema,
+            max_tokens: 256,
+            timeout: self.settings.timeout,
+        };
+        let model = self.provider.model().to_string();
+        self.call(store, &call, |_| Ok((model.clone(), None)))
+    }
+
+    /// Any JSON request on this provider (used by the restructure report):
+    /// bounded by `call.timeout`, logged in `ai_log` under `call.purpose`.
+    /// `check` validates the answer and may return a short result summary
+    /// for the log (never file contents).
+    pub fn call<T>(
+        &self,
+        store: &Store,
+        call: &AiCall<'_>,
+        check: impl FnOnce(serde_json::Value) -> Result<(T, Option<String>), AiError>,
+    ) -> Result<T, AiError> {
         let started = Instant::now();
-        let fut = self.provider.complete_json(
-            "Connectivity check. Answer with the JSON object {\"ok\": true}.",
-            "ping",
-            &schema,
-        );
-        let res = self
+        let fut = self
+            .provider
+            .complete_json(call.system, call.user, call.schema, call.max_tokens);
+        let res: Result<LlmResponse, AiError> = self
             .rt
-            .block_on(async { tokio::time::timeout(self.settings.timeout, fut).await })
-            .unwrap_or(Err(AiError::Timeout(self.settings.timeout.as_secs())));
-        let usage = res.as_ref().map(|r| r.usage).unwrap_or_default();
-        let model = res
-            .as_ref()
-            .map(|r| r.model.clone())
-            .unwrap_or_else(|_| self.provider.model().to_string());
-        let _ = store.insert_ai_log(&AiLogEntry {
+            .block_on(async { tokio::time::timeout(call.timeout, fut).await })
+            .unwrap_or(Err(AiError::Timeout(call.timeout.as_secs())));
+        let (usage, model) = match &res {
+            Ok(r) => (r.usage, r.model.clone()),
+            Err(_) => (Usage::default(), self.provider.model().to_string()),
+        };
+        let outcome = res.and_then(|r| check(r.value));
+        let log = AiLogEntry {
             provider: self.provider.name().to_string(),
             model: model.clone(),
-            purpose: "test".into(),
+            purpose: call.purpose.to_string(),
             input_tokens: usage.input_tokens,
             output_tokens: usage.output_tokens,
             cost_usd: estimate_cost_usd(self.provider.name(), &model, usage),
             latency_ms: Some(started.elapsed().as_millis() as u64),
-            ok: res.is_ok(),
-            error: res.as_ref().err().map(|e| e.to_string()),
+            ok: outcome.is_ok(),
+            error: outcome.as_ref().err().map(|e| e.to_string()),
+            result: outcome.as_ref().ok().and_then(|(_, s)| s.clone()),
             ..Default::default()
-        });
-        res.map(|_| model)
+        };
+        if let Err(e) = store.insert_ai_log(&log) {
+            tracing::warn!("ai_log write failed: {e}");
+        }
+        outcome.map(|(t, _)| t)
     }
 
     /// May this suggestion move the file without asking? (SPEC §5.2:

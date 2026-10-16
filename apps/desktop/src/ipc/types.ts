@@ -142,7 +142,7 @@ export interface Activity {
   at: number;
 }
 
-export type MainTab = "activity" | "pending" | "settings";
+export type MainTab = "activity" | "pending" | "report" | "history" | "settings";
 
 export type AiProvider = "anthropic" | "openai" | "ollama" | "";
 
@@ -172,4 +172,100 @@ export interface LearnSuggestion {
   examples: string[];
   dest: string;
   ruleToml: string;
+}
+
+// ── M5: report / restructure / history ──────────────────────────────────
+// These mirror the core's own JSON (snake_case), sent as-is by
+// src-tauri/src/report_cmds.rs.
+
+export interface TypeStat { ext: string; count: number; bytes: number }
+export interface FolderStat { path: string; bytes: number; files: number }
+export interface StaleFile { path: string; bytes: number; last_used: number }
+export interface Stats {
+  total_files: number;
+  total_dirs: number;
+  total_bytes: number;
+  root_level_files: number;
+  by_type: TypeStat[];
+  largest_files: FolderStat[];
+  largest_dirs: FolderStat[];
+  empty_dirs: string[];
+  stale_files: number;
+  stale: StaleFile[];
+}
+export interface DupGroup { hash: string; size: number; paths: string[]; wasted: number }
+
+export interface Report {
+  root: string;
+  generatedAt: number;
+  staleDays: number;
+  /** Folder tree text, depth 3. */
+  treeText: string;
+  stats: Stats;
+  /** Paths are relative to root, "/"-separated. */
+  duplicates: DupGroup[];
+  errors: string[];
+}
+
+export interface PlannedMove {
+  id: number;
+  from: string;
+  to: string;
+  is_dir: boolean;
+  files: number;
+  bytes: number;
+  reason: string;
+  warnings: string[];
+}
+export interface Plan {
+  id: number;
+  root: string;
+  source: "rules" | "ai";
+  created_at: number;
+  summary: string;
+  folders: { path: string; reason: string }[];
+  moves: PlannedMove[];
+  rejected: { from: string; to: string; reason: string }[];
+  applied_batch: string | null;
+}
+export interface Preview {
+  before: string;
+  after: string;
+  /** [from, to] pairs leaving the folder. */
+  outside: [string, string][];
+  files_moved: number;
+  /** Folders left empty (kept — nothing is deleted). */
+  emptied: string[];
+}
+export interface PlanResult { plan: Plan; preview: Preview }
+export interface ApplyResult { batchId: string; moved: number; skipped: string[]; errors: string[] }
+export interface StoredPlan {
+  id: number;
+  root: string;
+  source: string;
+  created_at: number;
+  applied_batch: string | null;
+  applied_at: number | null;
+}
+
+export interface BatchSummary {
+  batch_id: string;
+  first_at: number;
+  last_at: number;
+  moves: number;
+  undone: number;
+  decided_by: "rule" | "ai" | "user" | "restructure";
+  label: string | null;
+  example: string;
+}
+export interface MoveLogEntry {
+  id: number;
+  batch_id: string;
+  src_path: string;
+  dst_path: string;
+  decided_by: string;
+  rule_name: string | null;
+  ai_confidence: number | null;
+  moved_at: number;
+  undone_at: number | null;
 }

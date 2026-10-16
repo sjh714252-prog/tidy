@@ -6,12 +6,16 @@ import { useActivity } from "../store/activity";
 import { usePending } from "../store/pending";
 import { useStatus } from "../store/status";
 import { ActivityView } from "./ActivityView";
+import { HistoryView } from "./HistoryView";
 import { PendingView } from "./PendingView";
+import { ReportView } from "./ReportView";
 import { SettingsView } from "./SettingsView";
 
 const TABS: { id: MainTab; label: string }[] = [
   { id: "activity", label: "활동" },
   { id: "pending", label: "대기열" },
+  { id: "report", label: "리포트" },
+  { id: "history", label: "이동 기록" },
   { id: "settings", label: "설정" },
 ];
 
@@ -69,6 +73,8 @@ export function MainWindow() {
       <section className="content">
         {tab === "activity" && <ActivityView />}
         {tab === "pending" && <PendingView />}
+        {tab === "report" && <ReportView />}
+        {tab === "history" && <HistoryView />}
         {tab === "settings" && <SettingsView />}
       </section>
     </div>

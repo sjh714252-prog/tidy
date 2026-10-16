@@ -45,6 +45,9 @@ pub struct FileNode {
     pub name: String,
     pub size: u64,
     pub modified: Option<SystemTime>,
+    /// Last access when the OS keeps it (often coarse or disabled — the
+    /// stale report uses the later of this and `modified`).
+    pub accessed: Option<SystemTime>,
     pub ext: Option<String>,
 }
 
@@ -76,7 +79,9 @@ pub struct ScanResult {
 /// `errors` rather than aborting, since Desktop folders routinely contain
 /// odd items (OneDrive placeholders, broken links).
 pub fn scan(root: &Path, opts: &ScanOptions) -> Result<ScanResult, ScanError> {
-    let root = root.canonicalize().map_err(|source| ScanError::Io {
+    // dunce: no `\\?\` prefix on Windows, so paths match the index and
+    // the move log (restructure plans move files found here).
+    let root = dunce::canonicalize(root).map_err(|source| ScanError::Io {
         path: root.to_path_buf(),
         source,
     })?;
@@ -149,6 +154,7 @@ pub fn scan(root: &Path, opts: &ScanOptions) -> Result<ScanResult, ScanError> {
                 name,
                 size: md.len(),
                 modified: md.modified().ok(),
+                accessed: md.accessed().ok(),
             };
             insert_file(&mut tree, &comps[..comps.len() - 1], node);
         }
@@ -179,6 +185,42 @@ fn insert_file(tree: &mut DirNode, dir_comps: &[String], file: FileNode) {
         });
     }
     cur.files.push(file);
+}
+
+impl DirNode {
+    /// Build a tree from `(relative path with '/', size)` pairs — used for
+    /// the "after" side of a restructure preview.
+    pub fn from_files<'a>(name: &str, files: impl IntoIterator<Item = (&'a str, u64)>) -> Self {
+        let mut tree = DirNode {
+            name: name.to_string(),
+            ..Default::default()
+        };
+        for (rel, size) in files {
+            let comps: Vec<String> = rel
+                .split('/')
+                .filter(|c| !c.is_empty())
+                .map(str::to_string)
+                .collect();
+            let Some((file, dirs)) = comps.split_last() else {
+                continue;
+            };
+            insert_file(
+                &mut tree,
+                dirs,
+                FileNode {
+                    ext: Path::new(file)
+                        .extension()
+                        .map(|e| e.to_string_lossy().to_lowercase()),
+                    name: file.clone(),
+                    size,
+                    modified: None,
+                    accessed: None,
+                },
+            );
+        }
+        finalize(&mut tree);
+        tree
+    }
 }
 
 /// Compute subtree totals bottom-up.

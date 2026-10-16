@@ -222,6 +222,31 @@ pub struct Config {
     pub index: Index,
     pub store: Store,
     pub ai: Ai,
+    pub report: ReportCfg,
+}
+
+/// `[report]` (SPEC §5.7).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ReportCfg {
+    /// "건드리지 말 폴더": restructure plans never move anything in or
+    /// into these (in addition to folders given per request).
+    pub protected: Vec<PathBuf>,
+    pub stale_days: u64,
+    pub top_n: usize,
+    /// Upper bound of moves accepted from one AI restructure answer.
+    pub max_moves: usize,
+}
+
+impl Default for ReportCfg {
+    fn default() -> Self {
+        Self {
+            protected: Vec::new(),
+            stale_days: 90,
+            top_n: 10,
+            max_moves: 500,
+        }
+    }
 }
 
 /// `[ai]` (SPEC §5.8, §7). AI is optional: with `enabled = false`, no
@@ -242,6 +267,8 @@ pub struct Ai {
     pub timeout_secs: u64,
     /// Retries for 429 / 5xx / network errors.
     pub max_retries: u32,
+    /// Restructure proposals are long answers: their own timeout.
+    pub restructure_timeout_secs: u64,
     /// Depth of the candidate folder tree sent to the model.
     pub tree_depth: usize,
     /// How many past user decisions to include as examples.
@@ -262,6 +289,7 @@ impl Default for Ai {
             content_chars: 1500,
             timeout_secs: 20,
             max_retries: 2,
+            restructure_timeout_secs: 180,
             tree_depth: 2,
             history_k: 5,
             candidate_roots: Vec::new(),
@@ -537,6 +565,9 @@ impl Config {
         }
         cfg.classify.rules = expand_home(&cfg.classify.rules);
         for r in &mut cfg.ai.candidate_roots {
+            *r = expand_home(r);
+        }
+        for r in &mut cfg.report.protected {
             *r = expand_home(r);
         }
         if let Some(p) = &cfg.store.path {

@@ -14,7 +14,7 @@ use tidy_core::engine::{new_batch_id, reindex_undo, Action};
 use tidy_core::index::{FileOutcome, IndexOptions, IndexReport, Indexer};
 use tidy_core::mover::{ExpectedMoves, Mover, UndoReport};
 use tidy_core::pending::{resolve, Decision, Resolution};
-use tidy_core::report::{render_tree, scan, ScanOptions, Stats, TreeOptions};
+use tidy_core::report::{self, render_tree, restructure, scan, ScanOptions, Stats, TreeOptions};
 use tidy_core::search::{search, MatchedIn, Query, SearchOptions};
 use tidy_core::service::{run_watch, WatchEvent, WatchRunOptions};
 use tidy_core::store::{PendingSource, Store};
@@ -59,6 +59,65 @@ enum Cmd {
     Ai(AiCmd),
     /// Rule suggestions learned from your decisions (--accept / --dismiss).
     Learn(LearnArgs),
+    /// Folder report: tree, statistics, duplicates, long-unused files.
+    Report(ReportArgs),
+    /// Propose a reorganisation (rules or AI), show the diff, apply on approval.
+    Restructure(RestructureArgs),
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ReportFormat {
+    Text,
+    Json,
+    Html,
+}
+
+#[derive(Args)]
+struct ReportArgs {
+    /// Folder (default: the first [[watch]] folder).
+    path: Option<PathBuf>,
+    /// text | json | html (HTML goes to stdout: `> report.html`).
+    #[arg(short, long, value_enum, default_value_t = ReportFormat::Text)]
+    format: ReportFormat,
+    /// Tree depth to print.
+    #[arg(short, long, default_value_t = 3)]
+    depth: usize,
+    /// Skip duplicate detection (it reads file contents).
+    #[arg(long)]
+    no_dups: bool,
+    /// Days without use after which a file counts as stale.
+    #[arg(long)]
+    stale_days: Option<u64>,
+}
+
+#[derive(Args)]
+struct RestructureArgs {
+    /// Folder to reorganise (default: the first [[watch]] folder).
+    path: Option<PathBuf>,
+    /// Plan from rules.toml (no AI needed).
+    #[arg(long, conflicts_with_all = ["ai", "show", "apply", "list"])]
+    rules: bool,
+    /// Plan proposed by the AI (SPEC §8.2).
+    #[arg(long, conflicts_with_all = ["show", "apply", "list"])]
+    ai: bool,
+    /// --rules: include files in subfolders.
+    #[arg(long, requires = "rules")]
+    recursive: bool,
+    /// Folders never to touch (added to [report] protected).
+    #[arg(long, value_name = "DIR")]
+    protect: Vec<PathBuf>,
+    /// Show a saved plan with its diff.
+    #[arg(long, value_name = "PLAN")]
+    show: Option<i64>,
+    /// Apply a saved plan (all moves, or --only).
+    #[arg(long, value_name = "PLAN")]
+    apply: Option<i64>,
+    /// Comma-separated move numbers for --show / --apply, e.g. 1,3,5.
+    #[arg(long, value_delimiter = ',', value_name = "N,..")]
+    only: Vec<u32>,
+    /// List saved plans.
+    #[arg(long)]
+    list: bool,
 }
 
 #[derive(Subcommand)]
@@ -201,6 +260,9 @@ struct LogArgs {
     /// Number of entries.
     #[arg(short = 'n', long, default_value_t = 20)]
     limit: usize,
+    /// One line per batch (move history timeline; undo with --batch).
+    #[arg(long)]
+    batches: bool,
 }
 
 #[derive(Args)]
@@ -267,6 +329,8 @@ fn main() -> Result<()> {
         Cmd::Search(args) => cmd_search(cli.config, args),
         Cmd::Ai(cmd) => cmd_ai(cli.config, cmd),
         Cmd::Learn(args) => cmd_learn(cli.config, args),
+        Cmd::Report(args) => cmd_report(cli.config, args),
+        Cmd::Restructure(args) => cmd_restructure(cli.config, args),
     }
 }
 
@@ -603,6 +667,25 @@ fn print_undo(r: &UndoReport) -> Result<()> {
 fn cmd_log(config: Option<PathBuf>, args: LogArgs) -> Result<()> {
     let cfg = load_config(config)?;
     let store = Store::open(&cfg.store.db_path())?;
+    if args.batches {
+        for b in store.batches(args.limit)? {
+            println!(
+                "{}  batch {}  {:<11} {:>4} moves{}  {}  e.g. {}",
+                fmt_time(b.last_at),
+                short(&b.batch_id),
+                b.decided_by,
+                b.moves,
+                match b.undone {
+                    0 => String::new(),
+                    n if n == b.moves => "  (undone)".into(),
+                    n => format!("  ({n} undone)"),
+                },
+                b.label.as_deref().unwrap_or(""),
+                b.example.display()
+            );
+        }
+        return Ok(());
+    }
     let moves = store.recent_moves(args.limit)?;
     if moves.is_empty() {
         println!("no moves recorded ({})", cfg.store.db_path().display());
@@ -1115,5 +1198,251 @@ fn cmd_learn(config: Option<PathBuf>, args: LearnArgs) -> Result<()> {
             s.rule_toml
         );
     }
+    Ok(())
+}
+
+fn default_folder(cfg: &Config, path: Option<PathBuf>) -> Result<PathBuf> {
+    match path {
+        Some(p) => Ok(tidy_core::config::expand_home(&p)),
+        None => cfg
+            .watches
+            .first()
+            .map(|w| w.path.clone())
+            .context("no folder given and no [[watch]] folder configured"),
+    }
+}
+
+fn cmd_report(config: Option<PathBuf>, args: ReportArgs) -> Result<()> {
+    let cfg = load_config(config)?;
+    let root = default_folder(&cfg, args.path)?;
+    let store = Store::open(&cfg.store.db_path()).ok();
+    let opts = report::ReportOptions {
+        top_n: cfg.report.top_n,
+        stale_days: args.stale_days.unwrap_or(cfg.report.stale_days),
+        duplicates: (!args.no_dups).then(report::DupOptions::default),
+        ..Default::default()
+    };
+    let r = report::build(&root, &opts, store.as_ref())
+        .with_context(|| format!("reporting {}", root.display()))?;
+    match args.format {
+        ReportFormat::Json => println!("{}", serde_json::to_string_pretty(&r)?),
+        ReportFormat::Html => print!("{}", report::html::render(&r, Some(args.depth))),
+        ReportFormat::Text => {
+            print!(
+                "{}",
+                render_tree(
+                    &r.tree,
+                    &TreeOptions {
+                        max_depth: Some(args.depth),
+                        ..Default::default()
+                    }
+                )
+            );
+            print_stats(&r.stats, r.stale_days);
+            if !r.stats.stale.is_empty() {
+                println!("\n── Long unused (>{}d) ───────────────────", r.stale_days);
+                for f in &r.stats.stale {
+                    println!(
+                        "{}  {:>10}  {}",
+                        fmt_time(f.last_used),
+                        format_size(f.bytes, BINARY),
+                        f.path
+                    );
+                }
+            }
+            println!(
+                "\n── Duplicates ({} groups) ───────────────",
+                r.duplicates.len()
+            );
+            for g in &r.duplicates {
+                println!(
+                    "{} wasted ({} × {})",
+                    format_size(g.wasted, BINARY),
+                    g.paths.len(),
+                    format_size(g.size, BINARY)
+                );
+                for p in &g.paths {
+                    println!("    {p}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn protected_dirs(cfg: &Config, extra: &[PathBuf]) -> Vec<PathBuf> {
+    cfg.report
+        .protected
+        .iter()
+        .chain(extra.iter())
+        .map(|p| {
+            let p = tidy_core::config::expand_home(p);
+            dunce::canonicalize(&p).unwrap_or(p)
+        })
+        .collect()
+}
+
+fn print_plan(plan: &restructure::Plan, only: Option<&[u32]>) -> Result<()> {
+    println!(
+        "plan #{} ({})  {}{}",
+        plan.id,
+        plan.source.as_str(),
+        plan.root.display(),
+        plan.applied_batch
+            .as_deref()
+            .map(|b| format!("  — APPLIED, batch {}", short(b)))
+            .unwrap_or_default()
+    );
+    if !plan.summary.is_empty() {
+        println!("{}", plan.summary);
+    }
+    for f in &plan.folders {
+        println!("  folder {}: {}", f.path, f.reason);
+    }
+    println!(
+        "\n── Moves ({}) ───────────────────────────",
+        plan.moves.len()
+    );
+    for m in &plan.moves {
+        let rel = |p: &Path| {
+            p.strip_prefix(&plan.root)
+                .map(|r| r.display().to_string())
+                .unwrap_or_else(|_| p.display().to_string())
+        };
+        println!(
+            "{:>3}. {}{} -> {}  [{}]{}",
+            m.id,
+            rel(&m.from),
+            if m.is_dir {
+                format!("/ ({} files)", m.files)
+            } else {
+                String::new()
+            },
+            rel(&m.to),
+            m.reason,
+            if m.warnings.is_empty() {
+                String::new()
+            } else {
+                format!("  ⚠ {}", m.warnings.join("; "))
+            }
+        );
+    }
+    if !plan.rejected.is_empty() {
+        println!(
+            "\n── Rejected AI moves ({}) ─────────────────",
+            plan.rejected.len()
+        );
+        for r in &plan.rejected {
+            println!("  {} -> {}: {}", r.from, r.to, r.reason);
+        }
+    }
+    let p = restructure::preview(plan, only)?;
+    println!("\n── Before ──────────────────────────────\n{}", p.before);
+    println!(
+        "── After ({} files moved) ───────────────\n{}",
+        p.files_moved, p.after
+    );
+    for (from, to) in &p.outside {
+        println!(
+            "  leaves this folder: {} -> {}",
+            from.display(),
+            to.display()
+        );
+    }
+    for d in &p.emptied {
+        println!("  becomes empty (left in place, nothing is deleted): {d}/");
+    }
+    Ok(())
+}
+
+fn cmd_restructure(config: Option<PathBuf>, args: RestructureArgs) -> Result<()> {
+    let cfg = load_config(config)?;
+    let store = Store::open(&cfg.store.db_path())?;
+    let protected = protected_dirs(&cfg, &args.protect);
+    let only = (!args.only.is_empty()).then_some(args.only.as_slice());
+
+    if args.list {
+        for p in store.recent_plans(20)? {
+            println!(
+                "#{:<4} {}  {:<5} {}{}",
+                p.id,
+                fmt_time(p.created_at),
+                p.source,
+                p.root.display(),
+                p.applied_batch
+                    .map(|b| format!("  applied (batch {})", short(&b)))
+                    .unwrap_or_default()
+            );
+        }
+        return Ok(());
+    }
+    if let Some(id) = args.show {
+        return print_plan(&restructure::load(&store, id)?, only);
+    }
+    if let Some(id) = args.apply {
+        let plan = restructure::load(&store, id)?;
+        let mover = Mover::new(store, cfg.mover.duplicate_policy);
+        let r = restructure::apply(
+            &mover,
+            &plan,
+            only,
+            &protected,
+            Some(&IndexOptions::from_config(&cfg)),
+        )?;
+        for (a, b) in &r.moved {
+            println!("moved     {} -> {}", a.display(), b.display());
+        }
+        for (p, why) in &r.skipped {
+            println!("skipped   {} ({why})", p.display());
+        }
+        for (p, e) in &r.errors {
+            eprintln!("error     {}: {e}", p.display());
+        }
+        println!(
+            "\n{} moved in batch {} — undo all with: tidy undo --batch {}",
+            r.moved.len(),
+            short(&r.batch_id),
+            short(&r.batch_id)
+        );
+        return Ok(());
+    }
+
+    let root = default_folder(&cfg, args.path)?;
+    let plan = if args.ai {
+        let rules = RuleSet::load(&cfg.classify.rules).unwrap_or_default();
+        let ai = AiClassifier::from_config(&cfg, &rules)
+            .context("the AI restructure needs [ai] enabled with a usable profile (try --rules)")?;
+        eprintln!("# asking {} / {} …", ai.provider_name(), ai.model());
+        restructure::plan_from_ai(
+            &root,
+            &ai,
+            &store,
+            &protected,
+            Duration::from_secs(cfg.ai.restructure_timeout_secs),
+            cfg.report.max_moves,
+        )?
+    } else if args.rules {
+        let rules = load_rules(&cfg, None)?;
+        restructure::plan_from_rules(
+            &root,
+            &rules,
+            args.recursive,
+            &cfg.classify.ignore_globs,
+            &protected,
+        )?
+    } else {
+        bail!("choose --rules or --ai (or --list / --show / --apply)");
+    };
+    let plan = restructure::save(&store, plan)?;
+    print_plan(&plan, None)?;
+    println!(
+        "\nNothing has moved yet. Apply with: tidy restructure --apply {}{}",
+        plan.id,
+        if plan.moves.len() > 1 {
+            "  [--only 1,2,...]"
+        } else {
+            ""
+        }
+    );
     Ok(())
 }

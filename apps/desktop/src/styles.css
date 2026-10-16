@@ -115,3 +115,18 @@ textarea.rules { width: 100%; min-height: 260px; font-family: "Cascadia Mono", C
 pre.toml { font-size: 12px; background: var(--bg); padding: 6px 8px; border-radius: 6px; overflow-x: auto; }
 .confirm .row { display: flex; gap: 4px; }
 code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; }
+
+/* M5: report, restructure diff, history */
+.cards { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.card { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; min-width: 110px; background: var(--bg2); }
+.card b { display: block; font-size: 18px; }
+.cols { display: grid; grid-template-columns: 1fr 2fr; gap: 16px; }
+.report h3 { font-size: 14px; margin: 16px 0 4px; }
+.grid td.num { text-align: right; white-space: nowrap; }
+pre.tree { font-family: "Cascadia Mono", Consolas, "D2Coding", monospace; font-size: 12px; background: var(--bg2); padding: 8px; border-radius: 6px; overflow: auto; max-height: 420px; margin: 0; }
+.restructure { border-bottom: 1px solid var(--line); }
+.restructure .row, .plan .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+textarea.protect { width: 100%; min-height: 60px; font-size: 12px; }
+.plan { margin-top: 8px; }
+.diff { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; }
+.diff h4 { margin: 4px 0; font-size: 13px; }

@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Listener};
 use tiny_http::{Header, Method, Request, Response, Server};
 
-use crate::commands;
+use crate::{commands, report_cmds};
 
 pub const PORT: u16 = 1421;
 
@@ -206,6 +206,39 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "list_learn" => ok(commands::list_learn(app).await?),
         "accept_learn" => ok(commands::accept_learn(app, arg(&args, "key")?).await?),
         "dismiss_learn" => ok(commands::dismiss_learn(app, arg(&args, "key")?).await?),
+        // M5: report, restructure plans, move history.
+        "report_roots" => ok(report_cmds::report_roots(app).await?),
+        "build_report" => {
+            ok(
+                report_cmds::build_report(app, arg(&args, "path")?, arg(&args, "duplicates")?)
+                    .await?,
+            )
+        }
+        "plan_rules" => ok(report_cmds::plan_rules(
+            app,
+            arg(&args, "path")?,
+            arg(&args, "recursive")?,
+            arg(&args, "protect")?,
+        )
+        .await?),
+        "plan_ai" => {
+            ok(report_cmds::plan_ai(app, arg(&args, "path")?, arg(&args, "protect")?).await?)
+        }
+        "preview_plan" => {
+            ok(report_cmds::preview_plan(app, arg(&args, "id")?, arg(&args, "ids")?).await?)
+        }
+        "apply_plan" => ok(report_cmds::apply_plan(
+            app,
+            arg(&args, "id")?,
+            arg(&args, "ids")?,
+            arg(&args, "protect")?,
+        )
+        .await?),
+        "list_plans" => ok(report_cmds::list_plans(app).await?),
+        "open_plan" => ok(report_cmds::open_plan(app, arg(&args, "id")?).await?),
+        "list_batches" => ok(report_cmds::list_batches(app, arg(&args, "limit")?).await?),
+        "batch_moves" => ok(report_cmds::batch_moves(app, arg(&args, "batchId")?).await?),
+        "undo_batch" => ok(report_cmds::undo_batch(app, arg(&args, "batchId")?).await?),
         other => Err(format!("unknown command {other}")),
     }
 }
