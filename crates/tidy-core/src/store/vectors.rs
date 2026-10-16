@@ -284,8 +284,8 @@ mod tests {
         assert_eq!(seen, vec![a]);
 
         // Removing the file drops the mapping, not the vector (reuse).
-        s.remove_file(Path::new("/r/a.txt")).unwrap();
-        s.remove_file(Path::new("/r/b.png")).unwrap();
+        s.remove_file(&Path::new("/r").join("a.txt")).unwrap();
+        s.remove_file(&Path::new("/r").join("b.png")).unwrap();
         assert_eq!(s.vector_signature("m").unwrap().0, 0);
         assert!(s.has_vector("m", "h1").unwrap());
         assert_eq!(s.prune_vectors(0).unwrap(), 0, "too young to prune");
