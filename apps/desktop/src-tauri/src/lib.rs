@@ -98,6 +98,13 @@ pub fn run() {
             commands::get_settings,
             commands::check_rules,
             commands::save_settings,
+            commands::get_ai_settings,
+            commands::save_ai_settings,
+            commands::delete_api_key,
+            commands::test_ai,
+            commands::list_learn,
+            commands::accept_learn,
+            commands::dismiss_learn,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tidy");

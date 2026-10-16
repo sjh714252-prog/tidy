@@ -139,7 +139,7 @@ let movedPath = null;
 {
   await main.getByRole("button", { name: "설정" }).click();
   await sleep(500);
-  await main.locator("label.row input[type=checkbox]").last().check();
+  await main.locator("label.row", { hasText: "조용 모드" }).locator("input[type=checkbox]").check();
   await main.getByRole("button", { name: "저장", exact: true }).click();
   await sleep(2500);
   for (const n of [5, 6, 7]) fs.writeFileSync(path.join(DESK, `setup ${n}.exe`), "");
@@ -210,7 +210,7 @@ let movedPath = null;
   ok(11, "주석 보존", after.startsWith("# 내가 쓴 주석"), after.split("\n")[0]);
   const cfg = fs.readFileSync(path.join(T, "config.toml"), "utf8");
   ok(11, "config.toml 생성됨", cfg.includes("바탕 화면"), cfg.split("\n").slice(0, 4).join(" | "));
-  const hk = main.locator("label.row input").nth(1); // 0 = DB 경로, 1 = 검색 단축키
+  const hk = main.locator("label.row", { hasText: "검색 단축키" }).locator("input");
   await hk.fill("Not+A+Key");
   await main.getByRole("button", { name: "저장", exact: true }).click();
   await sleep(2500);

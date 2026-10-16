@@ -36,6 +36,10 @@ fn now() -> i64 {
         .unwrap_or(0)
 }
 
+fn pct(c: Option<f64>) -> String {
+    c.map(|c| format!(" {:.0}%", c * 100.0)).unwrap_or_default()
+}
+
 pub fn emit_activity(app: &AppHandle, kind: &'static str, path: &Path, detail: String) {
     let _ = app.emit(
         EV_ACTIVITY,
@@ -105,6 +109,7 @@ fn stop_and_wait(app: &AppHandle) {
 
 fn start(app: &AppHandle) {
     let state = app.state::<AppState>();
+    *state.ai_state.lock().unwrap_or_else(|e| e.into_inner()) = None;
     if state.is_paused() {
         let _ = app.emit(EV_STATUS, ());
         return;
@@ -127,6 +132,7 @@ fn start(app: &AppHandle) {
         .spawn(move || {
             let opts = WatchRunOptions {
                 index: true,
+                ai: true,
                 ..Default::default()
             };
             let res = run_watch(&cfg, &opts, expected, &flag, |ev| on_event(&app2, ev));
@@ -155,21 +161,58 @@ fn on_event(app: &AppHandle, ev: WatchEvent<'_>) {
             }
             let _ = app.emit(EV_STATUS, ());
         }
+        WatchEvent::Ai(state) => {
+            let detail = match &state {
+                Ok(m) => format!("AI 사용: {m}"),
+                Err(e) => format!("AI 꺼짐 (규칙만 사용): {e}"),
+            };
+            *app.state::<AppState>()
+                .ai_state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(state);
+            emit_activity(app, "info", Path::new(""), detail);
+        }
         WatchEvent::Handled(path, res) => match res {
-            Ok(Action::Moved { dst, rule, .. }) => {
-                emit_activity(app, "moved", path, format!("→ {} [{rule}]", dst.display()))
-            }
+            Ok(Action::Moved {
+                dst,
+                rule,
+                confidence,
+                ..
+            }) => emit_activity(
+                app,
+                "moved",
+                path,
+                format!("→ {} [{rule}{}]", dst.display(), pct(*confidence)),
+            ),
             Ok(Action::Pending {
-                suggested, rule, ..
+                suggested,
+                rule,
+                confidence,
+                reason,
+                ..
             }) => {
                 emit_activity(
                     app,
                     "pending",
                     path,
-                    format!("확인 필요 → {} [{rule}]", suggested.display()),
+                    format!(
+                        "확인 필요 → {} [{rule}{}]{}",
+                        suggested.display(),
+                        pct(*confidence),
+                        reason
+                            .as_deref()
+                            .map(|r| format!(" {r}"))
+                            .unwrap_or_default()
+                    ),
                 );
                 pending_changed(app, true);
             }
+            Ok(Action::AiFailed { error, .. }) => emit_activity(
+                app,
+                "no_rule",
+                path,
+                format!("맞는 규칙 없음 · AI 실패: {error}"),
+            ),
             Ok(Action::Duplicate { existing, .. }) => emit_activity(
                 app,
                 "duplicate",

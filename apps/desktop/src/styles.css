@@ -106,3 +106,12 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; }
 .settings .row > span:first-child { min-width: 90px; }
 textarea.rules { width: 100%; min-height: 260px; font-family: "Cascadia Mono", Consolas, "D2Coding", monospace; font-size: 13px; }
 .savebar { position: fixed; bottom: 0; left: 0; right: 0; display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-top: 1px solid var(--line); background: var(--bg); }
+
+/* M4: AI badges, learner cards */
+.tag.ai { color: var(--accent); }
+.reason { max-width: 280px; white-space: normal; }
+.learn { padding: 8px 16px 0; display: grid; gap: 8px; }
+.learn-card { border: 1px solid var(--accent); border-radius: 8px; padding: 8px 12px; background: var(--bg2); }
+pre.toml { font-size: 12px; background: var(--bg); padding: 6px 8px; border-radius: 6px; overflow-x: auto; }
+.confirm .row { display: flex; gap: 4px; }
+code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; }

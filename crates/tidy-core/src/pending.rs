@@ -5,7 +5,7 @@
 //! Moves go through the [`Mover`] (logged in `move_log`, undoable) with
 //! `decided_by = user`. "Skip" and "ignore" never touch the file.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -13,7 +13,8 @@ use thiserror::Error;
 use crate::engine::{reindex_for, Action};
 use crate::index::IndexOptions;
 use crate::mover::{MoveOutcome, MoveRequest, Mover, MoverError};
-use crate::store::{DecidedBy, StoreError};
+use crate::paths::normalize_lexical;
+use crate::store::{DecidedBy, DecisionAction, NewDecision, PendingSource, StoreError};
 
 #[derive(Debug, Error)]
 pub enum PendingError {
@@ -32,8 +33,13 @@ pub enum PendingError {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Decision {
     /// Move to `dest_dir`, or to the suggested folder when `None`
-    /// ("이동" / "다른 곳 선택").
-    Move { dest_dir: Option<PathBuf> },
+    /// ("이동" / "다른 곳 선택"); with `new_name` also rename
+    /// ("이름 바꿔 이동").
+    Move {
+        dest_dir: Option<PathBuf>,
+        #[serde(default)]
+        new_name: Option<String>,
+    },
     /// Leave the file and drop it from the queue, this time only ("건너뜀").
     Skip,
     /// Leave the file and never organise this path again ("무시").
@@ -89,25 +95,40 @@ pub fn resolve(
         return Ok(Resolution::Gone { path });
     }
 
-    let resolution = match decision {
-        Decision::Skip => Resolution::Skipped { path },
+    let (resolution, action, chosen) = match decision {
+        Decision::Skip => (
+            Resolution::Skipped { path: path.clone() },
+            DecisionAction::Skip,
+            None,
+        ),
         Decision::Ignore => {
             store.add_ignored(&path)?;
-            Resolution::Ignored { path }
+            (
+                Resolution::Ignored { path: path.clone() },
+                DecisionAction::Ignore,
+                None,
+            )
         }
-        Decision::Move { dest_dir } => {
+        Decision::Move { dest_dir, new_name } => {
             let dest_dir = dest_dir
                 .clone()
                 .or(entry.suggested_dest.clone())
                 .ok_or(PendingError::NoDestination)?;
+            let new_name = new_name.clone().filter(|n| !n.trim().is_empty());
+            let rule = match entry.source {
+                PendingSource::Rule => entry.reason.clone(),
+                PendingSource::Ai => None,
+            };
             let out = mover.move_file(&MoveRequest {
                 src: path.clone(),
-                dest_dir,
+                dest_dir: dest_dir.clone(),
                 batch_id: batch_id.to_string(),
                 decided_by: DecidedBy::User,
-                rule_name: entry.reason.clone(),
-                ai_confidence: None,
+                rule_name: rule.clone(),
+                ai_confidence: entry.confidence,
+                new_name: new_name.clone(),
             })?;
+            let label = rule.unwrap_or_else(|| "확인".into());
             let (resolution, action) = match out {
                 MoveOutcome::Moved { log_id, src, dst } => (
                     Resolution::Moved {
@@ -119,9 +140,11 @@ pub fn resolve(
                     Action::Moved {
                         src,
                         dst,
-                        rule: entry.reason.clone().unwrap_or_default(),
+                        rule: label,
                         batch_id: batch_id.to_string(),
                         log_id,
+                        by: DecidedBy::User,
+                        confidence: entry.confidence,
                     },
                 ),
                 MoveOutcome::SkippedDuplicate { src, existing } => (
@@ -132,23 +155,47 @@ pub fn resolve(
                     Action::Duplicate {
                         src,
                         existing,
-                        rule: String::new(),
+                        rule: label,
                     },
                 ),
                 MoveOutcome::AlreadyInPlace(p) => (
                     Resolution::AlreadyInPlace { path: p.clone() },
                     Action::AlreadyInPlace {
                         path: p,
-                        rule: String::new(),
+                        rule: label,
                     },
                 ),
             };
             if let Some(opts) = index {
                 reindex_for(store, &action, opts);
             }
-            resolution
+            let kind = if new_name.is_some() {
+                DecisionAction::RenameMove
+            } else {
+                DecisionAction::Move
+            };
+            (resolution, kind, Some(normalize_lexical(&dest_dir)))
         }
     };
+
+    // Learner input (SPEC §5.2): what was suggested vs. what the user chose.
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = crate::paths::ext_lower(&path);
+    let src_dir = path.parent().unwrap_or_else(|| Path::new(""));
+    if let Err(e) = store.insert_decision(&NewDecision {
+        file_name: &file_name,
+        ext: (!ext.is_empty()).then_some(ext.as_str()),
+        src_dir,
+        suggested_dest: entry.suggested_dest.as_deref(),
+        chosen_dest: chosen.as_deref(),
+        action,
+        source: entry.source,
+    }) {
+        tracing::warn!("could not record decision: {e}");
+    }
     store.remove_pending_id(id)?;
     Ok(resolution)
 }
@@ -186,7 +233,17 @@ mod tests {
     fn move_to_suggestion_is_logged_as_user_and_undoable() {
         let (dir, m, file) = setup();
         let id = only_id(&m);
-        let r = resolve(&m, id, &Decision::Move { dest_dir: None }, "b1", None).unwrap();
+        let r = resolve(
+            &m,
+            id,
+            &Decision::Move {
+                dest_dir: None,
+                new_name: None,
+            },
+            "b1",
+            None,
+        )
+        .unwrap();
         let Resolution::Moved { dst, log_id, .. } = r else {
             panic!("{r:?}")
         };
@@ -204,6 +261,45 @@ mod tests {
     }
 
     #[test]
+    fn decisions_are_recorded_for_the_learner() {
+        let (dir, m, file) = setup();
+        let id = only_id(&m);
+        resolve(
+            &m,
+            id,
+            &Decision::Move {
+                dest_dir: None,
+                new_name: Some("설치 v1 (보관)".into()),
+            },
+            "b",
+            None,
+        )
+        .unwrap();
+        let d = &m.store().recent_decisions(1).unwrap()[0];
+        assert_eq!(d.action, DecisionAction::RenameMove);
+        assert_eq!(d.file_name, "설치 프로그램 v1.exe");
+        assert_eq!(
+            d.chosen_dest.as_deref(),
+            Some(dir.path().join("설치 파일").as_path())
+        );
+        assert!(dir
+            .path()
+            .join("설치 파일")
+            .join("설치 v1 (보관).exe")
+            .is_file());
+        assert!(!file.exists());
+
+        m.store()
+            .upsert_pending(&dir.path().join("없음.txt"), None, None)
+            .unwrap();
+        let before = m.store().recent_decisions(10).unwrap().len();
+        let gone = only_id(&m);
+        resolve(&m, gone, &Decision::Skip, "b", None).unwrap();
+        // "Gone" is not a user decision.
+        assert_eq!(m.store().recent_decisions(10).unwrap().len(), before);
+    }
+
+    #[test]
     fn move_elsewhere() {
         let (dir, m, _file) = setup();
         let other = dir.path().join("다른 곳");
@@ -212,6 +308,7 @@ mod tests {
             only_id(&m),
             &Decision::Move {
                 dest_dir: Some(other.clone()),
+                new_name: None,
             },
             "b",
             None,
@@ -257,7 +354,16 @@ mod tests {
         m.store().upsert_pending(&file, None, None).unwrap();
         let id = only_id(&m);
         assert!(matches!(
-            resolve(&m, id, &Decision::Move { dest_dir: None }, "b", None),
+            resolve(
+                &m,
+                id,
+                &Decision::Move {
+                    dest_dir: None,
+                    new_name: None
+                },
+                "b",
+                None
+            ),
             Err(PendingError::NoDestination)
         ));
         assert_eq!(m.store().pending_count().unwrap(), 1);

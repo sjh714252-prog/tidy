@@ -75,6 +75,13 @@ export function MainWindow() {
   );
 }
 
+const AI_LABEL = {
+  off: "AI 꺼짐 (규칙만)",
+  ready: "AI 사용",
+  unavailable: "AI 사용 불가 — 규칙만",
+  starting: "AI 확인 중…",
+} as const;
+
 function StatusBar() {
   const status = useStatus((s) => s.status);
   if (!status) return null;
@@ -88,6 +95,10 @@ function StatusBar() {
       <span>{state}</span>
       <span className="muted">
         인덱스 {status.filesIndexed.toLocaleString()}개{status.indexing ? " (인덱싱 중…)" : ""}
+      </span>
+      <span className={status.aiState === "unavailable" ? "warn" : "muted"} title={status.aiDetail ?? ""}>
+        {AI_LABEL[status.aiState]}
+        {status.aiState === "ready" && status.aiDetail ? ` (${status.aiDetail})` : ""}
       </span>
       {status.lastError && <span className="error">{status.lastError}</span>}
     </div>

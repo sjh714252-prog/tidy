@@ -60,3 +60,24 @@ npm run tauri build      # 설치 파일 (Windows: MSI/NSIS)
 
 - 필요한 것: Rust stable, Node LTS, (Windows) Visual Studio Build Tools의 "C++를 사용한 데스크톱 개발"과 WebView2 런타임.
 - 설정 파일: `%APPDATA%\tidy\config.toml`(Windows 기본). `--config <경로>` 인자나 `TIDY_CONFIG` 환경변수로 바꿀 수 있습니다. 설정이 없으면 아무것도 감시하지 않고 설정 탭을 엽니다.
+
+## AI 분류 (M4, 선택)
+
+규칙에 맞지 않는 파일만 AI(Anthropic / OpenAI 호환 / Ollama)에 어디로 보낼지 물어봅니다.
+
+- **자동으로 옮기는 경우**: 확신도가 `auto_threshold`(기본 0.9) 이상이고, 목적지가 `ai_auto = true` 규칙의 폴더 안일 때만입니다.
+- **그 외**: 확인 팝업(대기열)으로 묻습니다.
+- **AI를 쓸 수 없을 때**: 키가 없거나, 오프라인이거나, 오류가 나면 규칙만으로 동작하고 파일은 그대로 둡니다.
+
+```
+# config.toml의 [ai] enabled = true, 프로필 설정 후
+cargo run -p tidy-cli -- ai key set tidy/anthropic   # 키는 OS 키체인에만 저장 (설정 파일에 쓰지 않음)
+cargo run -p tidy-cli -- ai status                   # 사용 가능 여부 / 이유, 누적 토큰·비용
+cargo run -p tidy-cli -- ai test ~/Desktop/파일.pdf   # 한 번 물어보기 (이동 없음)
+cargo run -p tidy-cli -- watch --config config.toml   # 규칙 → AI → 확인
+cargo run -p tidy-cli -- pending --move 3 --rename "새 이름"
+cargo run -p tidy-cli -- learn                        # 같은 결정 3번 → 규칙 제안
+cargo run -p tidy-cli -- learn --accept 1             # rules.toml 맨 앞에 추가
+```
+
+앱에서는 설정 > AI 분류에서 제공자, 모델, 키, 기준값을 정하고 "연결 테스트"로 확인할 수 있습니다. 학습 제안은 대기열 탭 위에 카드로 나타납니다.

@@ -125,6 +125,7 @@ mod tests {
                 decided_by: DecidedBy::Rule,
                 rule_name: None,
                 ai_confidence: None,
+                new_name: None,
             })
             .unwrap()
         {

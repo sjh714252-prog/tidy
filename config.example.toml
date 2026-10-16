@@ -56,3 +56,31 @@ duplicate_policy = "skip"
 max_content_size_mb = 200
 # 파일당 저장하는 본문 최대 글자 수. 넘는 부분은 검색 대상에서 잘립니다.
 max_text_chars = 1000000
+
+[ai]
+# AI 분류(선택). 규칙에 맞지 않는 파일만 AI에 물어봅니다. 꺼져 있거나 키가 없거나
+# 오프라인이어도 규칙 + 검색은 그대로 동작합니다.
+enabled = false
+active_profile = "home"
+# 확신도가 이 값 이상이고, 목적지가 ai_auto = true 규칙의 폴더 안일 때만 묻지 않고 옮깁니다.
+# 그 외에는 확인 팝업(대기열)으로 묻습니다.
+auto_threshold = 0.9
+# 본문 앞부분(content_chars 글자)을 AI에 보낼지. false면 파일명·크기·날짜·폴더만 보냅니다.
+send_content = true
+content_chars = 1500
+timeout_secs = 20        # 한 파일당 최대 대기(재시도 포함). 넘으면 규칙만으로 처리합니다.
+
+# API 키는 이 파일에 쓰지 않습니다. OS 키체인에만 저장합니다:
+#   tidy ai key set tidy/anthropic      (입력은 화면에 표시되지 않음)
+# 또는 앱의 설정 > AI 분류 > API 키. 상태 확인: tidy ai status / 시험: tidy ai test <파일>
+[ai.profiles.home]
+classify = { provider = "anthropic", model = "claude-haiku-5-5", key_ref = "tidy/anthropic", effort = "low" }
+
+# 회사 PC 등: 로컬 모델만, 본문은 보내지 않음
+[ai.profiles.work]
+classify = { provider = "ollama", model = "qwen3:8b", base_url = "http://localhost:11434" }
+send_content = false
+
+# OpenAI 호환 서버 예시
+# [ai.profiles.openai]
+# classify = { provider = "openai", model = "<모델 이름>", key_ref = "tidy/openai", base_url = "https://api.openai.com/v1" }
