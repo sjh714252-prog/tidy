@@ -104,7 +104,9 @@ tidy/
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── config.rs
-│   │       ├── engine.rs   # 파일 1건: 분류 → 대기열 또는 Mover (watch/앱 공용)
+│   │       ├── engine.rs   # 파일 1건: 분류 → 대기열 또는 Mover (+인덱스 반영) (watch/앱 공용)
+│   │       ├── pending.rs  # 대기열 항목 처리: 이동/다른 곳/건너뜀/무시 (CLI·앱 공용)
+│   │       ├── service.rs  # 상시 감시 루프 run_watch (CLI `watch`·앱 공용)
 │   │       ├── watcher/    # 이벤트 + 폴링
 │   │       ├── classify/   # rules.rs, ai.rs, learner.rs
 │   │       ├── mover/      # mover.rs, undo.rs
@@ -192,6 +194,11 @@ confirm = true
 - 액션: **이동 / 다른 곳 선택 / 이름 바꿔 이동 / 건너뜀(이번만) / 무시(이 파일 영구)**
 - 미응답 파일은 **대기열(Pending)** 에 쌓이고 검색창에서 일괄 처리 가능.
 - 조용 모드(설정): 알림 없이 Pending에만 쌓음.
+- **M3 구현 범위**
+  - 트레이 알림을 클릭하는 단계 없이, 확인이 필요한 파일이 생기면 팝업 창을 화면 오른쪽 아래에 **포커스를 뺏지 않고** 바로 띄운다(OS 알림 클릭 → 창 열기가 플랫폼마다 불안정해서). 조용 모드면 띄우지 않는다.
+  - 액션은 이동 / 다른 곳…(폴더 선택) / 건너뜀 / 무시. "이름 바꿔 이동", 미리보기(썸네일), 대안 폴더 3개는 AI 제안이 생기는 M4에서 추가한다.
+  - 처리 로직은 코어 `pending::resolve` 하나이며 CLI(`tidy pending --move/--skip/--ignore <ID> [--to DIR]`)와 같다. 이동은 `decided_by = user`로 `move_log`에 남고 Undo 가능.
+  - 건너뜀 = 대기열에서만 뺀다(파일이 다시 바뀌면 재분류). 무시 = `ignored` 테이블에 넣어 그 경로는 다시 정리하지 않는다.
 
 ### 5.4 Mover + Undo
 - 이동 절차:
@@ -213,6 +220,9 @@ confirm = true
 ### 5.5 Indexer
 - 대상: 감시 폴더 전체 + 사용자가 추가 지정한 인덱스 전용 폴더
 - 초기 전체 스캔 → 이후 Watcher 이벤트로 증분 갱신
+  - M3: 감시 루프(`service::run_watch`)는 처리한 파일마다 인덱스를 갱신한다. 이동된 파일은 원래 경로의 행을 지우고 `Indexer::index_file(새 경로)`, 대기열·규칙 없음 파일은 제자리에서 인덱싱한다. Undo와 확인 팝업 이동도 같은 방식으로 반영한다. 인덱스 실패는 경고만 남기고 이동을 막지 않는다.
+  - `index_file`은 어떤 루트에도 속하지 않는 파일(예: 규칙이 `~/Pictures/...`로 옮긴 파일, `tidy index <파일>`)이면 그 파일의 폴더를 `watch = 0` 루트로 등록한다. 그 폴더 전체를 훑지는 않는다.
+  - 앱은 시작할 때와 설정을 저장할 때 감시 폴더·`index_only` 폴더를 백그라운드에서 증분 인덱싱한다(작은 트랜잭션 50건 단위로 써서 감시 루프의 DB 쓰기를 오래 막지 않는다).
 - 각 파일: `path, size, mtime, ctime, ext, mime, hash(blake3), text_excerpt, full_text(FTS), embedding(optional)`
 - 증분: 크기+mtime이 같으면 `last_seen_at`만 갱신하고 건너뛴다. 바뀐 경우에만 해시·본문 재처리. 대용량(기본 >200MB, `index.max_content_size_mb`)은 해시·본문 스킵하고 메타만(`text_status = skipped`). 실행이 끝나면 그 루트에서 이번 실행에 보이지 않은 행을 제거한다(파일은 건드리지 않음).
 - 텍스트 추출기는 `trait Extractor { fn supports(ext) -> bool; fn extract(path) -> Result<String> }`로 확장. 실패해도 메타 인덱싱은 유지(`text_status = failed`). 추출기 패닉은 잡아서 실패로 처리.
@@ -490,6 +500,17 @@ send_content = false
 5. **리포트**: 트리 뷰, 통계 카드, 중복 그룹, 재구성 제안 diff(before/after 트리 + 이동 목록 체크박스).
 6. **이동 기록 / Undo**: 배치 단위 타임라인, 되돌리기 버튼.
 7. **설정**: 감시 폴더, 규칙 편집(폼 + raw TOML), AI 프로필/키, 단축키.
+
+### 9.1 M3 구현 (apps/desktop)
+- 구성: Tauri 2 + React 19 + TypeScript + zustand. `src-tauri`는 `tidy-core`를 직접 호출하는 얇은 어댑터이고, 루트 Cargo 워크스페이스에서 `exclude`한 독립 crate다(GUI 라이브러리가 없는 환경에서도 `cargo test --workspace`가 돌도록).
+- 창 3개(번들 하나, URL 해시로 화면 선택): `main`(활동 / 대기열 / 설정 탭), `search`(테두리 없음, 항상 위, 포커스를 잃으면 숨김), `confirm`(작은 창, 항상 위). 닫기 버튼은 숨기기만 하고 앱은 트레이에 남는다. 종료는 트레이 "종료".
+- 트레이 메뉴: 검색 열기 / 대기 N건 / 일시정지·감시 재개 / 지금 인덱싱 / 설정 / 종료. 왼쪽 클릭은 메인 창(활동 탭)을 연다. 리포트 메뉴는 M5에서 추가.
+- 글로벌 단축키 `general.hotkey`(기본 `CmdOrCtrl+Shift+Space`)로 검색창을 토글한다. 다른 앱과 겹쳐 등록에 실패하면 상태줄에 오류를 띄우고 앱은 계속 동작한다.
+- 검색창: FTS 결과 + 이름/본문 하이라이트 + 스니펫. ↑↓ 선택, Enter 열기, Ctrl+Enter 폴더 열기, Esc 닫기, 경로 복사. 하이라이트는 백엔드가 사설 영역 문자(U+E000/U+E001)로 표시하고, 프론트는 `<mark>`로 렌더링한다(innerHTML 미사용).
+- 설정: 감시 폴더(추가·삭제, 하위 폴더, 본문 인덱싱, 종류), 규칙 raw TOML(입력할 때마다 검증하고 오류가 있으면 저장 불가), DB 경로, 단축키, 조용 모드. `config.toml`은 `toml_edit`로 해당 키만 바꾸므로 주석과 다른 키는 그대로 남는다. 규칙 파일은 검증을 통과해야만 덮어쓴다.
+- 설정 파일 위치: `--config <경로>` → 환경변수 `TIDY_CONFIG` → OS 기본(`%APPDATA%\tidy\config.toml`). 파일이 없으면 감시 폴더 없이 시작하고 설정 탭을 연다. 사용자가 저장하기 전에는 아무것도 옮기지 않는다.
+- 동시성: 감시 루프는 자체 스레드와 DB 연결을 쓴다. UI 명령은 두 번째 연결을 쓰고, "expected move" 토큰을 감시 루프와 공유해 팝업에서 옮긴 파일을 새 파일로 오인하지 않는다. 모든 명령은 async + `spawn_blocking`이다. 감시 재시작(일시정지·설정 저장)은 보조 스레드에서 직렬화한다. 메인 스레드가 감시 스레드를 join하면, 감시 스레드가 부르는 트레이·창 API와 교착될 수 있기 때문이다.
+- 이동 기록 화면(§9.6)은 M5 범위다. M3에는 활동 탭의 실시간 로그와 "마지막 이동 되돌리기" 버튼만 있다.
 
 ---
 

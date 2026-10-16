@@ -20,6 +20,108 @@ pub enum ConfigError {
         #[source]
         source: Box<toml::de::Error>,
     },
+    #[error("failed to edit config file {path}: {source}")]
+    Edit {
+        path: PathBuf,
+        #[source]
+        source: Box<toml_edit::TomlError>,
+    },
+    #[error("failed to write config file {path}: {source}")]
+    Write {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+}
+
+/// The parts of `config.toml` the desktop settings screen edits.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsPatch {
+    pub watches: Vec<WatchRoot>,
+    /// `None` = default DB location (the key is removed).
+    pub store_path: Option<PathBuf>,
+    pub quiet_mode: bool,
+    pub hotkey: String,
+}
+
+/// Apply `patch` to the config file at `path` (created if missing), keeping
+/// every other key and all comments as they are (`toml_edit`).
+/// Only the settings file is written; user files are never touched here.
+pub fn write_settings(path: &Path, patch: &SettingsPatch) -> Result<(), ConfigError> {
+    use toml_edit::{value, ArrayOfTables, DocumentMut, Item, Table};
+
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(source) => {
+            return Err(ConfigError::Read {
+                path: path.to_path_buf(),
+                source,
+            })
+        }
+    };
+    let mut doc: DocumentMut = text.parse().map_err(|e| ConfigError::Edit {
+        path: path.to_path_buf(),
+        source: Box::new(e),
+    })?;
+
+    let general = doc
+        .entry("general")
+        .or_insert(Item::Table(Table::new()))
+        .as_table_like_mut()
+        .expect("[general] is a table");
+    general.insert("quiet_mode", value(patch.quiet_mode));
+    general.insert("hotkey", value(patch.hotkey.clone()));
+
+    let mut watches = ArrayOfTables::new();
+    for w in &patch.watches {
+        let mut t = Table::new();
+        t.insert("path", value(w.path.to_string_lossy().into_owned()));
+        t.insert(
+            "kind",
+            value(match w.kind {
+                RootKind::Local => "local",
+                RootKind::Network => "network",
+            }),
+        );
+        t.insert("recursive", value(w.recursive));
+        t.insert("index_content", value(w.index_content));
+        if let Some(s) = w.poll_interval_s {
+            t.insert("poll_interval_s", value(s as i64));
+        }
+        if let Some(win) = &w.content_index_window {
+            t.insert("content_index_window", value(win.clone()));
+        }
+        watches.push(t);
+    }
+    doc.insert("watch", Item::ArrayOfTables(watches));
+
+    match &patch.store_path {
+        Some(p) => {
+            let store = doc
+                .entry("store")
+                .or_insert(Item::Table(Table::new()))
+                .as_table_like_mut()
+                .expect("[store] is a table");
+            store.insert("path", value(p.to_string_lossy().into_owned()));
+        }
+        None => {
+            if let Some(store) = doc.get_mut("store").and_then(Item::as_table_like_mut) {
+                store.remove("path");
+            }
+        }
+    }
+
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    std::fs::write(path, doc.to_string()).map_err(|source| ConfigError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -327,6 +429,59 @@ duplicate_policy = "rename"
         let c = Config::load(&cfg_path).unwrap();
         assert_eq!(c.classify.rules, sub.join("rules.toml"));
         assert_eq!(c.store.db_path(), sub.join("data").join("tidy.db"));
+    }
+
+    #[test]
+    fn write_settings_keeps_comments_and_other_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("설정 폴더").join("config.toml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "# 내 설정\n[general]\nlanguage = \"ko\" # 언어\n\n[[watch]]\npath = \"~/Desktop\"\n\n\
+             [mover]\nduplicate_policy = \"rename\"\n\n[store]\npath = \"old.db\"\n",
+        )
+        .unwrap();
+        let patch = SettingsPatch {
+            watches: vec![
+                WatchRoot {
+                    path: PathBuf::from(r"C:\Users\홍 길동\OneDrive\바탕 화면"),
+                    ..Default::default()
+                },
+                WatchRoot {
+                    path: PathBuf::from(r"\\nas\공유 폴더"),
+                    kind: RootKind::Network,
+                    recursive: true,
+                    poll_interval_s: Some(120),
+                    ..Default::default()
+                },
+            ],
+            store_path: None,
+            quiet_mode: true,
+            hotkey: "CmdOrCtrl+Alt+K".into(),
+        };
+        write_settings(&path, &patch).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# 내 설정") && text.contains("# 언어"));
+        let c = Config::load(&path).unwrap();
+        assert_eq!(c.watches.len(), 2);
+        assert_eq!(c.watches[0].path, patch.watches[0].path);
+        assert_eq!(c.watches[1].kind, RootKind::Network);
+        assert_eq!(c.watches[1].poll_interval_s, Some(120));
+        assert_eq!(c.mover.duplicate_policy, DuplicatePolicy::Rename);
+        assert!(c.general.quiet_mode);
+        assert_eq!(c.general.hotkey, "CmdOrCtrl+Alt+K");
+        assert_eq!(c.store.path, None);
+
+        // Missing file: created from scratch.
+        let fresh = dir.path().join("새 설정").join("config.toml");
+        let patch = SettingsPatch {
+            store_path: Some(PathBuf::from("tidy.db")),
+            ..patch
+        };
+        write_settings(&fresh, &patch).unwrap();
+        let c = Config::load(&fresh).unwrap();
+        assert_eq!(c.store.db_path(), fresh.parent().unwrap().join("tidy.db"));
     }
 
     #[test]

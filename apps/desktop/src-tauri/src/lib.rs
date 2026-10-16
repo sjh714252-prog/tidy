@@ -1,0 +1,104 @@
+//! Tidy desktop app (SPEC §9, M3): tray-resident, global-hotkey search
+//! window, confirm popup, pending queue and settings. All logic lives in
+//! `tidy-core`; this crate only wires it to windows, tray and IPC.
+
+mod commands;
+#[cfg(debug_assertions)]
+mod devbridge;
+mod state;
+mod tray;
+mod watch;
+mod windows;
+
+use tauri::{Manager, WindowEvent};
+use tauri_plugin_global_shortcut::ShortcutState;
+
+use state::AppState;
+
+pub fn run() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .init();
+
+    let config_path = state::config_path_from_env();
+    tracing::info!(config = %config_path.display(), "starting");
+
+    let first_run = !config_path.exists();
+
+    tauri::Builder::default()
+        // Register state before any window exists: Tauri 2 creates the
+        // windows from tauri.conf.json *before* `setup` runs, so the webview
+        // can invoke commands while setup is still executing. Managing the
+        // state here (not in setup) avoids "state() called before manage()".
+        .manage(AppState::new(config_path.clone()))
+        // A second launch just brings the running instance forward.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            windows::show_main(app, "activity");
+        }))
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        windows::toggle_search(app);
+                    }
+                })
+                .build(),
+        )
+        .setup(move |app| {
+            let handle = app.handle().clone();
+            tray::create(&handle)?;
+            let hotkey = handle.state::<AppState>().config().general.hotkey;
+            windows::register_hotkey(&handle, &hotkey);
+            watch::restart(&handle);
+            watch::spawn_index(&handle);
+            watch::pending_changed(&handle, true);
+            #[cfg(debug_assertions)]
+            devbridge::start(&handle);
+            if first_run {
+                // Nothing is watched until folders are configured.
+                windows::show_main(&handle, "settings");
+            } else if cfg!(debug_assertions) {
+                // Dev builds (`tauri dev`) open the main window right away so a
+                // fresh process is never confused with a stale one still
+                // sitting in the tray; release builds start tray-only.
+                windows::show_main(&handle, "activity");
+            }
+            Ok(())
+        })
+        .on_window_event(|window, event| match event {
+            // Windows only hide; the app lives in the tray until "종료".
+            WindowEvent::CloseRequested { api, .. } => {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+            // The search window behaves like a launcher: gone on blur.
+            WindowEvent::Focused(false) if window.label() == "search" => {
+                let _ = window.hide();
+            }
+            _ => {}
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::get_status,
+            commands::set_paused,
+            commands::index_now,
+            commands::show_window,
+            commands::search,
+            commands::open_path,
+            commands::reveal_path,
+            commands::list_pending,
+            commands::resolve_pending,
+            commands::resolve_pending_batch,
+            commands::undo_last,
+            commands::pick_folder,
+            commands::get_settings,
+            commands::check_rules,
+            commands::save_settings,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running Tidy");
+}
