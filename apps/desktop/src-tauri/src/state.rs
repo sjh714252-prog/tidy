@@ -26,6 +26,9 @@ pub struct AppState {
     /// AI step as reported by the running watch loop: Ok("provider / model")
     /// or why it is off. `None` = AI not enabled in the config.
     pub ai_state: Mutex<Option<Result<String, String>>>,
+    /// Watch folders currently unreachable (network shares), as reported
+    /// by the watch loop.
+    pub offline: Mutex<Vec<PathBuf>>,
 }
 
 pub struct Inner {
@@ -58,6 +61,7 @@ impl AppState {
             last_error: Mutex::new(None),
             hotkey_error: Mutex::new(None),
             ai_state: Mutex::new(None),
+            offline: Mutex::new(Vec::new()),
         };
         state.reload();
         state
@@ -70,7 +74,8 @@ impl AppState {
             Ok(c) => match Store::open(&c.store.db_path()) {
                 Ok(store) => Some(
                     Mover::new(store, c.mover.duplicate_policy)
-                        .with_expected(Arc::clone(&self.expected)),
+                        .with_expected(Arc::clone(&self.expected))
+                        .with_progress(crate::watch::progress_fn()),
                 ),
                 Err(e) => {
                     self.set_error(format!("DB를 열 수 없습니다: {e}"));
@@ -82,6 +87,9 @@ impl AppState {
                 None
             }
         };
+        if let Ok(c) = &cfg {
+            tidy_core::netio::network_io().set_limit(usize::from(c.mover.nas_concurrency));
+        }
         let mut inner = self.lock_inner();
         inner.cfg = cfg.unwrap_or_else(|_| default_config(&self.config_path));
         inner.mover = mover;

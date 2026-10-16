@@ -45,6 +45,8 @@ export const pickFolder = (start?: string | null) =>
     ? invoke<string | null>("pick_folder", { start: start ?? null })
     : // Dev bridge (browser): no native dialog, so ask for the path as text.
       Promise.resolve(window.prompt("폴더 경로를 입력하세요", start ?? "")?.trim() || null);
+/** UNC path, remote drive or SMB/NFS mount → default kind "network". */
+export const isNetworkPath = (path: string) => invoke<boolean>("is_network_path", { path });
 
 export const getSettings = () => invoke<Settings>("get_settings");
 export const checkRules = (text: string) => invoke<RulesCheck>("check_rules", { text });

@@ -130,3 +130,9 @@ textarea.protect { width: 100%; min-height: 60px; font-size: 12px; }
 .plan { margin-top: 8px; }
 .diff { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; }
 .diff h4 { margin: 4px 0; font-size: 13px; }
+
+/* M6: network folder options under a watch row */
+.subrow td { padding-top: 0; }
+.subrow label { margin-right: 16px; white-space: nowrap; }
+input.narrow { width: 110px; }
+.tag.warning { color: var(--warn); }

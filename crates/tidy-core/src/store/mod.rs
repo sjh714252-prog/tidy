@@ -13,6 +13,7 @@ pub use models::{
     MoveLogEntry, NewFile, NewMove, NewPending, PendingEntry, PendingSource, TextStatus,
 };
 
+pub(crate) use db::now as now_unix;
 pub(crate) use files::file_from_row;
 pub use learn::NewDecision;
 pub use plans::{BatchSummary, StoredPlan};

@@ -12,7 +12,7 @@ interface SettingsState {
   load: () => Promise<void>;
   patch: (p: Partial<Settings>) => void;
   setWatch: (i: number, p: Partial<WatchFolder>) => void;
-  addWatch: (path: string) => void;
+  addWatch: (path: string) => Promise<void>;
   removeWatch: (i: number) => void;
   setRules: (text: string) => void;
   save: () => Promise<void>;
@@ -47,15 +47,20 @@ export const useSettings = create<SettingsState>((set, get) => ({
     const watches = d.watches.map((w, j) => (j === i ? { ...w, ...p } : w));
     set({ draft: { ...d, watches }, message: null });
   },
-  addWatch: (path) => {
+  addWatch: async (path) => {
+    if (get().draft?.watches.some((w) => w.path === path)) return;
+    // NAS folders: polling + copy-verify moves, metadata-only index (SPEC §5.9).
+    const network = await ipc.isNetworkPath(path).catch(() => path.startsWith("\\\\"));
     const d = get().draft;
-    if (!d || d.watches.some((w) => w.path === path)) return;
+    if (!d) return;
     const w: WatchFolder = {
       path,
-      kind: path.startsWith("\\\\") ? "network" : "local",
+      kind: network ? "network" : "local",
       recursive: false,
-      indexContent: true,
+      indexContent: !network,
       pollIntervalS: null,
+      pollOnly: false,
+      contentIndexWindow: null,
     };
     set({ draft: { ...d, watches: [...d.watches, w] }, message: null });
   },

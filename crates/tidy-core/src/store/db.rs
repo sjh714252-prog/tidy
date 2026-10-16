@@ -209,6 +209,13 @@ CREATE TABLE restructure_plans (
   applied_at INTEGER
 );
 "#,
+    // v5 (M6): moves are written as 'moving' and marked 'done' once the
+    // file is in place, so a copy interrupted by a crash can be recovered.
+    r#"
+ALTER TABLE move_log ADD COLUMN state TEXT NOT NULL DEFAULT 'done';
+CREATE INDEX idx_move_dst ON move_log(dst_path);
+CREATE INDEX idx_move_state ON move_log(state);
+"#,
 ];
 
 pub struct Store {
@@ -317,11 +324,22 @@ impl Store {
 
     // ── move_log ────────────────────────────────────────────────────────
 
+    /// Record a finished move.
     pub fn insert_move(&self, m: &NewMove) -> Result<i64, StoreError> {
+        self.insert_move_state(m, "done")
+    }
+
+    /// Record a move that is about to happen (the mover writes the row
+    /// first, then moves, then [`Store::complete_move`]s it).
+    pub(crate) fn begin_move(&self, m: &NewMove) -> Result<i64, StoreError> {
+        self.insert_move_state(m, "moving")
+    }
+
+    fn insert_move_state(&self, m: &NewMove, state: &str) -> Result<i64, StoreError> {
         self.conn.execute(
             "INSERT INTO move_log (batch_id, src_path, dst_path, hash, size, decided_by,
-                                   rule_name, ai_confidence, moved_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                                   rule_name, ai_confidence, moved_at, state)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 m.batch_id,
                 path_str(&m.src_path)?,
@@ -332,6 +350,7 @@ impl Store {
                 m.rule_name,
                 m.ai_confidence,
                 now(),
+                state,
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -345,6 +364,41 @@ impl Store {
             [id],
         )?;
         Ok(())
+    }
+
+    /// The file of row `id` is in place: the move is now in effect.
+    pub(crate) fn complete_move(&self, id: i64) -> Result<(), StoreError> {
+        self.conn
+            .execute("UPDATE move_log SET state = 'done' WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Rows still marked in progress that were written before `before`
+    /// (unix seconds): moves interrupted by a crash or a lost connection.
+    pub fn interrupted_moves(&self, before: i64) -> Result<Vec<MoveLogEntry>, StoreError> {
+        let mut stmt = self.conn.prepare(&format!(
+            "{SELECT_MOVE} WHERE state = 'moving' AND undone_at IS NULL AND moved_at <= ?1
+             ORDER BY id"
+        ))?;
+        let rows = stmt.query_map([before], move_from_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Hash of the file Tidy last put at `dst` (active, finished move).
+    /// The engine leaves such files alone, so a polled NAS folder does not
+    /// re-classify what Tidy itself moved into it — across processes too.
+    pub fn placed_hash(&self, dst: &Path) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT hash FROM move_log
+                 WHERE dst_path = ?1 AND undone_at IS NULL AND state = 'done'
+                 ORDER BY id DESC LIMIT 1",
+                [path_str(dst)?],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten())
     }
 
     pub(crate) fn mark_undone(&self, id: i64) -> Result<(), StoreError> {
@@ -569,7 +623,7 @@ fn pending_from_row(r: &Row<'_>) -> rusqlite::Result<PendingEntry> {
 }
 
 const SELECT_MOVE: &str = "SELECT id, batch_id, src_path, dst_path, hash, size, decided_by, \
-                           rule_name, ai_confidence, moved_at, undone_at FROM move_log";
+                           rule_name, ai_confidence, moved_at, undone_at, state FROM move_log";
 
 fn move_from_row(r: &Row<'_>) -> rusqlite::Result<MoveLogEntry> {
     let decided: String = r.get(6)?;
@@ -585,6 +639,7 @@ fn move_from_row(r: &Row<'_>) -> rusqlite::Result<MoveLogEntry> {
         ai_confidence: r.get(8)?,
         moved_at: r.get(9)?,
         undone_at: r.get(10)?,
+        in_progress: r.get::<_, String>(11)? == "moving",
     })
 }
 

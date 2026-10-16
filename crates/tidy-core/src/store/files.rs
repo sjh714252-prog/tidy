@@ -92,13 +92,14 @@ impl Store {
         Ok(self
             .conn()
             .query_row(
-                "SELECT id, size, mtime FROM files WHERE path = ?1",
+                "SELECT id, size, mtime, text_status FROM files WHERE path = ?1",
                 [path_str(path)?],
                 |r| {
                     Ok(FileStamp {
                         id: r.get(0)?,
                         size: r.get::<_, i64>(1)? as u64,
                         mtime: r.get(2)?,
+                        text_none: r.get::<_, String>(3)? == "none",
                     })
                 },
             )
@@ -300,7 +301,8 @@ mod tests {
             Some(FileStamp {
                 id: a,
                 size: 3,
-                mtime: 1_700_000_000
+                mtime: 1_700_000_000,
+                text_none: false,
             })
         );
         // Next run: a seen, b not → b pruned.
