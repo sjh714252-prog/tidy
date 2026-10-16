@@ -10,11 +10,13 @@ use std::time::Duration;
 
 use thiserror::Error;
 
+use crate::ai::AiAvailability;
 use crate::classify::{AiClassifier, RuleError, RuleSet};
 use crate::config::Config;
 use crate::engine::{new_batch_id, Action, Engine, EngineError};
 use crate::index::IndexOptions;
 use crate::mover::{ExpectedMoves, Mover, ProgressFn, RecoveryReport, DEFAULT_RECOVERY_GRACE};
+use crate::search::{EmbedReport, SemanticSearch};
 use crate::store::{Store, StoreError};
 use crate::watcher::{existing_files, IgnoreFilter, RootState, WatchError, WatchOptions, Watcher};
 
@@ -78,7 +80,14 @@ pub enum WatchEvent<'a> {
     Recovered(&'a RecoveryReport),
     /// A watch folder went offline / came back / changed event mode.
     Root(&'a RootState),
+    /// The AI became unavailable after repeated failures (with the last
+    /// error) or answered again. Files skip the AI while it is unavailable
+    /// and are offered to it again once it is back.
+    AiHealth(AiAvailability, Option<String>),
 }
+
+/// Files that skipped the AI while it was unavailable, retried on recovery.
+const MAX_DEFERRED: usize = 1000;
 
 /// Run until `stop` is set (checked every 500 ms) or the watcher dies.
 /// `expected` is shared with any other [`Mover`] in the process (e.g. the
@@ -177,8 +186,23 @@ pub fn run_watch(
     }
 
     let mut retries: HashMap<PathBuf, u32> = HashMap::new();
+    let mut deferred: Vec<PathBuf> = Vec::new();
     while !stop.load(Ordering::Relaxed) {
         let next = rx.recv_timeout(Duration::from_millis(500));
+        if let Some(ai) = engine.ai() {
+            if next.is_err() && ai.health().probe_due() {
+                // Idle and the AI is down: a tiny request to see if it's back.
+                let _ = ai.test_connection(engine.mover().store());
+            }
+            if let Some(change) = ai.health().take_change() {
+                on_event(WatchEvent::AiHealth(change, ai.health().last_error()));
+                if change == AiAvailability::Ready {
+                    for p in deferred.drain(..) {
+                        watcher.requeue(p);
+                    }
+                }
+            }
+        }
         // Folder state changes (share lost / back).
         let now = watcher.root_states();
         let mut reconnected = false;
@@ -210,11 +234,60 @@ pub fn run_watch(
                 }
                 retries.remove(&ev.path);
             }
+            Ok(Action::AiFailed { path, .. })
+                if engine.ai().is_some_and(|a| !a.health().is_available()) =>
+            {
+                retries.remove(&ev.path);
+                if deferred.len() < MAX_DEFERRED && !deferred.contains(path) {
+                    deferred.push(path.clone());
+                }
+            }
             _ => {
                 retries.remove(&ev.path);
             }
         }
         on_event(WatchEvent::Handled(&ev.path, &res));
+    }
+    Ok(())
+}
+
+/// Files embedded per pass of [`run_embed_loop`].
+pub const EMBED_PASS: usize = 256;
+
+/// Background embedding for semantic search (shared by `tidy watch` and
+/// the app): embeds files whose vector is missing or stale, pass after
+/// pass while there is a backlog, then every `interval`. Uses its own DB
+/// connection. Provider errors are reported (once per distinct error) and
+/// retried later; they never stop the loop or anything else.
+pub fn run_embed_loop(
+    cfg: &Config,
+    sem: &SemanticSearch,
+    stop: &AtomicBool,
+    interval: Duration,
+    mut on_report: impl FnMut(&EmbedReport),
+) -> Result<(), ServiceError> {
+    let store = Store::open(&cfg.store.db_path())?;
+    let mut last_error: Option<String> = None;
+    while !stop.load(Ordering::Relaxed) {
+        let mut again = false;
+        match sem.embed_pending(&store, EMBED_PASS, |_| {}) {
+            Ok(r) => {
+                let new_error = r.error.is_some() && r.error != last_error;
+                if r.embedded + r.reused > 0 || new_error {
+                    on_report(&r);
+                }
+                again = r.remaining > 0 && r.error.is_none() && r.embedded + r.reused > 0;
+                last_error = r.error;
+            }
+            Err(e) => tracing::warn!("embedding pass failed: {e}"),
+        }
+        if again {
+            continue;
+        }
+        let until = std::time::Instant::now() + interval;
+        while std::time::Instant::now() < until && !stop.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(250));
+        }
     }
     Ok(())
 }

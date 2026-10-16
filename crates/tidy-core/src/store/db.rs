@@ -216,6 +216,34 @@ ALTER TABLE move_log ADD COLUMN state TEXT NOT NULL DEFAULT 'done';
 CREATE INDEX idx_move_dst ON move_log(dst_path);
 CREATE INDEX idx_move_state ON move_log(state);
 "#,
+    // v6 (M7): embeddings for semantic search. Vectors are stored once per
+    // (model, text) — `text_hash` of what was embedded — and files point
+    // at them, so a moved or copied file (same name and text) reuses its
+    // vector instead of paying for another API call. `model` is the
+    // embedder key (provider/model[#variant]); vectors of different keys
+    // are never compared. `vec` is little-endian f32, L2-normalized.
+    // `file_vectors.id` only grows (AUTOINCREMENT) so the in-memory search
+    // cache can load just the rows added since it was built.
+    r#"
+CREATE TABLE vectors (
+  id INTEGER PRIMARY KEY,
+  model TEXT NOT NULL,
+  text_hash TEXT NOT NULL,
+  dim INTEGER NOT NULL,
+  vec BLOB NOT NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE (model, text_hash)
+);
+CREATE TABLE file_vectors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  file_id INTEGER NOT NULL UNIQUE REFERENCES files(id) ON DELETE CASCADE,
+  model TEXT NOT NULL,
+  text_hash TEXT NOT NULL,
+  src_indexed_at INTEGER NOT NULL
+);
+CREATE INDEX idx_file_vectors_model ON file_vectors(model, id);
+CREATE INDEX idx_file_vectors_hash ON file_vectors(model, text_hash);
+"#,
 ];
 
 pub struct Store {

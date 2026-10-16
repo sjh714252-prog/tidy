@@ -13,6 +13,10 @@ pub enum AiError {
     Disabled,
     #[error("AI profile \"{0}\" not found or has no classify model")]
     NoProfile(String),
+    #[error("AI profile \"{0}\" has no embed model (semantic search is off)")]
+    NoEmbedModel(String),
+    #[error("AI paused after repeated failures; retrying later ({0})")]
+    Paused(String),
     #[error("no API key stored in the OS keychain for \"{0}\" (run `tidy ai key set {0}`)")]
     MissingKey(String),
     #[error("keychain error: {0}")]
@@ -36,6 +40,8 @@ pub enum AiError {
     BadResponse(String),
     #[error("could not start the AI runtime: {0}")]
     Runtime(String),
+    #[error("not supported: {0}")]
+    Unsupported(String),
 }
 
 /// Token usage reported by the provider (missing fields stay `None`).
@@ -71,12 +77,17 @@ pub trait LlmProvider: Send + Sync {
     fn model(&self) -> &str;
 }
 
-/// Embedding model (semantic search, M7). Declared now so profiles can
-/// carry an `embed` entry; implementations arrive with M7.
+/// Embedding model (semantic search, SPEC §5.6). Implementations:
+/// OpenAI-compatible, Ollama and the test mock (see `ai::embed`). The
+/// dimension is whatever the model returns; vectors of one model are only
+/// ever compared with each other.
 #[async_trait]
 pub trait EmbeddingProvider: Send + Sync {
-    async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, AiError>;
-    fn dim(&self) -> usize;
+    /// One vector per text, in input order.
+    async fn embed(&self, texts: &[String]) -> Result<super::Embeddings, AiError>;
+    /// "openai" | "ollama" | "mock".
+    fn name(&self) -> &str;
+    fn model(&self) -> &str;
 }
 
 /// Build the provider for a profile entry. The API key (if any) is read
@@ -250,6 +261,11 @@ pub fn estimate_cost_usd(provider: &str, model: &str, usage: Usage) -> Option<f6
                 (5.0, 25.0)
             }
             "claude-fable-5-1" | "claude-fable-5" => (10.0, 50.0),
+            _ => return None,
+        },
+        "openai" => match model {
+            "text-embedding-3-small" => (0.02, 0.0),
+            "text-embedding-3-large" => (0.13, 0.0),
             _ => return None,
         },
         _ => return None,
