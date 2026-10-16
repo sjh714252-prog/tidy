@@ -17,13 +17,8 @@ export function SettingsView() {
   if (!draft) return <p className="muted pad">{s.error ?? "불러오는 중…"}</p>;
 
   const addFolder = async () => {
-    try {
-      const dir = await ipc.pickFolder();
-      if (dir) s.addWatch(dir);
-    } catch {
-      // No native dialog (dev bridge): add an empty row to type the path into.
-      s.addWatch("");
-    }
+    const dir = await ipc.pickFolder();
+    if (dir) s.addWatch(dir);
   };
   const save = async () => {
     await s.save();

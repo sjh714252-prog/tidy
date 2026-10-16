@@ -20,6 +20,9 @@ pub struct AppState {
     pub paused: AtomicBool,
     pub indexing: AtomicBool,
     pub last_error: Mutex<Option<String>>,
+    /// Hotkey registration failure; kept apart from `last_error` because the
+    /// watch loop clears that one on every (re)start.
+    pub hotkey_error: Mutex<Option<String>>,
 }
 
 pub struct Inner {
@@ -50,6 +53,7 @@ impl AppState {
             paused: AtomicBool::new(false),
             indexing: AtomicBool::new(false),
             last_error: Mutex::new(None),
+            hotkey_error: Mutex::new(None),
         };
         state.reload();
         state
@@ -96,11 +100,25 @@ impl AppState {
         *self.last_error.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
+    pub fn set_hotkey_error(&self, msg: Option<String>) {
+        if let Some(m) = &msg {
+            tracing::warn!("{m}");
+        }
+        *self.hotkey_error.lock().unwrap_or_else(|e| e.into_inner()) = msg;
+    }
+
+    /// What the status bar shows: the watch/DB error, else the hotkey error.
     pub fn last_error(&self) -> Option<String> {
         self.last_error
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
+            .or_else(|| {
+                self.hotkey_error
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone()
+            })
     }
 
     pub fn is_paused(&self) -> bool {

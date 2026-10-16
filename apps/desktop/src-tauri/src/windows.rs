@@ -68,7 +68,10 @@ pub fn register_hotkey(app: &AppHandle, hotkey: &str) {
         let _ = gs.unregister(prev.as_str());
     }
     match gs.register(hotkey) {
-        Ok(()) => state.lock_inner().hotkey = Some(hotkey.to_string()),
-        Err(e) => state.set_error(format!("단축키 {hotkey} 등록 실패: {e}")),
+        Ok(()) => {
+            state.lock_inner().hotkey = Some(hotkey.to_string());
+            state.set_hotkey_error(None);
+        }
+        Err(e) => state.set_hotkey_error(Some(format!("단축키 {hotkey} 등록 실패: {e}"))),
     }
 }

@@ -178,6 +178,12 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "resolve_pending" => {
             ok(commands::resolve_pending(app, arg(&args, "id")?, arg(&args, "decision")?).await?)
         }
+        "resolve_pending_batch" => {
+            ok(
+                commands::resolve_pending_batch(app, arg(&args, "ids")?, arg(&args, "decision")?)
+                    .await?,
+            )
+        }
         "undo_last" => ok(commands::undo_last(app).await?),
         // A native folder dialog cannot be driven from a browser tab; the
         // settings view falls back to a typed path when this fails.
