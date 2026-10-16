@@ -330,50 +330,89 @@ pub async fn resolve_pending(
     let res = blocking({
         let app = app.clone();
         move || {
-            let decision = match decision {
-                DecisionDto::Move { dest_dir, new_name } => Decision::Move {
-                    dest_dir: dest_dir
-                        .filter(|d| !d.trim().is_empty())
-                        .map(|d| tidy_core::config::expand_home(Path::new(d.trim()))),
-                    new_name: new_name.filter(|n| !n.trim().is_empty()),
-                },
-                DecisionDto::Skip => Decision::Skip,
-                DecisionDto::Ignore => Decision::Ignore,
-            };
-            let state = app.state::<AppState>();
-            let inner = state.lock_inner();
-            let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
-            let idx = IndexOptions::from_config(&inner.cfg);
             let batch = new_batch_id();
-            let r = resolve(mover, id, &decision, &batch, Some(&idx)).map_err(|e| e.to_string())?;
-            Ok(match r {
-                Resolution::Moved {
-                    src, dst, batch_id, ..
-                } => {
-                    watch::emit_activity(&app, "moved", &src, format!("→ {} [확인]", s(&dst)));
-                    ResolutionDto {
-                        kind: "moved",
-                        path: s(&src),
-                        dst: Some(s(&dst)),
-                        batch_id: Some(batch_id),
-                    }
-                }
-                Resolution::Duplicate { src, existing } => ResolutionDto {
-                    kind: "duplicate",
-                    path: s(&src),
-                    dst: Some(s(&existing)),
-                    batch_id: None,
-                },
-                Resolution::AlreadyInPlace { path } => simple("already_in_place", &path),
-                Resolution::Skipped { path } => simple("skipped", &path),
-                Resolution::Ignored { path } => simple("ignored", &path),
-                Resolution::Gone { path } => simple("gone", &path),
-            })
+            resolve_one(&app, id, &decision.into(), &batch)
         }
     })
     .await;
     watch::pending_changed(&app, false);
     res
+}
+
+/// Bulk action from the queue screen. All moves share one batch id so a
+/// single "마지막 이동 되돌리기" restores the whole selection (CLAUDE.md
+/// rule 3). Items are processed in order; a failure does not stop the rest.
+#[tauri::command]
+pub async fn resolve_pending_batch(
+    app: AppHandle,
+    ids: Vec<i64>,
+    decision: DecisionDto,
+) -> CmdResult<Vec<Result<ResolutionDto, String>>> {
+    let res = blocking({
+        let app = app.clone();
+        move || {
+            let decision: Decision = decision.into();
+            let batch = new_batch_id();
+            Ok(ids
+                .iter()
+                .map(|&id| resolve_one(&app, id, &decision, &batch))
+                .collect())
+        }
+    })
+    .await;
+    watch::pending_changed(&app, false);
+    res
+}
+
+impl From<DecisionDto> for Decision {
+    fn from(d: DecisionDto) -> Self {
+        match d {
+            DecisionDto::Move { dest_dir, new_name } => Decision::Move {
+                dest_dir: dest_dir
+                    .filter(|d| !d.trim().is_empty())
+                    .map(|d| tidy_core::config::expand_home(Path::new(d.trim()))),
+                new_name: new_name.filter(|n| !n.trim().is_empty()),
+            },
+            DecisionDto::Skip => Decision::Skip,
+            DecisionDto::Ignore => Decision::Ignore,
+        }
+    }
+}
+
+fn resolve_one(
+    app: &AppHandle,
+    id: i64,
+    decision: &Decision,
+    batch: &str,
+) -> CmdResult<ResolutionDto> {
+    let state = app.state::<AppState>();
+    let inner = state.lock_inner();
+    let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+    let idx = IndexOptions::from_config(&inner.cfg);
+    let r = resolve(mover, id, decision, batch, Some(&idx)).map_err(|e| e.to_string())?;
+    Ok(match r {
+        Resolution::Moved {
+            src, dst, batch_id, ..
+        } => {
+            watch::emit_activity(app, "moved", &src, format!("→ {} [확인]", s(&dst)));
+            ResolutionDto {
+                kind: "moved",
+                path: s(&src),
+                dst: Some(s(&dst)),
+                batch_id: Some(batch_id),
+            }
+        }
+        Resolution::Duplicate { src, existing } => ResolutionDto {
+            kind: "duplicate",
+            path: s(&src),
+            dst: Some(s(&existing)),
+            batch_id: None,
+        },
+        Resolution::AlreadyInPlace { path } => simple("already_in_place", &path),
+        Resolution::Skipped { path } => simple("skipped", &path),
+        Resolution::Ignored { path } => simple("ignored", &path),
+        Resolution::Gone { path } => simple("gone", &path),
+    })
 }
 
 fn simple(kind: &'static str, p: &Path) -> ResolutionDto {
