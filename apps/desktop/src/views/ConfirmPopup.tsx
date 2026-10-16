@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { hideCurrentWindow } from "../ipc/transport";
 import * as ipc from "../ipc/commands";
 import { onPending } from "../ipc/events";
 import { usePending } from "../store/pending";
@@ -22,7 +22,7 @@ export function ConfirmPopup() {
 
   const item = items[0];
   useEffect(() => {
-    if (!item && !busy) void getCurrentWindow().hide();
+    if (!item && !busy) void hideCurrentWindow();
   }, [item, busy]);
 
   if (!item) return <div className="confirm muted">대기 중인 파일이 없습니다.</div>;
@@ -77,7 +77,7 @@ export function ConfirmPopup() {
         <button className="link" onClick={() => void ipc.showWindow("main:pending")}>
           대기열 전체 보기
         </button>
-        <button className="link" onClick={() => void getCurrentWindow().hide()}>
+        <button className="link" onClick={() => void hideCurrentWindow()}>
           나중에
         </button>
       </footer>
