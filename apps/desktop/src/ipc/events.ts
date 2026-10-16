@@ -1,11 +1,12 @@
 // Backend → frontend events (src-tauri/src/watch.rs, windows.rs).
 import { listen, type UnlistenFn } from "./transport";
-import type { Activity, MainTab } from "./types";
+import type { Activity, MainTab, TransferProgress } from "./types";
 
 export const EV_ACTIVITY = "tidy://activity";
 export const EV_PENDING = "tidy://pending";
 export const EV_STATUS = "tidy://status";
 export const EV_NAVIGATE = "tidy://navigate";
+export const EV_PROGRESS = "tidy://progress";
 export const EV_FOCUS_SEARCH = "tidy://focus-search";
 
 export const onActivity = (cb: (a: Activity) => void): Promise<UnlistenFn> =>
@@ -17,3 +18,5 @@ export const onNavigate = (cb: (tab: MainTab) => void): Promise<UnlistenFn> =>
   listen<MainTab>(EV_NAVIGATE, (e) => cb(e.payload));
 export const onFocusSearch = (cb: () => void): Promise<UnlistenFn> =>
   listen(EV_FOCUS_SEARCH, () => cb());
+export const onProgress = (cb: (p: TransferProgress) => void): Promise<UnlistenFn> =>
+  listen<TransferProgress>(EV_PROGRESS, (e) => cb(e.payload));

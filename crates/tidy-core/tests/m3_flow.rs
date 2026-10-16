@@ -72,6 +72,7 @@ fn watch_index_confirm_undo() {
                     WatchEvent::Handled(_, Ok(Action::Moved { .. })) => "moved".into(),
                     WatchEvent::Handled(_, Ok(Action::Pending { .. })) => "pending".into(),
                     WatchEvent::Handled(p, other) => format!("{} {other:?}", p.display()),
+                    _ => "other".into(),
                 };
                 let _ = tx.send(msg);
             })

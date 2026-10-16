@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import * as ipc from "../ipc/commands";
-import { onActivity, onNavigate, onPending, onStatus } from "../ipc/events";
+import { onActivity, onNavigate, onPending, onProgress, onStatus } from "../ipc/events";
+import { useProgress } from "../store/progress";
+import { formatSize } from "../components/format";
 import type { MainTab } from "../ipc/types";
 import { useActivity } from "../store/activity";
 import { usePending } from "../store/pending";
@@ -25,6 +27,7 @@ export function MainWindow() {
   const { status, refresh, setPaused } = useStatus();
   const refreshPending = usePending((s) => s.refresh);
   const push = useActivity((s) => s.push);
+  const updateProgress = useProgress((s) => s.update);
 
   useEffect(() => {
     void refresh();
@@ -32,13 +35,14 @@ export function MainWindow() {
     const subs = [
       onNavigate(setTab),
       onStatus(() => void refresh()),
+      onProgress(updateProgress),
       onPending(() => {
         void refresh();
         void refreshPending();
       }),
       onActivity((a) => {
         push(a);
-        if (a.kind === "info" || a.kind === "error") void refresh();
+        if (a.kind === "info" || a.kind === "error" || a.kind === "warning") void refresh();
       }),
     ];
     // Indexing progress and counts are cheap to poll while the window is open.
@@ -47,7 +51,7 @@ export function MainWindow() {
       clearInterval(t);
       subs.forEach((p) => void p.then((f) => f()));
     };
-  }, [refresh, refreshPending, push]);
+  }, [refresh, refreshPending, push, updateProgress]);
 
   return (
     <div className="main">
@@ -88,8 +92,11 @@ const AI_LABEL = {
   starting: "AI 확인 중…",
 } as const;
 
+const PHASE = { copy: "NAS 복사 중", verify: "검증 중", done: "복사 완료" } as const;
+
 function StatusBar() {
   const status = useStatus((s) => s.status);
+  const progress = useProgress((s) => s.current);
   if (!status) return null;
   const state = status.paused
     ? "일시정지됨"
@@ -106,7 +113,22 @@ function StatusBar() {
         {AI_LABEL[status.aiState]}
         {status.aiState === "ready" && status.aiDetail ? ` (${status.aiDetail})` : ""}
       </span>
+      {status.offline.length > 0 && (
+        <span className="warn" title="연결이 돌아오면 자동으로 다시 감시합니다 (60초마다 확인)">
+          연결 끊김(일시정지): {status.offline.join(" · ")}
+        </span>
+      )}
+      {progress && (
+        <span title={`${progress.src} → ${progress.dst}`}>
+          {PHASE[progress.phase]} {progress.total ? Math.floor((progress.copied * 100) / progress.total) : 100}% (
+          {formatSize(progress.copied)} / {formatSize(progress.total)}) {baseName(progress.dst)}
+        </span>
+      )}
       {status.lastError && <span className="error">{status.lastError}</span>}
     </div>
   );
+}
+
+function baseName(p: string): string {
+  return p.split(/[\\/]/).pop() ?? p;
 }

@@ -4,4 +4,6 @@ pub mod extract;
 mod indexer;
 
 pub use extract::{ExtractError, Extractor, Extractors};
-pub use indexer::{FileOutcome, IndexError, IndexOptions, IndexReport, Indexer};
+pub use indexer::{
+    jobs_from_config, FileOutcome, IndexError, IndexOptions, IndexReport, Indexer, NetworkRoot,
+};

@@ -138,6 +138,14 @@ tidy/
 - 다른 프로세스(`tidy undo`)가 되돌린 파일은 토큰이 없으므로, Engine이 `move_log`에서 "같은 원래 경로 + 같은 해시로 undo된 기록"을 확인해 다시 옮기지 않는다. 내용이 바뀌면(해시 다름) 새 파일로 보고 다시 분류한다.
 - 감시 루트는 시작 시 정규화(`dunce::canonicalize`)한다. macOS `/var`→`/private/var`, Windows `\\?\` 접두사 문제 회피.
 - 잠긴 파일(Windows 공유 위반 등)은 안정화 대기 후 최대 5회 재시도.
+- **M6 구현 (watcher/poll.rs)**
+  - 폴링 대상: `kind = "network"` 폴더(기본 120초)와 `poll_interval_s`를 직접 준 로컬 폴더. 간격은 최소 5초다. `poll_only = true`인 네트워크 폴더는 OS 알림을 쓰지 않는다.
+  - 폴링은 폴더 목록의 (크기, mtime)을 이전 목록과 비교해 새 파일과 바뀐 파일만 안정화 단계로 보낸다(`source = Poll`). 첫 목록은 기준선일 뿐 보고하지 않는다(기존 파일은 `--process-existing`). 메타데이터만 읽는다.
+  - dedupe: 안정화 단계가 마지막으로 보고한 (크기, mtime)을 1시간 기억하고, 같은 상태로는 다시 보고하지 않는다. 알림으로 이미 처리한 파일이 다음 목록에 나타나도, macOS FSEvents가 늦게 같은 이벤트를 다시 보내도 한 번만 처리한다. 재시도(requeue)는 이 기록을 지우고 다시 보고한다.
+  - 연결 끊김: 폴더 목록을 못 읽으면 그 폴더만 offline으로 두고 60초마다 다시 확인한다. 다시 연결되면 OS 알림을 다시 등록하고, 끊기기 전 마지막 목록과 비교해 그동안 생긴 파일을 처리한다. 하위 폴더 하나를 못 읽은 경우에는 그 아래 항목을 이전 목록에서 이어받는다(다음 번에 "새 파일"로 오인하지 않게).
+  - 시작할 때 연결이 안 된 네트워크 폴더도 감시 대상으로 둔다(오류 아님). 처음 보이는 순간의 목록을 기준선으로 쓴다.
+  - 상태(`RootState`: online / events / poll_secs / files)는 `Watcher::root_states()`로 볼 수 있다. `run_watch`는 바뀔 때마다 `WatchEvent::Root`를 보내고, CLI는 `# offline:` / `# online:`, 앱은 상태줄과 활동 탭에 표시한다.
+  - Tidy가 직접 옮겨 놓은 파일은 다시 분류하지 않는다. 엔진은 `move_log`에 "이 경로에 같은 해시로 옮긴 활성 이동"이 있으면 건너뛴다(`placed by Tidy`). 폴링은 수 분 뒤에 보고하므로 expected-move 토큰(10초)으로는 막을 수 없고, 다른 프로세스가 옮긴 파일에도 적용된다. 사용자가 내용을 바꾸면 다시 새 파일로 본다.
 
 ### 5.2 Classifier
 파이프라인: **Rules → (매칭 없으면) AI → (AI 없거나 confidence 낮으면) Ask user**
@@ -226,6 +234,24 @@ confirm = true
   - 이름이 같고 내용이 다른 파일은 항상 `이름 (1).ext`로. 어떤 경우에도 덮어쓰지 않는다. `replace`는 동일 해시 사본을 휴지통으로 보낸 뒤 이동.
   - 경로는 UTF-8 TEXT로 저장한다. UTF-8이 아닌 경로는 손실 없이 기록할 수 없으므로 이동하지 않는다.
   - 복사-검증 이동의 임시 파일 이름: `.<name>.tidy-tmp.<uuid>` (Watcher가 무시).
+  - **M6 복사-검증 (mover/transfer.rs)**
+    - `rename`이 다른 볼륨 오류(EXDEV / Windows `ERROR_NOT_SAME_DEVICE`)를 내면 복사-검증으로 넘어간다.
+    - 복사하면서 원본을 해시하고 fsync한다. 그 해시가 `move_log`에 기록한 해시와 다르면 원본이 그사이 바뀐 것이므로 옮기지 않는다.
+    - 사본을 다시 읽어 크기와 blake3를 비교하고, 원래 mtime을 붙인 뒤 rename으로 제자리에 둔다. 그다음에 원본을 지운다.
+    - 원본을 지울 수 없으면(권한, 연결 끊김) 방금 만든 사본을 지우고 오류로 끝낸다. 사본은 원본과 같은 내용이므로 데이터 손실이 없고, 파일이 기록 없이 두 곳에 남지 않는다.
+    - 실패하면 임시 파일만 지운다. 원본은 건드리지 않는다.
+    - 긴 복사는 250ms마다 진행률(`TransferProgress { copied, total, phase: copy|verify|done }`)을 보고한다. 250ms 안에 끝나는 복사는 보고하지 않는다.
+    - 복사-검증 이동과 네트워크 폴더 본문 읽기는 프로세스 전체에서 `[mover] nas_concurrency`(기본 2)개까지만 동시에 한다(`netio`).
+  - **M6 상태와 중단 복구 (mover/recover.rs)**
+    - `move_log.state`: 로그 행을 `moving`으로 쓰고, 이동하고, `done`으로 바꾼다. 실패하면 행을 철회한다.
+    - `moving`으로 남은 행은 프로세스가 중간에 멈춘 것이다. `watch` 시작 시, 네트워크 폴더가 다시 연결될 때, `tidy recover`로 정리한다.
+      - 원본 없음 + 목적지 있음 → 끝난 이동이다. `done`으로 바꾼다.
+      - 원본 있음 + 목적지 없음 → 안 일어난 이동이다. 행을 철회하고 남은 임시 파일을 지운다. 목적지 폴더에 접근할 수 없으면(NAS offline) 다음 번으로 미룬다.
+      - 둘 다 있고 둘 다 기록된 해시와 같음 → 원본 정리 직전에 멈춘 것이다. 원본을 지우고 `done`으로 바꾼다.
+      - 둘 다 있는데 내용이 다름 → 아무것도 지우지 않는다. 행을 철회하고 "확인 필요"로 보고한다.
+      - 둘 다 없음 → 공유가 offline인 것으로 보고 다음 번으로 미룬다.
+    - 15분(`DEFAULT_RECOVERY_GRACE`)이 안 지난 행, 이 프로세스에서 진행 중인 이동, 그 사이에 쓰인 임시 파일이 있는 행은 건드리지 않는다. 다른 Tidy 프로세스가 긴 복사를 하고 있을 수 있기 때문이다. 임시 파일의 mtime은 검증이 끝난 뒤에야 원본 값으로 바꾸므로, 복사 중인 사본은 항상 새것으로 보인다. `tidy recover --grace-secs 0`은 다른 Tidy가 없을 때만 쓴다.
+    - 끝나지 않은 행은 Undo하지 않는다(충돌로 보고).
 - **Undo**: 단건/배치 단위 되돌리기. 원본 위치에 다른 파일이 생겼으면 충돌 알림. 최근 30일(설정) 보관.
   - CLI: `tidy undo --last`(가장 최근의 미취소 배치), `--batch <id 접두사>`, `--id <move_log id>`.
   - 충돌(원래 위치에 다른 파일 존재 / 옮긴 파일이 사라짐)은 건너뛰고 보고하며, 해당 행은 활성 상태로 남아 재시도 가능.
@@ -246,6 +272,12 @@ confirm = true
   - M2 추출기: 텍스트/소스코드(UTF-8·UTF-16 BOM·CP949 자동 판별), HTML(태그 제거), PDF(pdf-extract), DOCX/PPTX(zip+XML), XLSX/XLS/ODS(calamine). 본문은 `index.max_text_chars`(기본 1,000,000자)에서 자른다.
 - CLI: `tidy index [<폴더>...] [--no-content] [--rebuild]` — 인자가 없으면 설정의 `[[watch]]`·`[[index_only]]` 루트 전부. `tidy index --status`로 인덱스 통계.
 - NAS 폴더: 기본 **메타만** 인덱싱. 본문 인덱싱은 설정으로 켜되 야간 시간대/수동 트리거 옵션 제공.
+  - **M6 구현**: `kind = "network"`는 `index_content`를 생략하면 false다.
+    - 해시는 `index.max_hash_size_mb_network`(20MB) 이하 파일만 만든다.
+    - 백그라운드 인덱싱(앱 시작, 설정 저장, NAS 시간대 폴더가 있으면 1시간마다)은 `content_index_window`("HH:MM-HH:MM", 자정을 넘겨도 됨) 안에서만 본문을 읽는다. `tidy index`(수동)는 시간대를 무시한다.
+    - 메타만 인덱싱된 파일(`text_status = none`)은 크기와 mtime이 같아도, 본문을 읽을 때가 되면 다시 처리한다.
+    - 감시·이동·Undo 뒤 단일 파일을 인덱싱할 때도, 파일이 네트워크 폴더 안에 있으면 그 폴더 설정을 따른다(`IndexOptions::for_file`).
+    - 네트워크 폴더의 본문 읽기는 NAS IO 슬롯을 하나 쓴다.
 - 우선순위: 백그라운드 저우선 스레드, 인덱싱 중 CPU/IO 상한(설정) — 사용자 작업 방해 금지.
 
 ### 5.6 Search
@@ -319,6 +351,18 @@ pub trait EmbeddingProvider: Send + Sync {
 - 인덱싱: 메타 기본, 본문 옵트인. 해시는 작은 파일(기본 <20MB)만.
 - 성능 상한: NAS 동시 IO 1~2개로 제한.
 - 2차에서 NAS 측 에이전트로 대체 가능하도록, Watcher/Indexer는 "원격 소스"를 플러그인 형태로 받을 수 있게 인터페이스를 열어둔다.
+- **M6 구현 요약** (세부는 §5.1, §5.4, §5.5)
+  - 자동 감지(`paths::looks_like_network`)는 보조로만 쓴다. 대상은 UNC, Windows 원격 드라이브(`GetDriveTypeW`), Linux `mountinfo`·macOS `statfs`의 SMB/NFS/AFP/WebDAV/SSHFS다. 쓰임은 두 가지다.
+    - 앱 "폴더 추가"의 기본 종류를 정한다.
+    - `local`로 둔 네트워크 폴더에 대해 시작 시 경고한다.
+  - 시작 경고(`Config::warnings`): DB가 네트워크 폴더 아래이거나 네트워크 위치로 보일 때, 그리고 `content_index_window` 형식 오류. 오프라인 공유에서 막히지 않도록 경로를 해석하지 않고 문자열로만 비교한다.
+  - "원격 소스" 플러그인 인터페이스는 아직 만들지 않았다. 폴링은 `Watcher` 안의 별도 스레드이고, 2차 에이전트로 바꿀 때 이 경계를 쓴다.
+  - 완료 기준 테스트(`tests/m6_flow.rs`)는 임시 폴더를 NAS로 쓰고, 이름을 바꿔 "마운트 해제/재마운트"를 흉내 낸다.
+    - 폴링으로 이동되는지 확인한다.
+    - 끊김 → 그 폴더만 offline이 되는지 확인한다.
+    - 끊긴 동안 추가된 파일이 재연결 후 처리되는지 확인한다.
+    - 두 이동 모두 Undo되는지 확인한다.
+    - 복사-검증 이동, 진행률, 메타 인덱싱, 재분류 방지도 함께 확인한다.
 
 ---
 
@@ -389,9 +433,11 @@ CREATE TABLE move_log (
   rule_name TEXT,
   ai_confidence REAL,
   moved_at INTEGER NOT NULL,
-  undone_at INTEGER
+  undone_at INTEGER,
+  state TEXT NOT NULL DEFAULT 'done'   -- (M6) moving|done: 중단 복구용
 );
 CREATE INDEX idx_move_batch ON move_log(batch_id);
+CREATE INDEX idx_move_dst ON move_log(dst_path);   -- (M6) Tidy가 옮겨 놓은 파일 재분류 방지
 CREATE INDEX idx_move_src ON move_log(src_path);   -- undo된 파일 재이동 방지 조회
 
 -- 사용자 결정 (학습용)
@@ -455,9 +501,9 @@ CREATE TABLE restructure_plans (
 CREATE TABLE schema_version (version INTEGER NOT NULL);
 ```
 
-마이그레이션: `schema_version`에 적용 버전을 기록하고 순서대로 적용. M1(v1)은 `move_log`, `pending`, `ignored`, M2(v2)는 `roots`, `files`, `files_fts`, `files_fts_word`를 만든다. M4(v3)는 `pending.source/suggested_name` 열과 `decisions`, `ai_log`, `learn_dismissed`를 추가한다. M5(v4)는 `restructure_plans`를 추가한다. 나머지 테이블은 해당 마일스톤에서 추가.
+마이그레이션: `schema_version`에 적용 버전을 기록하고 순서대로 적용. M1(v1)은 `move_log`, `pending`, `ignored`, M2(v2)는 `roots`, `files`, `files_fts`, `files_fts_word`를 만든다. M4(v3)는 `pending.source/suggested_name` 열과 `decisions`, `ai_log`, `learn_dismissed`를 추가한다. M5(v4)는 `restructure_plans`를 추가한다. M6(v5)는 `move_log.state`와 `dst_path`·`state` 인덱스를 추가한다(기존 행은 `done`). 나머지 테이블은 해당 마일스톤에서 추가.
 
-**DB 파일 위치**: SQLite는 파일 잠금이 필요하므로 `store.path`는 반드시 로컬 디스크여야 한다. NAS/공유 폴더/네트워크 드라이브에 두면 `disk I/O error`로 실패한다(에러 메시지에 힌트를 붙인다. M6에서 `kind = "network"` 루트 아래의 store.path는 기동 시 경고).
+**DB 파일 위치**: SQLite는 파일 잠금이 필요하므로 `store.path`는 반드시 로컬 디스크여야 한다. NAS/공유 폴더/네트워크 드라이브에 두면 `disk I/O error`로 실패한다(에러 메시지에 힌트를 붙인다. M6: `kind = "network"` 루트 아래이거나 네트워크 위치로 보이는 store.path는 기동 시 경고 — CLI `# warning:`, 앱 활동 탭 "주의").
 
 ---
 
@@ -486,9 +532,10 @@ index_content = true
 path = "Z:/공유/업무"           # 또는 "/Volumes/nas/업무"
 kind = "network"
 recursive = true
-poll_interval_s = 120
-index_content = false          # NAS는 메타만
+poll_interval_s = 120          # 최소 5
+index_content = false          # NAS는 메타만 (network는 생략 시 false)
 content_index_window = "02:00-05:00"
+poll_only = false              # (M6) true = OS 알림 없이 폴링만
 
 [[index_only]]
 path = "~/Documents"
@@ -629,7 +676,7 @@ send_content = false
 
 ## 12. 테스트 전략
 - 코어: 임시 디렉토리 기반 통합 테스트(생성→분류→이동→undo), 추출기별 샘플 파일 fixture
-- Watcher: 폴링 경로는 가짜 네트워크 디렉토리로 시뮬레이션
+- Watcher: 폴링 경로는 가짜 네트워크 디렉토리로 시뮬레이션 (M6: 폴더 이름 변경으로 마운트 해제/재마운트를 흉내 냄. `WatchOptions.poll_override`/`reconnect`로 1초 미만 주기)
 - AI: `MockProvider`로 결정론적 응답. 실제 API는 수동 테스트만.
 - 크로스플랫폼 경로 처리(UNC, 한글 경로, 긴 경로) 단위 테스트 필수
 

@@ -68,6 +68,13 @@ impl Mover {
     }
 
     fn undo_entry(&self, e: MoveLogEntry, report: &mut UndoReport) -> Result<(), MoverError> {
+        if e.in_progress {
+            report.conflicts.push(conflict(
+                &e,
+                "this move has not finished (still copying, or interrupted — recovered on the next watch start)",
+            ));
+            return Ok(());
+        }
         if !e.dst_path.is_file() {
             report
                 .conflicts
@@ -86,7 +93,7 @@ impl Mover {
         }
         self.expected.expect(&e.dst_path);
         self.expected.expect(&e.src_path);
-        match transfer(&e.dst_path, &e.src_path) {
+        match transfer(&e.dst_path, &e.src_path, None, &self.transfer) {
             Ok(()) => {
                 self.store.mark_undone(e.id)?;
                 tracing::info!(from = %e.dst_path.display(), to = %e.src_path.display(), "undone");

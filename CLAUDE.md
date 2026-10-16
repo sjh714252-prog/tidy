@@ -34,6 +34,7 @@
 - 설정은 `config.toml` → `Config` 구조체(serde). 기본값은 `Default` impl에.
 - 프론트: 함수형 React, 상태는 zustand, Tauri IPC는 `src/ipc/*.ts`에 타입과 함께 모음.
 - 커밋 메시지: `feat(core/watcher): ...`, `fix(desktop/search): ...` 형태.
+- PR: **마일스톤당 PR 하나**(브랜치도 마일스톤별). 이전 마일스톤 PR이 아직 머지 전이면 그 브랜치를 base로 쌓는다(stacked). 수동 테스트 절차는 해당 마일스톤 PR에만 적는다.
 
 ## 테스트
 - 코어 통합 테스트는 `tempfile` 디렉토리에서 생성→분류→이동→undo 전체 플로우를 돌린다.
@@ -56,6 +57,7 @@ cargo run -p tidy-cli -- learn [--accept N | --dismiss N]   # 학습 규칙 제�
 cargo run -p tidy-cli -- report [폴더] [--format text|json|html]
 cargo run -p tidy-cli -- restructure [폴더] --rules|--ai  → --apply ID [--only 1,3]   # 승인 전엔 아무것도 안 옮김
 cargo run -p tidy-cli -- log --batches / undo --batch <id>
+cargo run -p tidy-cli -- recover [--grace-secs 0]        # 중단된 이동(복사 도중 종료·NAS 끊김) 정리
 cd apps/desktop && npm ci && npm run tauri dev   # 클라우드: npm run build + (src-tauri) cargo clippy 까지만
 ```
 
@@ -66,7 +68,7 @@ cd apps/desktop && npm ci && npm run tauri dev   # 클라우드: npm run build +
 - [x] M3 Tauri 앱 기본 플로우 (2026-10-15) — 실행 확인은 Windows 로컬에서
 - [x] M4 AI Layer + 학습 루프 (2026-10-15) — 실제 API 확인은 로컬에서 (`tidy ai test`)
 - [x] M5 Reporter + 재구성 diff (2026-10-15) — 리포트·규칙/AI 재구성(승인 후 한 배치 적용)·이동 기록
-- [ ] M6 NAS 폴링/복사-검증 이동
+- [x] M6 NAS 폴링/복사-검증 이동 (2026-10-15) — 끊김/복구·중단 복구·메타 인덱싱. 실제 NAS 확인은 로컬에서
 - [ ] M7 의미검색 + 패키징
 
 ## 열린 결정

@@ -19,6 +19,8 @@ export interface Status {
   aiState: "off" | "ready" | "unavailable" | "starting";
   /** "provider / model" when ready, the reason otherwise. */
   aiDetail: string | null;
+  /** Network watch folders unreachable right now (paused, retried every 60 s). */
+  offline: string[];
 }
 
 export type MatchedIn = "name" | "content" | "both" | "filter";
@@ -93,7 +95,12 @@ export interface WatchFolder {
   kind: "local" | "network";
   recursive: boolean;
   indexContent: boolean;
+  /** Seconds; null = default (network 120 s, local: no polling). */
   pollIntervalS: number | null;
+  /** Network only: polling only, no OS change events. */
+  pollOnly: boolean;
+  /** Network only: "HH:MM-HH:MM" window for background body-text indexing. */
+  contentIndexWindow: string | null;
 }
 
 export interface Settings {
@@ -132,6 +139,7 @@ export type ActivityKind =
   | "no_rule"
   | "skipped"
   | "error"
+  | "warning"
   | "info";
 
 export interface Activity {
@@ -268,4 +276,15 @@ export interface MoveLogEntry {
   ai_confidence: number | null;
   moved_at: number;
   undone_at: number | null;
+  /** (M6) Logged but the transfer has not finished (long NAS copy, or interrupted). */
+  in_progress: boolean;
+}
+
+/** Progress of a long copy-verify move to/from a NAS (core snake_case). */
+export interface TransferProgress {
+  src: string;
+  dst: string;
+  copied: number;
+  total: number;
+  phase: "copy" | "verify" | "done";
 }

@@ -52,11 +52,13 @@ pub fn run() {
         )
         .setup(move |app| {
             let handle = app.handle().clone();
+            watch::init(&handle);
             tray::create(&handle)?;
             let hotkey = handle.state::<AppState>().config().general.hotkey;
             windows::register_hotkey(&handle, &hotkey);
             watch::restart(&handle);
             watch::spawn_index(&handle);
+            watch::spawn_content_window_timer(&handle);
             watch::pending_changed(&handle, true);
             #[cfg(debug_assertions)]
             devbridge::start(&handle);
@@ -96,6 +98,7 @@ pub fn run() {
             commands::resolve_pending_batch,
             commands::undo_last,
             commands::pick_folder,
+            commands::is_network_path,
             commands::get_settings,
             commands::check_rules,
             commands::save_settings,

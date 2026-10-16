@@ -29,6 +29,7 @@ const EVENTS: &[&str] = &[
     crate::watch::EV_ACTIVITY,
     crate::watch::EV_PENDING,
     crate::watch::EV_STATUS,
+    crate::watch::EV_PROGRESS,
     crate::windows::EV_NAVIGATE,
     crate::windows::EV_FOCUS_SEARCH,
 ];
@@ -193,6 +194,8 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "get_settings" => ok(commands::get_settings(app).await?),
         "check_rules" => ok(commands::check_rules(arg(&args, "text")?).await?),
         "save_settings" => ok(commands::save_settings(app, arg(&args, "args")?).await?),
+        // M6: network folder detection for "폴더 추가".
+        "is_network_path" => ok(commands::is_network_path(arg(&args, "path")?).await?),
         // M4: AI settings and learner.
         "get_ai_settings" => ok(commands::get_ai_settings(app).await?),
         "save_ai_settings" => {

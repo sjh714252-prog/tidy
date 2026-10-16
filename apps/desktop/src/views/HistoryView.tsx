@@ -75,7 +75,7 @@ export function HistoryView() {
                         {moves.map((m) => (
                           <li key={m.id} className={m.undone_at ? "muted" : ""}>
                             {m.src_path} → {m.dst_path}
-                            {m.undone_at ? " (되돌림)" : ""}
+                            {m.undone_at ? " (되돌림)" : m.in_progress ? " (진행 중 / 중단됨)" : ""}
                           </li>
                         ))}
                       </ul>

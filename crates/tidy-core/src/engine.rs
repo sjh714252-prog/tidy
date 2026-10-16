@@ -173,6 +173,9 @@ impl Engine {
         if store.is_ignored(path)? {
             return skipped("permanently ignored");
         }
+        if self.placed_by_us(path)? {
+            return skipped("placed here by Tidy; left in place");
+        }
         let facts = FileFacts::from_path(path).map_err(|source| EngineError::Io {
             path: path.to_path_buf(),
             source,
@@ -218,6 +221,17 @@ impl Engine {
     fn was_undone(&self, path: &Path) -> Result<bool, EngineError> {
         let undone = self.mover.store().undone_hashes(path)?;
         Ok(!undone.is_empty() && undone.contains(&hash_file(path)?))
+    }
+
+    /// Tidy itself moved this exact content here (an active move). A polled
+    /// NAS folder sees such files minutes later, long after the watcher's
+    /// "expected move" token has expired, or from another process; they
+    /// are not classified again (no second AI call, no ping-pong).
+    fn placed_by_us(&self, path: &Path) -> Result<bool, EngineError> {
+        let Some(placed) = self.mover.store().placed_hash(path)? else {
+            return Ok(false);
+        };
+        Ok(hash_file(path)? == placed)
     }
 
     /// No rule matched: ask the AI (if any). Failures fall back to leaving
