@@ -288,6 +288,15 @@ confirm = true
 - 의미검색: 임베딩이 켜져 있으면 FTS 결과와 벡터 결과를 RRF로 병합. 자연어 질문형 입력이면 의미검색 가중치 상향.
 - 결과: 경로, 매칭 스니펫(하이라이트), 수정일. 액션: 열기 / 폴더 열기 / 이동 / 복사 경로
 - 응답 목표: 로컬 FTS 50ms 이내, 벡터 포함 300ms 이내 (10만 파일 기준)
+- **M7 구현 (search/semantic.rs)**
+  - 켜지는 조건: `[ai] enabled`, `[search] semantic`(기본 true), 활성 프로필에 `embed` 모델. 하나라도 없으면 FTS만 쓴다(오류 아님).
+  - 임베딩 텍스트: 파일명(`_ - .`을 공백으로) + 본문 앞 `search.embed_chars`(1,000)자. `send_content = false`면 파일명만 보내고, 임베더 키에 `#name`을 붙여 본문 포함 벡터와 섞이지 않게 한다.
+  - 임베딩 시점: `tidy index`가 끝난 뒤(`--no-embed`로 끔), `tidy embed [--rebuild|--status|--limit N]`, `tidy watch`/앱의 백그라운드 스레드(백로그가 있으면 연달아, 없으면 30~60초마다). `search.embed_batch`(32)개씩 요청하고, 같은 텍스트는 한 번만 보낸다. 이미 같은 (모델, 텍스트 해시) 벡터가 있으면 요청 없이 연결만 한다. 참조가 없어진 벡터는 7일 뒤 지운다(그 사이 옮겨진 파일이 재사용).
+  - 질의: 필터를 뺀 단어들을 임베딩한다(제한 `search.query_timeout_ms` 1,500ms, 최근 32개 캐시). 필터(`ext:` `in:` 날짜·크기)는 벡터 후보에도 그대로 적용한다. 코사인 유사도가 `search.min_similarity`(0.3) 이상인 상위 `search.vector_k`(50)개를 FTS 상위 목록과 RRF(k=60)로 합친다. 벡터 가중치는 키워드형 0.7, 질문형 1.5다. 질문형은 `?`로 끝나거나, 4단어 이상이거나, "어디·언제·관련·작년·what…" 같은 단서가 있는 질의다.
+  - 결과 표시: 단어가 하나도 맞지 않고 뜻으로만 찾은 파일은 `matched_in = semantic`(앱 "의미 NN%" 배지, CLI `[meaning 83%]`)이다. 스니펫은 본문 앞부분이다.
+  - 폴백(CLAUDE.md 규칙 4): 모델이 없거나, 실패하거나, 시간을 넘기면 그 질의는 FTS 결과만 돌려주고 `note`에 이유를 담는다. 연속 실패하면 일시 중단한다(§5.8 AI 가용성).
+  - 앱: 입력하면 단어 결과를 먼저(120ms) 보여 주고, 입력이 멈추면(450ms) 단어+의미 결과로 바꾼다. 하단에 모드(단어 / 단어+의미(질문형) / 폴백 이유)를 표시한다. 의미검색 질의는 자체 DB 연결을 쓴다(느린 임베딩 요청이 UI 연결을 잡지 않도록).
+  - 성능(10만 × 768차원, release, 1코어): 메모리 캐시 적재 0.8s·73MB(int8), 질의 약 25ms. 측정 방법은 §13.
 
 ### 5.7 Reporter
 - 트리 출력(깊이 제한, 용량/파일 수 표시, 텍스트/JSON/HTML 내보내기)
@@ -326,15 +335,21 @@ pub trait EmbeddingProvider: Send + Sync {
 }
 ```
 - 구현체: `AnthropicProvider`, `OpenAiProvider`(OpenAI 호환 엔드포인트 — 다른 벤더도 커버), `OllamaProvider`(로컬)
+- **M7 구현 (임베딩·가용성)**
+  - 실제 트레이트는 `embed(&[String]) -> Result<Embeddings { vectors, usage }, AiError>`와 `name()`, `model()`이다. 차원은 모델이 돌려준 대로 쓰고(`dim()` 없음), 같은 임베더 키의 벡터끼리만 비교한다.
+  - 구현체: OpenAI 호환 `POST {base}/embeddings`(`index` 순서로 정렬), Ollama `POST {base}/api/embed`, 테스트용 `MockEmbedder`(단어·3글자 해시 + 동의어 묶음, 실패 전환 가능). Anthropic에는 임베딩 API가 없어 `embed`에 지정하면 `Unsupported`로 알리고 의미검색만 꺼진다.
+  - `ai_log` 목적에 `embed`(인덱싱)·`search`(질의)를 추가했다. OpenAI `text-embedding-3-small/large` 단가를 비용 추정표에 넣었다.
+  - **AI 가용성(`AiHealth`)**: 호출 결과를 세어 `ai.unavailable_after`(3)번 연속 실패하면 "사용 불가"가 된다. 그동안 파일은 AI를 건너뛰고(요청·타임아웃 없음, 규칙만) 그 경로를 기억한다. 60초 뒤부터 작은 요청으로 다시 확인하고, 실패하면 간격을 두 배로(최대 10분) 늘린다. 한 번 성공하면 "준비"로 돌아오고, 건너뛴 파일(최대 1,000개)을 다시 AI에 보낸다. 거부(refusal)는 연결된 것으로 센다. 감시 루프는 `WatchEvent::AiHealth`로 알리고, 앱 상태줄은 "AI 사용 불가 — 규칙만" ↔ "AI 사용"으로 바뀐다. 의미검색도 같은 방식으로 자체 가용성을 가진다(상태줄 "의미검색 켜짐 / 일시 중단").
+  - **Linux 키 저장소(§13 결정)**: Secret Service(GNOME 키링/KWallet, D-Bus)에 저장한다(`keyring`의 `sync-secret-service` + `crypto-rust` + `vendored` — libdbus를 정적으로 넣어 빌드 의존성이 없다). Secret Service가 응답하지 않는 환경(최소 WM, 헤드리스)에서는 커널 세션 키링(keyutils, 로그아웃 시 삭제)으로 폴백하고, `store_name()`이 현재 저장소를 알려 준다(`tidy ai status`, 앱 AI 설정 "키 저장 위치").
 - **M4 구현**
   - 실제 트레이트는 `complete_json(system, user, schema: &serde_json::Value) -> Result<LlmResponse { value, usage, model }, AiError>`이다. 사용량과 응답 모델을 `ai_log`에 남기려고 위 스케치보다 정보를 더 돌려준다.
-  - `EmbeddingProvider`는 선언만 해 두었고, 구현은 M7에서 한다.
+  - `EmbeddingProvider`는 선언만 해 두었고, 구현은 M7에서 한다(위 M7 항목).
   - Anthropic은 공식 Rust SDK가 없어 raw HTTP로 부른다. 요청은 `POST /v1/messages`, 헤더는 `x-api-key`와 `anthropic-version: 2023-06-01`이다. 답은 `output_config.format = {type: json_schema}`로 JSON만 받는다. 프로필의 `effort`(예: `"low"`)는 `output_config.effort`로 보낸다. `stop_reason = refusal`은 실패로 처리한다.
   - OpenAI 호환은 `/chat/completions`에 `response_format = json_schema(strict)`로 보낸다. 400/422가 오면 한 번만 `json_object` 모드로 다시 보낸다(스키마는 프롬프트에 넣는다).
   - Ollama는 `/api/chat`에 `format = 스키마`, `stream = false`, `temperature = 0`으로 보낸다.
   - HTTP는 `reqwest`(rustls/ring, OpenSSL·cmake 불필요)를 쓴다. 408/409/429/5xx(529 포함)와 네트워크 오류는 지수 백오프로 재시도하고(`retry-after` 존중, 최대 8s), 횟수는 `ai.max_retries`(기본 2)다. 400 같은 클라이언트 오류는 재시도하지 않는다. 별도 레이트 리미터는 아직 없다(429 재시도로 대신한다).
   - 엔진은 동기 코드라서 `AiClassifier`가 자체 current-thread tokio 런타임으로 `block_on`한다. 감시 스레드나 `spawn_blocking` 스레드에서만 부르고, async 컨텍스트 안에서는 부르지 않는다.
-  - 키 저장: `keyring` 3을 쓴다. Windows는 자격 증명 관리자, macOS는 키체인, Linux는 커널 keyutils다. `key_ref = "service/user"`이고 `/`가 없으면 service는 `tidy`다. 키는 로그·설정·UI 응답 어디에도 나가지 않는다(`Debug` 출력도 가린다). 앱의 키 입력칸은 쓰기 전용이고, 화면에는 "저장됨" 여부만 보인다.
+  - 키 저장: `keyring` 3을 쓴다. Windows는 자격 증명 관리자, macOS는 키체인, Linux는 커널 keyutils다(M7에서 Secret Service로 바꿈, 위 M7 항목). `key_ref = "service/user"`이고 `/`가 없으면 service는 `tidy`다. 키는 로그·설정·UI 응답 어디에도 나가지 않는다(`Debug` 출력도 가린다). 앱의 키 입력칸은 쓰기 전용이고, 화면에는 "저장됨" 여부만 보인다.
   - 비용 추정: 알려진 Claude 모델 단가표(`ai::estimate_cost_usd`)로 계산한다. Ollama는 0이고, 모르는 모델은 NULL이다.
   - `ai_log`에는 제공자, 모델, 목적(classify/test), 토큰, 비용, 지연, 성공 여부, 오류, 결과 요약(목적지와 확신도)만 남긴다. 파일 본문과 프롬프트는 남기지 않는다.
   - 자동화된 테스트는 `MockProvider`와 로컬 가짜 HTTP 서버만 쓴다. 실제 API는 수동 테스트(`tidy ai test <파일>`, 앱 "연결 테스트")로만 확인한다.
@@ -402,13 +417,24 @@ CREATE VIRTUAL TABLE files_fts_word USING fts5(       -- 보조: 1~2글자 질�
   tokenize='unicode61 remove_diacritics 2'
 );
 
--- 임베딩 (sqlite-vec 사용 시 vec0 테이블, 아니면 BLOB)
-CREATE TABLE embeddings (
-  file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
-  model TEXT NOT NULL,
+-- (M7) 임베딩: 벡터는 (모델, 임베딩한 텍스트의 해시)마다 하나만 저장하고
+-- 파일은 그것을 가리킨다. 옮기거나 복사한 파일(이름·본문이 같으면)은 API를
+-- 다시 부르지 않고 벡터를 재사용한다. sqlite-vec 대신 BLOB(§13 결정).
+CREATE TABLE vectors (
+  id INTEGER PRIMARY KEY,
+  model TEXT NOT NULL,          -- 임베더 키 "provider/model[#name]"
+  text_hash TEXT NOT NULL,      -- blake3(임베딩한 텍스트) 앞 32자
   dim INTEGER NOT NULL,
-  vec BLOB NOT NULL,
-  created_at INTEGER NOT NULL
+  vec BLOB NOT NULL,            -- f32 little-endian, L2 정규화
+  created_at INTEGER NOT NULL,
+  UNIQUE (model, text_hash)
+);
+CREATE TABLE file_vectors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,   -- 계속 증가: 검색 캐시가 새 행만 읽는다
+  file_id INTEGER NOT NULL UNIQUE REFERENCES files(id) ON DELETE CASCADE,
+  model TEXT NOT NULL,
+  text_hash TEXT NOT NULL,
+  src_indexed_at INTEGER NOT NULL         -- 이 값이 files.indexed_at과 다르면 다시 임베딩
 );
 
 -- 감시/인덱스 루트
@@ -501,7 +527,7 @@ CREATE TABLE restructure_plans (
 CREATE TABLE schema_version (version INTEGER NOT NULL);
 ```
 
-마이그레이션: `schema_version`에 적용 버전을 기록하고 순서대로 적용. M1(v1)은 `move_log`, `pending`, `ignored`, M2(v2)는 `roots`, `files`, `files_fts`, `files_fts_word`를 만든다. M4(v3)는 `pending.source/suggested_name` 열과 `decisions`, `ai_log`, `learn_dismissed`를 추가한다. M5(v4)는 `restructure_plans`를 추가한다. M6(v5)는 `move_log.state`와 `dst_path`·`state` 인덱스를 추가한다(기존 행은 `done`). 나머지 테이블은 해당 마일스톤에서 추가.
+마이그레이션: `schema_version`에 적용 버전을 기록하고 순서대로 적용. M1(v1)은 `move_log`, `pending`, `ignored`, M2(v2)는 `roots`, `files`, `files_fts`, `files_fts_word`를 만든다. M4(v3)는 `pending.source/suggested_name` 열과 `decisions`, `ai_log`, `learn_dismissed`를 추가한다. M5(v4)는 `restructure_plans`를 추가한다. M6(v5)는 `move_log.state`와 `dst_path`·`state` 인덱스를 추가한다(기존 행은 `done`). M7(v6)은 `vectors`, `file_vectors`를 추가한다.
 
 **DB 파일 위치**: SQLite는 파일 잠금이 필요하므로 `store.path`는 반드시 로컬 디스크여야 한다. NAS/공유 폴더/네트워크 드라이브에 두면 `disk I/O error`로 실패한다(에러 메시지에 힌트를 붙인다. M6: `kind = "network"` 루트 아래이거나 네트워크 위치로 보이는 store.path는 기동 시 경고 — CLI `# warning:`, 앱 활동 탭 "주의").
 
@@ -514,7 +540,7 @@ CREATE TABLE schema_version (version INTEGER NOT NULL);
 language = "ko"
 hotkey = "CmdOrCtrl+Shift+Space"
 quiet_mode = false
-start_on_login = true
+start_on_login = true          # (M7) 로그인 시 트레이로 자동 시작 (릴리스 빌드)
 
 [[watch]]
 path = "~/Desktop"
@@ -575,11 +601,22 @@ history_k = 5                  # (M4) 예시로 보내는 과거 결정 수
 candidate_roots = []           # (M4) 후보 트리에 추가할 폴더
 restructure_timeout_secs = 180 # (M5) AI 재구성 제안 시간 상한
 
+unavailable_after = 3          # (M7) 연속 실패 N회 → 사용 불가(규칙만), 성공하면 복귀
+
+[search]                       # (M7) 의미검색 — 프로필에 embed 모델이 있을 때만
+semantic = true
+query_timeout_ms = 1500        # 질의 임베딩 상한, 넘으면 단어 검색만
+vector_k = 50
+min_similarity = 0.3
+embed_batch = 32
+embed_chars = 1000             # 파일명 뒤에 붙이는 본문 글자 수
+
 [report]                       # (M5)
 protected = []                 # 재구성이 절대 건드리지 않는 폴더
 stale_days = 90
 top_n = 10
 max_moves = 500                # AI 재구성 한 번에 받는 이동 상한
+# scan_depth = 3               # (M7) 큰 폴더: 이 깊이까지만 스캔 (`tidy report --scan-depth N`)
 
 [ai.profiles.home]
 classify = { provider = "anthropic", model = "claude-haiku-5-5", key_ref = "tidy/anthropic", effort = "low" }
@@ -644,6 +681,10 @@ send_content = false
     - 정리 제안: "규칙으로 정리 미리보기" / "AI 재구성 제안" / 지난 제안을 연다. 이동 체크박스를 바꾸면 before/after 트리가 바로 갱신된다. "선택한 N개 적용"은 확인 대화상자를 거치고, 적용 뒤에는 "이 재구성 되돌리기"가 있다.
   - **이동 기록 탭**(§9.6): 배치 단위 타임라인(시각, 규칙/AI/확인/재구성, 개수, 되돌림 상태)을 보여 준다. 파일 목록을 펼쳐 볼 수 있고 배치별로 되돌릴 수 있다. CLI는 `tidy log --batches`, `tidy undo --batch ID`다.
   - 리포트·재구성 객체는 코어 JSON(snake_case)을 그대로 IPC로 보낸다(`src/ipc/types.ts`에 같은 모양으로 정의).
+- **M7 추가**
+  - 검색창 의미검색(§5.6 M7), 상태줄 "의미검색 켜짐 / 일시 중단", AI 설정의 "의미검색(임베딩 모델)" 칸(제공자·모델·주소·키 이름·API 키, 키 저장 위치 표시).
+  - **자동 시작**: 설정 "로그인 시 자동 시작"(`general.start_on_login`, 기본 켜짐). `tauri-plugin-autostart`로 Windows `HKCU\…\Run`, macOS LaunchAgent, Linux `~/.config/autostart/Tidy.desktop`에 등록한다. 앱이 시작될 때와 설정을 저장할 때 OS 상태를 설정값에 맞춘다. 등록 명령에는 `--autostart`가 붙고, 이렇게 시작하면 창 없이 트레이에만 있는다. 개발 빌드는 `target/debug` 경로가 등록되지 않게 막는다(테스트는 `TIDY_DEV_AUTOSTART=1`).
+  - **패키징**: `tauri build` — Windows `.msi`(WiX ko-KR)·`.exe`(NSIS, 사용자 단위), macOS universal `.dmg`, Linux `.deb`·`.AppImage`. `.github/workflows/release.yml`이 `v*` 태그에서 만들어 초안 릴리스에 붙이고, 릴리스 바이너리에 개발용 테스트 브리지 흔적이 없는지 검사한다. 로컬 빌드와 수동 확인 절차는 `docs/packaging.md`.
 
 ---
 
@@ -684,6 +725,7 @@ send_content = false
 
 ## 13. 열린 질문 (구현 중 결정)
 - ~~한국어 FTS 토크나이저: unicode61로 충분한지, trigram 병행이 필요한지 M2에서 벤치~~ → **결정(M2)**: trigram 주 + unicode61 보조(1~2글자 prefix). 근거와 측정치는 `docs/fts-tokenizer.md`.
-- sqlite-vec vs 자체 brute-force: 파일 수 기준 임계치 정하기
-- Linux 키 저장소: M4는 커널 keyutils(빌드 의존성 없음)를 쓰므로 재부팅하면 키가 사라진다. Linux 데스크톱 배포(M7) 때 Secret Service(dbus) 사용을 검토한다. Windows와 macOS는 영구 저장이다.
+- ~~sqlite-vec vs 자체 brute-force: 파일 수 기준 임계치 정하기~~ → **결정(M7)**: 자체 brute-force. 벡터는 SQLite BLOB(f32)로 저장하고, 검색은 메모리의 int8 사본(질의도 int8, i32 누적)을 전부 훑는다. 측정(`cargo test -p tidy-core --release bench_100k -- --ignored --nocapture`, 768차원, 1코어): 10만 개 질의 약 25ms·캐시 73MB(적재 0.8s), f32 그대로는 약 92ms·293MB. 목표(벡터 포함 300ms)의 1/10 수준이고 확장 모듈을 OS별로 배포할 필요가 없다. **다시 볼 임계치**: 임베딩된 파일이 50만 개를 넘거나(질의 >120ms·캐시 >360MB 예상, §11 상주 메모리 목표 초과) 1,536차원 이상 모델로 20만 개를 넘을 때 sqlite-vec(또는 ANN)를 검토한다.
+- ~~Linux 키 저장소: M4는 커널 keyutils(빌드 의존성 없음)를 쓰므로 재부팅하면 키가 사라진다. Linux 데스크톱 배포(M7) 때 Secret Service(dbus) 사용을 검토한다.~~ → **결정(M7)**: Secret Service(D-Bus, libdbus 정적 포함)에 저장하고, 응답이 없으면 keyutils로 폴백한다(§5.8 M7). GNOME 키링(`dbus-run-session` + `gnome-keyring-daemon`)에서 저장·조회·삭제를 확인했다. Windows와 macOS는 그대로 영구 저장이다.
+- `.hwp`(한글 5.0 바이너리) 본문 추출: OLE 복합 문서 + zlib 압축 레코드라 순수 Rust 구현이 크다. **2차 항목**으로 미룬다(지금은 메타데이터만 인덱싱, `.hwpx`는 ZIP+XML이라 별도 검토). 후보: `hwp` 크레이트 평가, 또는 `cfb` + 레코드 파서 자체 구현(본문 `HWPTAG_PARA_TEXT`만).
 - `source_app`(어느 앱이 만든 파일인지) 수집 가능 범위: macOS는 `kMDItemWhereFroms`, Windows는 Zone.Identifier ADS — M1 후반에 조사

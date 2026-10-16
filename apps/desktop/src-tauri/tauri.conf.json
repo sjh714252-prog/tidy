@@ -56,12 +56,41 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Tidy",
+    "copyright": "MIT",
+    "category": "Productivity",
+    "shortDescription": "바탕화면·폴더 자동 정리와 본문 검색",
+    "longDescription": "Tidy는 바탕화면과 지정 폴더를 감시해 규칙/AI로 파일을 정리하고, 본문까지 인덱싱해 단어와 의미로 검색합니다. 모든 이동은 기록되고 되돌릴 수 있습니다.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "wix": {
+        "language": "ko-KR"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "Korean",
+          "English"
+        ],
+        "displayLanguageSelector": false
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "linux": {
+      "deb": {
+        "section": "utils"
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
   }
 }
