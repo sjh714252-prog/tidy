@@ -8,12 +8,16 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
-use tidy_core::classify::RuleSet;
-use tidy_core::config::{write_settings, RootKind, SettingsPatch, WatchRoot};
+use tidy_core::classify::{learner, AiClassifier, RuleSet};
+use tidy_core::config::{
+    write_ai_settings, write_settings, AiPatch, ProviderConfig, ProviderKind, RootKind,
+    SettingsPatch, WatchRoot,
+};
 use tidy_core::engine::{new_batch_id, reindex_undo};
 use tidy_core::index::IndexOptions;
 use tidy_core::pending::{resolve, Decision, Resolution};
 use tidy_core::search::{search as fts_search, MatchedIn, Query, SearchOptions};
+use tidy_core::store::PendingSource;
 
 use crate::state::AppState;
 use crate::{tray, watch, windows};
@@ -63,10 +67,19 @@ pub struct StatusDto {
     pub files_indexed: u64,
     pub last_error: Option<String>,
     pub hotkey: String,
+    /// "off" (not enabled) | "ready" | "unavailable" | "starting"
+    pub ai_state: &'static str,
+    /// Provider / model when ready, the reason otherwise.
+    pub ai_detail: Option<String>,
 }
 
 fn status(app: &AppHandle) -> StatusDto {
     let state = app.state::<AppState>();
+    let ai = state
+        .ai_state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     let inner = state.lock_inner();
     let (pending_count, files_indexed) = inner
         .mover
@@ -100,6 +113,16 @@ fn status(app: &AppHandle) -> StatusDto {
         files_indexed,
         last_error: state.last_error(),
         hotkey: inner.cfg.general.hotkey.clone(),
+        ai_state: match (&ai, inner.cfg.ai.enabled) {
+            (_, false) => "off",
+            (Some(Ok(_)), _) => "ready",
+            (Some(Err(_)), _) => "unavailable",
+            (None, true) => "starting",
+        },
+        ai_detail: match ai {
+            Some(Ok(m)) | Some(Err(m)) if inner.cfg.ai.enabled => Some(m),
+            _ => None,
+        },
     }
 }
 
@@ -224,7 +247,15 @@ pub struct PendingDto {
     pub name: String,
     pub dir: String,
     pub suggested_dest: Option<String>,
+    /// Rule name (source "rule").
     pub rule: Option<String>,
+    /// "rule" | "ai"
+    pub source: &'static str,
+    /// AI confidence 0..1 and one-line reason (source "ai").
+    pub confidence: Option<f64>,
+    pub reason: Option<String>,
+    /// AI-suggested new file name.
+    pub suggested_name: Option<String>,
     pub created_at: i64,
     pub exists: bool,
     pub size: Option<u64>,
@@ -248,7 +279,15 @@ pub async fn list_pending(app: AppHandle) -> CmdResult<Vec<PendingDto>> {
                     name,
                     dir,
                     suggested_dest: p.suggested_dest.as_deref().map(s),
-                    rule: p.reason,
+                    source: p.source.as_str(),
+                    rule: (p.source == PendingSource::Rule)
+                        .then(|| p.reason.clone())
+                        .flatten(),
+                    reason: (p.source == PendingSource::Ai)
+                        .then_some(p.reason)
+                        .flatten(),
+                    confidence: p.confidence,
+                    suggested_name: p.suggested_name,
                     created_at: p.created_at,
                     exists: meta.as_ref().is_some_and(|m| m.is_file()),
                     size: meta.map(|m| m.len()),
@@ -265,6 +304,8 @@ pub enum DecisionDto {
     #[serde(rename_all = "camelCase")]
     Move {
         dest_dir: Option<String>,
+        #[serde(default)]
+        new_name: Option<String>,
     },
     Skip,
     Ignore,
@@ -326,10 +367,11 @@ pub async fn resolve_pending_batch(
 impl From<DecisionDto> for Decision {
     fn from(d: DecisionDto) -> Self {
         match d {
-            DecisionDto::Move { dest_dir } => Decision::Move {
+            DecisionDto::Move { dest_dir, new_name } => Decision::Move {
                 dest_dir: dest_dir
                     .filter(|d| !d.trim().is_empty())
                     .map(|d| tidy_core::config::expand_home(Path::new(d.trim()))),
+                new_name: new_name.filter(|n| !n.trim().is_empty()),
             },
             DecisionDto::Skip => Decision::Skip,
             DecisionDto::Ignore => Decision::Ignore,
@@ -595,6 +637,235 @@ pub async fn save_settings(app: AppHandle, args: SaveSettingsArgs) -> CmdResult<
         watch::spawn_index(&app);
         watch::pending_changed(&app, false);
         Ok(status(&app))
+    })
+    .await
+}
+
+// ── AI settings, key, test ──────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AiSettingsDto {
+    pub enabled: bool,
+    pub active_profile: String,
+    /// All profile names in the config (for the profile picker).
+    #[serde(default)]
+    pub profiles: Vec<String>,
+    /// "anthropic" | "openai" | "ollama" | "" (none)
+    pub provider: String,
+    pub model: String,
+    pub base_url: String,
+    pub key_ref: String,
+    pub effort: String,
+    pub auto_threshold: f64,
+    pub send_content: bool,
+    /// Whether a key is stored in the OS keychain under `key_ref`
+    /// (the key itself never leaves the backend).
+    #[serde(default)]
+    pub key_stored: bool,
+}
+
+fn ai_settings(cfg: &tidy_core::Config) -> AiSettingsDto {
+    let pc = cfg.ai.active().and_then(|p| p.classify.clone());
+    let key_ref = pc
+        .as_ref()
+        .and_then(|p| p.key_ref.clone())
+        .unwrap_or_default();
+    AiSettingsDto {
+        enabled: cfg.ai.enabled,
+        active_profile: cfg.ai.active_profile.clone(),
+        profiles: cfg.ai.profiles.keys().cloned().collect(),
+        provider: pc
+            .as_ref()
+            .map(|p| p.provider.as_str().to_string())
+            .unwrap_or_default(),
+        model: pc.as_ref().map(|p| p.model.clone()).unwrap_or_default(),
+        base_url: pc
+            .as_ref()
+            .and_then(|p| p.base_url.clone())
+            .unwrap_or_default(),
+        key_stored: !key_ref.is_empty() && tidy_core::ai::keys::has_key(&key_ref),
+        key_ref,
+        effort: pc.and_then(|p| p.effort).unwrap_or_default(),
+        auto_threshold: cfg.ai.auto_threshold,
+        send_content: cfg.ai.send_content,
+    }
+}
+
+#[tauri::command]
+pub async fn get_ai_settings(app: AppHandle) -> CmdResult<AiSettingsDto> {
+    blocking(move || Ok(ai_settings(&app.state::<AppState>().config()))).await
+}
+
+/// Save `[ai]` (comments kept). An `apiKey` goes to the OS keychain only.
+#[tauri::command]
+pub async fn save_ai_settings(
+    app: AppHandle,
+    settings: AiSettingsDto,
+    api_key: Option<String>,
+) -> CmdResult<AiSettingsDto> {
+    blocking(move || {
+        let provider = match settings.provider.as_str() {
+            "anthropic" => Some(ProviderKind::Anthropic),
+            "openai" => Some(ProviderKind::Openai),
+            "ollama" => Some(ProviderKind::Ollama),
+            "" => None,
+            other => return Err(format!("알 수 없는 제공자: {other}")),
+        };
+        let classify = match provider {
+            Some(kind) => {
+                if settings.model.trim().is_empty() {
+                    return Err("모델 이름을 입력하세요".into());
+                }
+                let key_ref = settings.key_ref.trim().to_string();
+                if kind == ProviderKind::Anthropic && key_ref.is_empty() {
+                    return Err(
+                        "Anthropic은 키 이름(key_ref)이 필요합니다 (예: tidy/anthropic)".into(),
+                    );
+                }
+                Some(ProviderConfig {
+                    provider: kind,
+                    model: settings.model.trim().to_string(),
+                    key_ref: (!key_ref.is_empty()).then_some(key_ref),
+                    base_url: Some(settings.base_url.trim().to_string()).filter(|u| !u.is_empty()),
+                    effort: Some(settings.effort.trim().to_string()).filter(|e| !e.is_empty()),
+                })
+            }
+            None => None,
+        };
+        if let (Some(key), Some(r)) = (
+            api_key.as_deref().filter(|k| !k.trim().is_empty()),
+            classify.as_ref().and_then(|c| c.key_ref.as_deref()),
+        ) {
+            tidy_core::ai::keys::set_key(r, key).map_err(|e| e.to_string())?;
+        }
+        let profile = if settings.active_profile.trim().is_empty() {
+            "default".to_string()
+        } else {
+            settings.active_profile.trim().to_string()
+        };
+        let state = app.state::<AppState>();
+        write_ai_settings(
+            &state.config_path,
+            &AiPatch {
+                enabled: settings.enabled,
+                active_profile: profile,
+                auto_threshold: settings.auto_threshold.clamp(0.0, 1.0),
+                send_content: settings.send_content,
+                classify,
+            },
+        )
+        .map_err(|e| e.to_string())?;
+        state.reload();
+        watch::restart(&app);
+        Ok(ai_settings(&state.config()))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn delete_api_key(app: AppHandle, key_ref: String) -> CmdResult<AiSettingsDto> {
+    blocking(move || {
+        tidy_core::ai::keys::delete_key(&key_ref).map_err(|e| e.to_string())?;
+        Ok(ai_settings(&app.state::<AppState>().config()))
+    })
+    .await
+}
+
+/// One tiny request with the saved settings ("연결 테스트").
+#[tauri::command]
+pub async fn test_ai(app: AppHandle) -> CmdResult<String> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let cfg = state.config();
+        let rules = RuleSet::load(&cfg.classify.rules).unwrap_or_default();
+        let ai = AiClassifier::from_config(&cfg, &rules).map_err(|e| e.to_string())?;
+        // Own connection: the UI's shared one must not be held during a
+        // network call of up to `ai.timeout_secs`.
+        let store =
+            tidy_core::store::Store::open(&cfg.store.db_path()).map_err(|e| e.to_string())?;
+        ai.test_connection(&store)
+            .map(|m| format!("연결됨: {} / {m}", ai.provider_name()))
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
+// ── learner ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LearnDto {
+    pub key: String,
+    pub rule_name: String,
+    pub count: u32,
+    pub examples: Vec<String>,
+    pub dest: String,
+    pub rule_toml: String,
+}
+
+#[tauri::command]
+pub async fn list_learn(app: AppHandle) -> CmdResult<Vec<LearnDto>> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let cfg = state.config();
+        let rules = RuleSet::load(&cfg.classify.rules).unwrap_or_default();
+        let inner = state.lock_inner();
+        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        Ok(
+            learner::suggestions(mover.store(), &rules, cfg.classify.learn_threshold)
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .map(|s| LearnDto {
+                    dest: s.dest.display().to_string(),
+                    key: s.key,
+                    rule_name: s.rule_name,
+                    count: s.count,
+                    examples: s.examples,
+                    rule_toml: s.rule_toml,
+                })
+                .collect(),
+        )
+    })
+    .await
+}
+
+/// Add the learned rule to rules.toml and restart watching with it.
+#[tauri::command]
+pub async fn accept_learn(app: AppHandle, key: String) -> CmdResult<()> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let cfg = state.config();
+        {
+            let inner = state.lock_inner();
+            let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+            learner::accept(
+                mover.store(),
+                &cfg.classify.rules,
+                cfg.classify.learn_threshold,
+                &key,
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        watch::emit_activity(
+            &app,
+            "info",
+            &cfg.classify.rules,
+            "학습한 규칙을 추가했습니다".into(),
+        );
+        watch::restart(&app);
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn dismiss_learn(app: AppHandle, key: String) -> CmdResult<()> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let inner = state.lock_inner();
+        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        learner::dismiss(mover.store(), &key).map_err(|e| e.to_string())
     })
     .await
 }

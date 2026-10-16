@@ -1,6 +1,9 @@
-//! Classifier (SPEC §5.2). M1 has the rule engine only; the AI step and
-//! the learner arrive in M4.
+//! Classifier (SPEC §5.2): rules → AI → ask the user, plus the learner
+//! that turns repeated user decisions into rule suggestions.
 
+pub mod ai;
+pub mod learner;
 pub mod rules;
 
+pub use ai::{AiClassifier, AiSuggestion};
 pub use rules::{Classification, FileFacts, Rule, RuleError, RuleSet};

@@ -193,6 +193,19 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "get_settings" => ok(commands::get_settings(app).await?),
         "check_rules" => ok(commands::check_rules(arg(&args, "text")?).await?),
         "save_settings" => ok(commands::save_settings(app, arg(&args, "args")?).await?),
+        // M4: AI settings and learner.
+        "get_ai_settings" => ok(commands::get_ai_settings(app).await?),
+        "save_ai_settings" => {
+            ok(
+                commands::save_ai_settings(app, arg(&args, "settings")?, arg(&args, "apiKey")?)
+                    .await?,
+            )
+        }
+        "delete_api_key" => ok(commands::delete_api_key(app, arg(&args, "keyRef")?).await?),
+        "test_ai" => ok(commands::test_ai(app).await?),
+        "list_learn" => ok(commands::list_learn(app).await?),
+        "accept_learn" => ok(commands::accept_learn(app, arg(&args, "key")?).await?),
+        "dismiss_learn" => ok(commands::dismiss_learn(app, arg(&args, "key")?).await?),
         other => Err(format!("unknown command {other}")),
     }
 }

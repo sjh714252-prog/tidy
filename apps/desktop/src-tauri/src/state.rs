@@ -23,6 +23,9 @@ pub struct AppState {
     /// Hotkey registration failure; kept apart from `last_error` because the
     /// watch loop clears that one on every (re)start.
     pub hotkey_error: Mutex<Option<String>>,
+    /// AI step as reported by the running watch loop: Ok("provider / model")
+    /// or why it is off. `None` = AI not enabled in the config.
+    pub ai_state: Mutex<Option<Result<String, String>>>,
 }
 
 pub struct Inner {
@@ -54,6 +57,7 @@ impl AppState {
             indexing: AtomicBool::new(false),
             last_error: Mutex::new(None),
             hotkey_error: Mutex::new(None),
+            ai_state: Mutex::new(None),
         };
         state.reload();
         state

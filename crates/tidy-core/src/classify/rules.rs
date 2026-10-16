@@ -225,6 +225,27 @@ impl RuleSet {
         Ok(Self { rules })
     }
 
+    /// Folders an AI suggestion may move files into without asking
+    /// (`ai_auto = true` rules, SPEC §5.2).
+    pub fn ai_auto_roots(&self) -> Vec<PathBuf> {
+        self.rules
+            .iter()
+            .filter(|r| r.ai_auto)
+            .filter_map(Rule::dest_root)
+            .collect()
+    }
+
+    /// Fixed destination folders of all rules (AI candidate tree roots).
+    pub fn dest_roots(&self) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = Vec::new();
+        for p in self.rules.iter().filter_map(Rule::dest_root) {
+            if !out.contains(&p) {
+                out.push(p);
+            }
+        }
+        out
+    }
+
     pub fn rules(&self) -> &[Rule] {
         &self.rules
     }
@@ -342,6 +363,31 @@ impl Rule {
     /// text first, then the result is turned into a path once; relative
     /// results are resolved against the file's folder and `.`/`..` are
     /// folded away so the logged destination is a clean absolute path.
+    /// The fixed part of `dest` before the first variable, as an absolute
+    /// folder (`~/Pictures/Screenshots/{yyyy}` → `~/Pictures/Screenshots`).
+    /// `None` for relative destinations. Used for the AI candidate tree and
+    /// for `ai_auto` (which folders an AI suggestion may move into alone).
+    pub fn dest_root(&self) -> Option<PathBuf> {
+        let mut lit = String::new();
+        let mut cut = false;
+        for seg in &self.dest {
+            match seg {
+                Segment::Lit(s) => lit.push_str(s),
+                Segment::Var(_) => {
+                    cut = true;
+                    break;
+                }
+            }
+        }
+        if cut {
+            // Drop a partial component ("~/사진/{yyyy}년" → "~/사진").
+            let i = lit.rfind(['/', '\\'])?;
+            lit.truncate(i);
+        }
+        let p = normalize_lexical(&expand_home(Path::new(lit.trim())));
+        p.is_absolute().then_some(p)
+    }
+
     pub fn render_dest(&self, f: &FileFacts) -> PathBuf {
         let date: DateTime<Local> = f.modified.into();
         let mut out = String::new();
@@ -593,6 +639,30 @@ dest = "정리/큰 파일/{ext}"
         assert_eq!(RuleSet::save_text(&p, good).unwrap().rules().len(), 1);
         assert!(RuleSet::save_text(&p, "[[rule]]\nname='b'\ndest='/a/{nope}'\n").is_err());
         assert_eq!(std::fs::read_to_string(&p).unwrap(), good);
+    }
+
+    #[test]
+    fn dest_roots_stop_at_first_variable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let b = tmp.path().display().to_string().replace('\\', "/");
+        let rs = RuleSet::from_toml(&format!(
+            "[[rule]]\nname='a'\ndest='{b}/정리/사진/{{yyyy}}/{{mm}}'\nai_auto=true\n\
+             [[rule]]\nname='b'\ndest='{b}/정리/문서/{{yyyy}}년'\n\
+             [[rule]]\nname='c'\ndest='상대/{{ext}}'\n\
+             [[rule]]\nname='d'\ndest='~/받은 파일'\n"
+        ))
+        .unwrap();
+        let roots: Vec<PathBuf> = rs
+            .rules()
+            .iter()
+            .map(|r| r.dest_root().unwrap_or_default())
+            .collect();
+        let base = normalize_lexical(tmp.path());
+        assert_eq!(roots[0], base.join("정리").join("사진"));
+        assert_eq!(roots[1], base.join("정리").join("문서"));
+        assert_eq!(roots[2], PathBuf::new());
+        assert_eq!(roots[3], dirs::home_dir().unwrap().join("받은 파일"));
+        assert_eq!(rs.ai_auto_roots(), vec![base.join("정리").join("사진")]);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { hideCurrentWindow } from "../ipc/transport";
 import * as ipc from "../ipc/commands";
 import { onPending } from "../ipc/events";
@@ -21,6 +21,12 @@ export function ConfirmPopup() {
   }, [refresh]);
 
   const item = items[0];
+  const [renaming, setRenaming] = useState(false);
+  const [newName, setNewName] = useState("");
+  useEffect(() => {
+    setRenaming(false);
+    setNewName(item?.suggestedName ?? item?.name ?? "");
+  }, [item?.id, item?.suggestedName, item?.name]);
   useEffect(() => {
     if (!item && !busy) void hideCurrentWindow();
   }, [item, busy]);
@@ -47,7 +53,36 @@ export function ConfirmPopup() {
         <span className="muted">제안 위치</span>
         <div title={item.suggestedDest ?? ""}>{item.suggestedDest ?? "(제안 없음)"}</div>
         {item.rule && <span className="tag">규칙: {item.rule}</span>}
+        {item.source === "ai" && (
+          <span className="tag ai" title="AI 제안 — 확신도가 자동 이동 기준보다 낮거나 자동 이동이 허용되지 않은 폴더">
+            AI {item.confidence != null ? `${Math.round(item.confidence * 100)}%` : ""}
+          </span>
+        )}
+        {item.reason && <div className="muted small">이유: {item.reason}</div>}
+        {item.suggestedName && <div className="muted small">새 이름 제안: {item.suggestedName}</div>}
       </div>
+      {renaming && (
+        <div className="row">
+          <input
+            className="wide"
+            value={newName}
+            autoFocus
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && newName.trim())
+                void resolve(item.id, { kind: "move", destDir: null, newName: newName.trim() });
+              if (e.key === "Escape") setRenaming(false);
+            }}
+          />
+          <button
+            className="primary"
+            disabled={busy || !newName.trim() || !item.suggestedDest}
+            onClick={() => void resolve(item.id, { kind: "move", destDir: null, newName: newName.trim() })}
+          >
+            확인
+          </button>
+        </div>
+      )}
       {!item.exists && <div className="warn">파일이 더 이상 없습니다.</div>}
       {error && <div className="error">{error}</div>}
       {lastResult && <div className="muted small">방금: {lastResult}</div>}
@@ -61,6 +96,9 @@ export function ConfirmPopup() {
         </button>
         <button disabled={busy} onClick={() => void elsewhere()}>
           다른 곳…
+        </button>
+        <button disabled={busy || !item.suggestedDest} onClick={() => setRenaming((r) => !r)}>
+          이름 바꿔 이동
         </button>
         <button disabled={busy} onClick={() => void resolve(item.id, { kind: "skip" })}>
           건너뜀

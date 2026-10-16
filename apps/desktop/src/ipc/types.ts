@@ -15,6 +15,10 @@ export interface Status {
   filesIndexed: number;
   lastError: string | null;
   hotkey: string;
+  /** AI step: off (not enabled) | ready | unavailable (key/network…) | starting. */
+  aiState: "off" | "ready" | "unavailable" | "starting";
+  /** "provider / model" when ready, the reason otherwise. */
+  aiDetail: string | null;
 }
 
 export type MatchedIn = "name" | "content" | "both" | "filter";
@@ -46,8 +50,15 @@ export interface PendingItem {
   name: string;
   dir: string;
   suggestedDest: string | null;
-  /** Rule that asked for confirmation. */
+  /** Rule that asked for confirmation (source "rule"). */
   rule: string | null;
+  source: "rule" | "ai";
+  /** AI confidence 0..1 (source "ai"). */
+  confidence: number | null;
+  /** AI's one-line reason (source "ai"). */
+  reason: string | null;
+  /** AI-suggested new file name. */
+  suggestedName: string | null;
   /** Unix seconds. */
   createdAt: number;
   exists: boolean;
@@ -56,7 +67,8 @@ export interface PendingItem {
 
 /** Confirm popup actions (SPEC §5.3). */
 export type Decision =
-  | { kind: "move"; destDir: string | null } // null = suggested folder
+  // destDir null = suggested folder; newName = "이름 바꿔 이동"
+  | { kind: "move"; destDir: string | null; newName?: string | null }
   | { kind: "skip" }
   | { kind: "ignore" };
 
@@ -131,3 +143,33 @@ export interface Activity {
 }
 
 export type MainTab = "activity" | "pending" | "settings";
+
+export type AiProvider = "anthropic" | "openai" | "ollama" | "";
+
+/** `[ai]` + the active profile's classify model. The API key is never sent back. */
+export interface AiSettings {
+  enabled: boolean;
+  activeProfile: string;
+  profiles: string[];
+  provider: AiProvider;
+  model: string;
+  baseUrl: string;
+  /** Keychain entry name, e.g. "tidy/anthropic". */
+  keyRef: string;
+  /** Anthropic effort ("low" | "medium" | …) or "". */
+  effort: string;
+  autoThreshold: number;
+  sendContent: boolean;
+  /** A key is stored in the OS keychain under keyRef. */
+  keyStored: boolean;
+}
+
+/** Learner rule suggestion (SPEC §5.2). */
+export interface LearnSuggestion {
+  key: string;
+  ruleName: string;
+  count: number;
+  examples: string[];
+  dest: string;
+  ruleToml: string;
+}
