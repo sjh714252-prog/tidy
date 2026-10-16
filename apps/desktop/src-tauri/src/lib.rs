@@ -59,6 +59,11 @@ pub fn run() {
             if first_run {
                 // Nothing is watched until folders are configured.
                 windows::show_main(&handle, "settings");
+            } else if cfg!(debug_assertions) {
+                // Dev builds (`tauri dev`) open the main window right away so a
+                // fresh process is never confused with a stale one still
+                // sitting in the tray; release builds start tray-only.
+                windows::show_main(&handle, "activity");
             }
             Ok(())
         })
