@@ -408,16 +408,32 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, path, suggested_dest, reason, created_at FROM pending ORDER BY id",
         )?;
-        let rows = stmt.query_map([], |r| {
-            Ok(PendingEntry {
-                id: r.get(0)?,
-                path: PathBuf::from(r.get::<_, String>(1)?),
-                suggested_dest: r.get::<_, Option<String>>(2)?.map(PathBuf::from),
-                reason: r.get(3)?,
-                created_at: r.get(4)?,
-            })
-        })?;
+        let rows = stmt.query_map([], pending_from_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn get_pending(&self, id: i64) -> Result<Option<PendingEntry>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, path, suggested_dest, reason, created_at FROM pending WHERE id = ?1",
+                [id],
+                pending_from_row,
+            )
+            .optional()?)
+    }
+
+    pub fn pending_count(&self) -> Result<u64, StoreError> {
+        Ok(self
+            .conn
+            .query_row("SELECT COUNT(*) FROM pending", [], |r| r.get::<_, i64>(0))?
+            as u64)
+    }
+
+    pub fn remove_pending_id(&self, id: i64) -> Result<(), StoreError> {
+        self.conn
+            .execute("DELETE FROM pending WHERE id = ?1", [id])?;
+        Ok(())
     }
 
     pub fn remove_pending(&self, path: &Path) -> Result<(), StoreError> {
@@ -427,6 +443,16 @@ impl Store {
     }
 
     // ── ignored ─────────────────────────────────────────────────────────
+
+    /// Never organise this path again (confirm popup "무시").
+    pub fn add_ignored(&self, path: &Path) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO ignored (path, added_at) VALUES (?1, ?2)
+             ON CONFLICT(path) DO NOTHING",
+            params![path_str(path)?, now()],
+        )?;
+        Ok(())
+    }
 
     pub fn is_ignored(&self, path: &Path) -> Result<bool, StoreError> {
         Ok(self
@@ -439,6 +465,16 @@ impl Store {
             .optional()?
             .is_some())
     }
+}
+
+fn pending_from_row(r: &Row<'_>) -> rusqlite::Result<PendingEntry> {
+    Ok(PendingEntry {
+        id: r.get(0)?,
+        path: PathBuf::from(r.get::<_, String>(1)?),
+        suggested_dest: r.get::<_, Option<String>>(2)?.map(PathBuf::from),
+        reason: r.get(3)?,
+        created_at: r.get(4)?,
+    })
 }
 
 const SELECT_MOVE: &str = "SELECT id, batch_id, src_path, dst_path, hash, size, decided_by, \

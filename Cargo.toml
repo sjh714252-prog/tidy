@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
 members = ["crates/tidy-core", "crates/tidy-cli"]
+# The Tauri app needs GUI system libraries (WebView2 / webkit2gtk), so it is
+# its own workspace: `cargo test --workspace` and CI stay headless.
+exclude = ["apps/desktop/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
@@ -14,6 +17,7 @@ thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
+toml_edit = "0.22"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 walkdir = "2"

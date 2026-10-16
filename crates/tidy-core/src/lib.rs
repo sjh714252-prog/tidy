@@ -12,8 +12,10 @@ pub mod engine;
 pub mod index;
 pub mod mover;
 pub mod paths;
+pub mod pending;
 pub mod report;
 pub mod search;
+pub mod service;
 pub mod store;
 pub mod watcher;
 
