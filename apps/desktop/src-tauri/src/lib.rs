@@ -2,10 +2,12 @@
 //! window, confirm popup, pending queue and settings. All logic lives in
 //! `tidy-core`; this crate only wires it to windows, tray and IPC.
 
+mod autostart;
 mod commands;
 #[cfg(debug_assertions)]
 mod devbridge;
 mod report_cmds;
+mod semantic;
 mod state;
 mod tray;
 mod watch;
@@ -39,6 +41,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             windows::show_main(app, "activity");
         }))
+        .plugin(autostart::plugin())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -56,8 +59,17 @@ pub fn run() {
             tray::create(&handle)?;
             let hotkey = handle.state::<AppState>().config().general.hotkey;
             windows::register_hotkey(&handle, &hotkey);
+            let cfg = handle.state::<AppState>().config();
+            if !first_run {
+                // Keep the OS login item in line with the config (it may have
+                // been edited by hand, or the app moved).
+                let auto = autostart::sync(&handle, cfg.general.start_on_login);
+                if let Some(e) = auto.error {
+                    handle.state::<AppState>().set_error(e);
+                }
+            }
             watch::restart(&handle);
-            watch::spawn_index(&handle);
+            watch::spawn_index(&handle); // starts embedding when done
             watch::spawn_content_window_timer(&handle);
             watch::pending_changed(&handle, true);
             #[cfg(debug_assertions)]
@@ -65,6 +77,8 @@ pub fn run() {
             if first_run {
                 // Nothing is watched until folders are configured.
                 windows::show_main(&handle, "settings");
+            } else if autostart::launched_at_login() {
+                // Login start: tray only, never a window.
             } else if cfg!(debug_assertions) {
                 // Dev builds (`tauri dev`) open the main window right away so a
                 // fresh process is never confused with a stale one still
@@ -91,6 +105,8 @@ pub fn run() {
             commands::index_now,
             commands::show_window,
             commands::search,
+            commands::search_semantic,
+            commands::semantic_status,
             commands::open_path,
             commands::reveal_path,
             commands::list_pending,

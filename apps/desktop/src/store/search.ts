@@ -1,45 +1,91 @@
 import { create } from "zustand";
 import * as ipc from "../ipc/commands";
-import type { SearchHit } from "../ipc/types";
+import type { SearchHit, SemanticStatus } from "../ipc/types";
 
 interface SearchState {
   query: string;
   hits: SearchHit[];
   selected: number;
   loading: boolean;
+  /** Waiting for the words + meaning results (after the word results). */
+  semanticLoading: boolean;
+  /** Mode of the results shown: words only, or words + meaning. */
+  mode: "fts" | "hybrid" | null;
+  natural: boolean;
+  /** Why meaning did not take part. */
+  note: string | null;
+  semantic: SemanticStatus | null;
   error: string | null;
   setQuery: (q: string) => void;
   move: (delta: number) => void;
   select: (i: number) => void;
+  refreshSemantic: () => Promise<void>;
 }
 
-let seq = 0;
-let timer: ReturnType<typeof setTimeout> | undefined;
+let generation = 0;
+let ftsTimer: ReturnType<typeof setTimeout> | undefined;
+let semTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Words answer at once; meaning (an embedding request) once typing pauses. */
+const FTS_DELAY_MS = 120;
+const SEMANTIC_DELAY_MS = 450;
 
 export const useSearch = create<SearchState>((set, get) => ({
   query: "",
   hits: [],
   selected: 0,
   loading: false,
+  semanticLoading: false,
+  mode: null,
+  natural: false,
+  note: null,
+  semantic: null,
   error: null,
   setQuery: (query) => {
     set({ query });
-    clearTimeout(timer);
+    clearTimeout(ftsTimer);
+    clearTimeout(semTimer);
+    const gen = ++generation;
     if (!query.trim()) {
-      set({ hits: [], selected: 0, loading: false, error: null });
+      set({ hits: [], selected: 0, loading: false, semanticLoading: false, error: null, mode: null, note: null });
       return;
     }
-    // Debounce typing; drop responses that arrive out of order.
-    timer = setTimeout(async () => {
-      const mine = ++seq;
+    // Responses of an older query (or a word answer arriving after the
+    // meaning answer) are dropped.
+    let merged = false;
+    ftsTimer = setTimeout(async () => {
       set({ loading: true });
       try {
         const hits = await ipc.search(query, 50);
-        if (mine === seq) set({ hits, selected: 0, loading: false, error: null });
+        if (gen === generation && !merged) set({ hits, selected: 0, loading: false, error: null, mode: "fts" });
       } catch (e) {
-        if (mine === seq) set({ hits: [], loading: false, error: String(e) });
+        if (gen === generation && !merged) set({ hits: [], loading: false, error: String(e) });
       }
-    }, 120);
+    }, FTS_DELAY_MS);
+    if (get().semantic?.state === "off") return;
+    semTimer = setTimeout(async () => {
+      set({ semanticLoading: true });
+      try {
+        const r = await ipc.searchSemantic(query, 50);
+        if (gen !== generation) return;
+        merged = true;
+        const keep = get().hits[get().selected]?.path;
+        const at = keep ? r.hits.findIndex((h) => h.path === keep) : -1;
+        set({
+          hits: r.hits,
+          selected: at >= 0 ? at : 0,
+          mode: r.mode,
+          natural: r.natural,
+          note: r.note,
+          loading: false,
+          semanticLoading: false,
+          error: null,
+        });
+      } catch (e) {
+        // Word results stay; meaning just did not take part.
+        if (gen === generation) set({ semanticLoading: false, note: String(e) });
+      }
+    }, SEMANTIC_DELAY_MS);
   },
   move: (delta) => {
     const { hits, selected } = get();
@@ -47,4 +93,11 @@ export const useSearch = create<SearchState>((set, get) => ({
     set({ selected: (selected + delta + hits.length) % hits.length });
   },
   select: (i) => set({ selected: i }),
+  refreshSemantic: async () => {
+    try {
+      set({ semantic: await ipc.semanticStatus() });
+    } catch {
+      set({ semantic: null });
+    }
+  },
 }));
