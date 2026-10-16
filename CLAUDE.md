@@ -20,7 +20,7 @@
 
 ## 실행 환경 주의
 - 클라우드 세션(VM)에는 디스플레이와 GUI 라이브러리가 없다. Rust 코어·CLI는 빌드·테스트까지 하고, Tauri 앱(`apps/desktop`)은 **컴파일/타입체크까지만** 하고 실행 확인은 하지 않는다. 실행 확인을 못 한 경우 완료 보고에 반드시 "로컬에서 `npm run tauri dev`로 화면 확인 필요"라고 명시한다.
-- **GUI 테스트는 테스트 브리지로 한다.** WebView2는 자동화 입력을 받지 않으므로 Tauri 창을 직접 클릭하지 말 것. 개발 빌드(`npm run tauri dev`)는 `127.0.0.1:1421`에 브리지(`src-tauri/src/devbridge.rs`)를 열고, 브라우저에서 `http://localhost:1420/`(검색창 `#/search`, 팝업 `#/confirm`)을 열면 같은 번들이 실행 중인 앱 백엔드로 명령·이벤트를 보낸다(`src/ipc/transport.ts`). 트레이·전역 단축키·팝업 위치만 사용자에게 확인 요청.
+- **GUI 테스트는 테스트 브리지로 한다.** WebView2는 자동화 입력을 받지 않으므로 Tauri 창을 직접 클릭하지 말 것. 개발 빌드(`npm run tauri dev`)는 `127.0.0.1:1421`에 브리지(`src-tauri/src/devbridge.rs`)를 열고, 브라우저에서 `http://localhost:1420/`(검색창 `#/search`, 팝업 `#/confirm`)을 열면 같은 번들이 실행 중인 앱 백엔드로 명령·이벤트를 보낸다(`src/ipc/transport.ts`). 트레이·전역 단축키·팝업 위치만 사용자에게 확인 요청. 클라우드에서는 `apt-get install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev xvfb` 후 `apps/desktop/e2e/run-headless.sh`로 앱을 Xvfb에서 띄워 Playwright(`e2e/m3.mjs`)로 전체 GUI 플로우를 직접 돌릴 수 있다.
 - 세션 시작 시 `cargo --version`을 확인하고 없으면 rustup으로 stable 툴체인을 설치한다. Tauri 빌드 의존성(webkit2gtk 등)이 없어 데스크톱 크레이트 컴파일이 실패하면 `tidy-core`/`tidy-cli`만 검증하고 그 사실을 보고한다.
 
 ## 개발 순서

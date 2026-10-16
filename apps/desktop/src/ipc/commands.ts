@@ -1,8 +1,9 @@
 // Typed wrappers for every Tauri command (src-tauri/src/commands.rs).
-import { invoke } from "./transport";
+import { inTauri, invoke } from "./transport";
 import type {
   AiSettings,
   ApplyResult,
+  BatchResult,
   BatchSummary,
   MoveLogEntry,
   PlanResult,
@@ -35,9 +36,15 @@ export const revealPath = (path: string) => invoke<void>("reveal_path", { path }
 export const listPending = () => invoke<PendingItem[]>("list_pending");
 export const resolvePending = (id: number, decision: Decision) =>
   invoke<Resolution>("resolve_pending", { id, decision });
+/** One batch for the whole selection, so a single undo restores all of it. */
+export const resolvePendingBatch = (ids: number[], decision: Decision) =>
+  invoke<BatchResult<Resolution>[]>("resolve_pending_batch", { ids, decision });
 export const undoLast = () => invoke<UndoResult | null>("undo_last");
 export const pickFolder = (start?: string | null) =>
-  invoke<string | null>("pick_folder", { start: start ?? null });
+  inTauri
+    ? invoke<string | null>("pick_folder", { start: start ?? null })
+    : // Dev bridge (browser): no native dialog, so ask for the path as text.
+      Promise.resolve(window.prompt("폴더 경로를 입력하세요", start ?? "")?.trim() || null);
 
 export const getSettings = () => invoke<Settings>("get_settings");
 export const checkRules = (text: string) => invoke<RulesCheck>("check_rules", { text });
