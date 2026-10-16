@@ -6,6 +6,7 @@ mod files;
 mod learn;
 mod models;
 mod plans;
+mod vectors;
 
 pub use db::{Store, StoreError, NETWORK_PATH_HINT};
 pub use models::{
@@ -17,3 +18,4 @@ pub(crate) use db::now as now_unix;
 pub(crate) use files::file_from_row;
 pub use learn::NewDecision;
 pub use plans::{BatchSummary, StoredPlan};
+pub use vectors::{EmbedCandidate, VectorRow, VectorStats};

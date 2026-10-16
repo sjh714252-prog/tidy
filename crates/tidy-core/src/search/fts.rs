@@ -44,6 +44,8 @@ pub enum MatchedIn {
     Both,
     /// Filter-only query (no terms): nothing to highlight.
     Filter,
+    /// Found by meaning only (semantic search), no word matched.
+    Semantic,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -55,8 +57,11 @@ pub struct SearchHit {
     pub name_highlight: String,
     /// Body excerpt around the first match (empty if the body did not match).
     pub snippet: String,
-    /// Lower is better (FTS5 bm25).
+    /// Lower is better (FTS5 bm25; hybrid results: minus the fused score).
     pub rank: f64,
+    /// Cosine similarity to the query when semantic search ranked it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub similarity: Option<f32>,
 }
 
 /// Minimum term length (in characters) the trigram index can answer.
@@ -163,9 +168,29 @@ pub fn search(
             name_highlight,
             snippet: if in_body { snippet } else { String::new() },
             rank,
+            similarity: None,
         });
     }
     Ok(hits)
+}
+
+/// Ids of all files passing `q`'s filters, or `None` when it has none
+/// (semantic search scores only these).
+pub(crate) fn filtered_ids(
+    store: &Store,
+    q: &Query,
+) -> Result<Option<std::collections::HashSet<i64>>, StoreError> {
+    let mut sql = String::from("SELECT f.id FROM files f WHERE 1");
+    let mut params = Vec::new();
+    push_filters(q, &mut sql, &mut params)?;
+    if params.is_empty() {
+        return Ok(None);
+    }
+    let mut stmt = store.conn().prepare(&sql)?;
+    let ids = stmt
+        .query_map(rusqlite::params_from_iter(params), |r| r.get::<_, i64>(0))?
+        .collect::<Result<_, _>>()?;
+    Ok(Some(ids))
 }
 
 fn push_filters(q: &Query, sql: &mut String, params: &mut Vec<Value>) -> Result<(), StoreError> {

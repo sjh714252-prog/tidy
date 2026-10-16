@@ -17,8 +17,10 @@ use tidy_core::index::{jobs_from_config, FileOutcome, IndexOptions, IndexReport,
 use tidy_core::mover::{ExpectedMoves, Mover, ProgressFn, TransferProgress, UndoReport};
 use tidy_core::pending::{resolve, Decision, Resolution};
 use tidy_core::report::{self, render_tree, restructure, scan, ScanOptions, Stats, TreeOptions};
-use tidy_core::search::{search, MatchedIn, Query, SearchOptions};
-use tidy_core::service::{run_watch, WatchEvent, WatchRunOptions};
+use tidy_core::search::{
+    hybrid_search, EmbedReport, MatchedIn, Query, SearchMode, SearchOptions, SemanticSearch,
+};
+use tidy_core::service::{run_embed_loop, run_watch, WatchEvent, WatchRunOptions};
 use tidy_core::store::{PendingSource, Store};
 use tidy_core::Config;
 
@@ -57,8 +59,10 @@ enum Cmd {
     Classify(ClassifyArgs),
     /// Index folders or single files (metadata + body text) for `tidy search`.
     Index(IndexArgs),
-    /// Full-text search over the index.
+    /// Search the index: words (FTS) plus meaning when an embed model is set.
     Search(SearchArgs),
+    /// Compute embeddings for semantic search (`tidy index` does this too).
+    Embed(EmbedArgs),
     /// AI status, API keys (OS keychain), test call, call log.
     #[command(subcommand)]
     Ai(AiCmd),
@@ -93,6 +97,10 @@ struct ReportArgs {
     /// Days without use after which a file counts as stale.
     #[arg(long)]
     stale_days: Option<u64>,
+    /// Scan only N folder levels below the root (0 = direct children);
+    /// for huge folders. Default: `report.scan_depth`, else unlimited.
+    #[arg(long, value_name = "N")]
+    scan_depth: Option<usize>,
 }
 
 #[derive(Args)]
@@ -185,6 +193,9 @@ struct IndexArgs {
     /// Print index statistics and exit.
     #[arg(long)]
     status: bool,
+    /// Do not compute embeddings afterwards (semantic search).
+    #[arg(long)]
+    no_embed: bool,
     /// Forget a folder (and its files) or a single file instead of indexing it.
     /// Only index rows are removed; files on disk are untouched.
     #[arg(long)]
@@ -203,9 +214,25 @@ struct SearchArgs {
     /// Maximum number of results.
     #[arg(short = 'n', long, default_value_t = 20)]
     limit: usize,
+    /// Words only: no semantic ranking even if an embed model is configured.
+    #[arg(long)]
+    fts: bool,
     /// Output format.
     #[arg(short, long, value_enum, default_value_t = Format::Text)]
     format: Format,
+}
+
+#[derive(Args)]
+struct EmbedArgs {
+    /// Drop every stored vector first and embed everything again.
+    #[arg(long)]
+    rebuild: bool,
+    /// Show how many files have a current vector and exit.
+    #[arg(long)]
+    status: bool,
+    /// Embed at most this many files in this run.
+    #[arg(long, value_name = "N")]
+    limit: Option<usize>,
 }
 
 #[derive(Args)]
@@ -333,6 +360,7 @@ fn main() -> Result<()> {
         Cmd::Classify(args) => cmd_classify(cli.config, args),
         Cmd::Index(args) => cmd_index(cli.config, args),
         Cmd::Search(args) => cmd_search(cli.config, args),
+        Cmd::Embed(args) => cmd_embed(cli.config, args),
         Cmd::Ai(cmd) => cmd_ai(cli.config, cmd),
         Cmd::Learn(args) => cmd_learn(cli.config, args),
         Cmd::Report(args) => cmd_report(cli.config, args),
@@ -545,6 +573,9 @@ fn cmd_watch(config: Option<PathBuf>, args: WatchArgs) -> Result<()> {
         progress: Some(progress),
         ..Default::default()
     };
+    if !args.no_ai && !args.no_index && !args.dry_run {
+        spawn_embed_thread(&cfg);
+    }
     let stop = AtomicBool::new(false); // Ctrl+C ends the process
     run_watch(&cfg, &opts, ExpectedMoves::new(), &stop, |ev| match ev {
         WatchEvent::Warning(w) => eprintln!("# warning: {w}"),
@@ -600,9 +631,46 @@ fn cmd_watch(config: Option<PathBuf>, args: WatchArgs) -> Result<()> {
         }
         WatchEvent::Ai(Ok(m)) => eprintln!("# ai: {m}"),
         WatchEvent::Ai(Err(e)) => eprintln!("# ai: off — {e} (rules only)"),
+        WatchEvent::AiHealth(ai::AiAvailability::Unavailable, e) => eprintln!(
+            "# ai: unavailable after repeated failures — rules only, retrying later ({})",
+            e.unwrap_or_default()
+        ),
+        WatchEvent::AiHealth(ai::AiAvailability::Ready, _) => {
+            eprintln!("# ai: reachable again")
+        }
         WatchEvent::Handled(path, res) => report_action(res, path),
     })?;
     Ok(())
+}
+
+/// Background embedding next to `tidy watch` (when an embed model is set).
+fn spawn_embed_thread(cfg: &Config) {
+    let sem = match SemanticSearch::from_config(cfg) {
+        Ok(s) => s,
+        Err(ai::AiError::Disabled | ai::AiError::NoEmbedModel(_)) => return,
+        Err(e) => {
+            eprintln!("# semantic search off: {e}");
+            return;
+        }
+    };
+    eprintln!("# embeddings: {} (background)", sem.describe());
+    let cfg = cfg.clone();
+    std::thread::spawn(move || {
+        let stop = AtomicBool::new(false); // Ctrl+C ends the process
+        let res = run_embed_loop(&cfg, &sem, &stop, Duration::from_secs(60), |r| {
+            if let Some(e) = &r.error {
+                eprintln!("# embeddings: {e} (words-only search until it works)");
+            } else {
+                eprintln!(
+                    "# embeddings: {} new, {} reused, {} waiting",
+                    r.embedded, r.reused, r.remaining
+                );
+            }
+        });
+        if let Err(e) = res {
+            eprintln!("# embeddings stopped: {e}");
+        }
+    });
 }
 
 fn report_action(res: &Result<Action, tidy_core::engine::EngineError>, path: &Path) {
@@ -1021,6 +1089,79 @@ fn cmd_index(config: Option<PathBuf>, args: IndexArgs) -> Result<()> {
     if matches!(args.format, Format::Json) {
         println!("{}", serde_json::to_string_pretty(&reports)?);
     }
+    if !args.no_embed {
+        // Semantic search is optional: no model or a failing one only
+        // leaves a note, the index itself is done (CLAUDE.md rule 4).
+        match SemanticSearch::from_config(&cfg) {
+            Ok(sem) => {
+                let r = embed_with_progress(&sem, &store, usize::MAX)?;
+                print_embed_report(&sem, &r);
+            }
+            Err(ai::AiError::Disabled | ai::AiError::NoEmbedModel(_)) => {}
+            Err(e) => eprintln!("# embeddings skipped: {e}"),
+        }
+    }
+    Ok(())
+}
+
+fn embed_with_progress(sem: &SemanticSearch, store: &Store, limit: usize) -> Result<EmbedReport> {
+    let total = store.embed_backlog(sem.model_key())?;
+    if total == 0 {
+        return Ok(EmbedReport::default());
+    }
+    eprintln!("# embedding {total} files with {}", sem.describe());
+    let mut last = 0;
+    Ok(sem.embed_pending(store, limit, |done| {
+        if done >= last + 200 {
+            last = done;
+            eprintln!("# embedded {done} / {total}");
+        }
+    })?)
+}
+
+fn print_embed_report(sem: &SemanticSearch, r: &EmbedReport) {
+    if r.embedded + r.reused > 0 || r.error.is_some() {
+        println!(
+            "embedded  {} new, {} reused  ({} waiting)  [{}]",
+            r.embedded,
+            r.reused,
+            r.remaining,
+            sem.describe()
+        );
+    }
+    if let Some(e) = &r.error {
+        eprintln!("# embedding stopped: {e} — search works with words only until it succeeds");
+    }
+}
+
+fn cmd_embed(config: Option<PathBuf>, args: EmbedArgs) -> Result<()> {
+    let cfg = load_config(config)?;
+    let store = open_store(&cfg)?;
+    let sem = SemanticSearch::from_config(&cfg)
+        .context("semantic search is not configured ([ai] enabled + profile `embed` model)")?;
+    if args.status {
+        let st = store.vector_stats(sem.model_key())?;
+        println!(
+            "model: {}   files with a current vector: {} / {}   stored vectors: {}",
+            sem.describe(),
+            st.embedded,
+            st.files,
+            st.vectors
+        );
+        return Ok(());
+    }
+    if args.rebuild {
+        store.clear_vectors()?;
+        eprintln!("# embeddings cleared");
+    }
+    let r = embed_with_progress(&sem, &store, args.limit.unwrap_or(usize::MAX))?;
+    print_embed_report(&sem, &r);
+    if r.embedded + r.reused == 0 && r.error.is_none() {
+        println!("nothing to embed ({} waiting)", r.remaining);
+    }
+    if r.error.is_some() {
+        std::process::exit(1);
+    }
     Ok(())
 }
 
@@ -1083,10 +1224,37 @@ fn cmd_search(config: Option<PathBuf>, args: SearchArgs) -> Result<()> {
         limit: args.limit,
         ..Default::default()
     };
-    let hits = search(&store, &query, &opts)?;
+    let sem = if args.fts {
+        None
+    } else {
+        match SemanticSearch::from_config(&cfg) {
+            Ok(s) => Some(s),
+            Err(ai::AiError::Disabled | ai::AiError::NoEmbedModel(_)) => None,
+            Err(e) => {
+                eprintln!("# semantic search off: {e} (words only)");
+                None
+            }
+        }
+    };
+    let out = hybrid_search(&store, sem.as_ref(), &query, &opts)?;
+    if let Some(n) = &out.note {
+        eprintln!("# {n}");
+    }
+    let hits = &out.hits;
     match args.format {
-        Format::Json => println!("{}", serde_json::to_string_pretty(&hits)?),
+        Format::Json => println!("{}", serde_json::to_string_pretty(&out)?),
         Format::Text => {
+            if let (SearchMode::Hybrid, Some(s)) = (out.mode, &sem) {
+                eprintln!(
+                    "# words + meaning ({}){}",
+                    s.describe(),
+                    if out.natural {
+                        ", question-like query"
+                    } else {
+                        ""
+                    }
+                );
+            }
             if hits.is_empty() {
                 let st = store.index_stats()?;
                 println!(
@@ -1106,6 +1274,11 @@ fn cmd_search(config: Option<PathBuf>, args: SearchArgs) -> Result<()> {
                     MatchedIn::Content => "body",
                     MatchedIn::Both => "name+body",
                     MatchedIn::Filter => "filter",
+                    MatchedIn::Semantic => "meaning",
+                };
+                let tag = match h.similarity {
+                    Some(sim) => format!("{tag} {:.0}%", sim * 100.0),
+                    None => tag.to_string(),
                 };
                 println!(
                     "{:>2}. {}  {:>9}  {}  [{}]",
@@ -1206,6 +1379,21 @@ fn cmd_ai(config: Option<PathBuf>, cmd: AiCmd) -> Result<()> {
             match AiClassifier::from_config(&cfg, &rules) {
                 Ok(_) => println!("state: ready"),
                 Err(e) => println!("state: off — {e} (rules only)"),
+            }
+            match SemanticSearch::from_config(&cfg) {
+                Ok(sem) => {
+                    let st = Store::open(&cfg.store.db_path())
+                        .ok()
+                        .and_then(|s| s.vector_stats(sem.model_key()).ok())
+                        .unwrap_or_default();
+                    println!(
+                        "embed: {}   files with vectors: {} / {}",
+                        sem.describe(),
+                        st.embedded,
+                        st.files
+                    );
+                }
+                Err(e) => println!("embed: off — {e} (search uses words only)"),
             }
             if let Ok(store) = Store::open(&cfg.store.db_path()) {
                 let (calls, failed, inp, out, cost) = store.ai_usage()?;
@@ -1325,7 +1513,10 @@ fn cmd_report(config: Option<PathBuf>, args: ReportArgs) -> Result<()> {
         top_n: cfg.report.top_n,
         stale_days: args.stale_days.unwrap_or(cfg.report.stale_days),
         duplicates: (!args.no_dups).then(report::DupOptions::default),
-        ..Default::default()
+        scan: ScanOptions {
+            max_depth: args.scan_depth.or(cfg.report.scan_depth),
+            ..Default::default()
+        },
     };
     let r = report::build(&root, &opts, store.as_ref())
         .with_context(|| format!("reporting {}", root.display()))?;
