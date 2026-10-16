@@ -1333,7 +1333,7 @@ fn cmd_ai(config: Option<PathBuf>, cmd: AiCmd) -> Result<()> {
             if !ai::keys::has_key(&key_ref) {
                 bail!("the keychain did not keep the key for {key_ref}");
             }
-            println!("stored in the OS keychain: {key_ref}");
+            println!("stored in {}: {key_ref}", ai::keys::store_name());
             Ok(())
         }
         AiCmd::Key(KeyCmd::Delete { key_ref }) => {
@@ -1364,12 +1364,13 @@ fn cmd_ai(config: Option<PathBuf>, cmd: AiCmd) -> Result<()> {
                     );
                     if let Some(r) = &pc.key_ref {
                         println!(
-                            "key {r}: {}",
+                            "key {r}: {}  (store: {})",
                             if ai::keys::has_key(r) {
                                 "stored"
                             } else {
                                 "MISSING"
-                            }
+                            },
+                            ai::keys::store_name()
                         );
                     }
                 }

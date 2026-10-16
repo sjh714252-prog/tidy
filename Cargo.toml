@@ -38,7 +38,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "net", "io-util", "sync"] }
 async-trait = "0.1"
 # API keys live only in the OS keychain (CLAUDE.md rule 5).
-keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native", "sync-secret-service", "crypto-rust", "vendored"] }
 
 [profile.release]
 lto = "thin"
