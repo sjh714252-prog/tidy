@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { hideCurrentWindow } from "../ipc/transport";
 import * as ipc from "../ipc/commands";
 import { onFocusSearch } from "../ipc/events";
 import { useSearch } from "../store/search";
@@ -34,7 +34,7 @@ export function SearchWindow() {
   }, [selected]);
 
   const current = hits[selected];
-  const hide = () => void getCurrentWindow().hide();
+  const hide = () => void hideCurrentWindow();
   const open = async (folder: boolean) => {
     if (!current) return;
     try {
