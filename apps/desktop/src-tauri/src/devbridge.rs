@@ -13,7 +13,6 @@
 //! Bound to 127.0.0.1 only; the frontend selects this transport when
 //! `window.__TAURI_INTERNALS__` is absent (see `src/ipc/transport.ts`).
 
-use std::io::Read;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -176,16 +175,15 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "open_path" => ok(commands::open_path(app, arg(&args, "path")?).await?),
         "reveal_path" => ok(commands::reveal_path(app, arg(&args, "path")?).await?),
         "list_pending" => ok(commands::list_pending(app).await?),
-        "resolve_pending" => ok(commands::resolve_pending(
-            app,
-            arg(&args, "id")?,
-            arg(&args, "decision")?,
-        )
-        .await?),
+        "resolve_pending" => {
+            ok(commands::resolve_pending(app, arg(&args, "id")?, arg(&args, "decision")?).await?)
+        }
         "undo_last" => ok(commands::undo_last(app).await?),
         // A native folder dialog cannot be driven from a browser tab; the
         // settings view falls back to a typed path when this fails.
-        "pick_folder" => Err("dev bridge: 폴더 선택 창을 열 수 없습니다 — 경로를 직접 입력하세요".into()),
+        "pick_folder" => {
+            Err("dev bridge: 폴더 선택 창을 열 수 없습니다 — 경로를 직접 입력하세요".into())
+        }
         "get_settings" => ok(commands::get_settings(app).await?),
         "check_rules" => ok(commands::check_rules(arg(&args, "text")?).await?),
         "save_settings" => ok(commands::save_settings(app, arg(&args, "args")?).await?),
