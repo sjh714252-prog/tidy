@@ -54,6 +54,26 @@ pub fn build(cfg: &Config) -> (Option<Arc<Semantic>>, Option<String>) {
     }
 }
 
+/// Tell the windows when semantic search became unavailable / works again
+/// (a search or an embedding pass may flip it).
+pub fn notify_health(app: &AppHandle, h: &Semantic) {
+    use tidy_core::ai::AiAvailability;
+    if let Some(change) = h.sem.health().take_change() {
+        let (kind, msg) = match change {
+            AiAvailability::Unavailable => (
+                "warning",
+                format!(
+                    "의미검색 연속 실패 — 잠시 단어 검색만 씁니다: {}",
+                    h.sem.health().last_error().unwrap_or_default()
+                ),
+            ),
+            AiAvailability::Ready => ("info", "의미검색이 다시 동작합니다".to_string()),
+        };
+        emit_activity(app, kind, Path::new(""), msg);
+        let _ = app.emit(EV_STATUS, ());
+    }
+}
+
 pub fn handle(app: &AppHandle) -> Option<Arc<Semantic>> {
     app.state::<AppState>()
         .semantic
@@ -101,6 +121,7 @@ pub fn restart_embed(app: &AppHandle) {
                     ),
                 }
                 let _ = app.emit(EV_STATUS, ());
+                notify_health(&app, &h);
             });
             if let Err(e) = res {
                 tracing::warn!("embedding loop: {e}");

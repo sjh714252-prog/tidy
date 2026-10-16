@@ -136,6 +136,9 @@ export function SearchWindow() {
                 {formatSize(current.size)} · {formatTime(current.mtime)} · {MATCH_LABEL[current.matchedIn]}
                 {current.similarity != null && ` · 유사도 ${pct(current.similarity)}`}
               </p>
+              {current.matchedIn === "semantic" && current.snippet && (
+                <p className="muted small">단어는 일치하지 않지만 내용의 뜻이 질의와 가깝습니다</p>
+              )}
               {current.snippet ? (
                 <blockquote className="snippet">
                   <Highlight text={current.snippet} />
