@@ -95,6 +95,7 @@ pub fn run() {
             commands::reveal_path,
             commands::list_pending,
             commands::resolve_pending,
+            commands::resolve_pending_batch,
             commands::undo_last,
             commands::pick_folder,
             commands::is_network_path,

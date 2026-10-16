@@ -141,6 +141,10 @@ fn start(app: &AppHandle) {
         let _ = app.emit(EV_STATUS, ());
         return;
     }
+    // A previous watch-start failure is stale once we try again. Cleared here,
+    // synchronously, so an error set later by the caller (e.g. hotkey
+    // registration in save_settings) is not wiped by the Started event.
+    state.clear_error();
     let cfg = state.config();
     if cfg.watches.is_empty() {
         let _ = app.emit(EV_STATUS, ());
@@ -238,7 +242,6 @@ fn on_event(app: &AppHandle, ev: WatchEvent<'_>) {
             }
         }
         WatchEvent::Started(roots) => {
-            app.state::<AppState>().clear_error();
             for r in roots {
                 emit_activity(app, "info", r, "감시 시작".into());
             }

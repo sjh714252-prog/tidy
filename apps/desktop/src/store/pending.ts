@@ -79,13 +79,13 @@ export const usePending = create<PendingState>((set, get) => ({
     set({ busy: true, error: null });
     const failed: string[] = [];
     let ok = 0;
-    for (const id of ids) {
-      try {
-        await ipc.resolvePending(id, d);
-        ok++;
-      } catch (e) {
-        failed.push(String(e));
+    try {
+      for (const r of await ipc.resolvePendingBatch(ids, d)) {
+        if ("Ok" in r) ok++;
+        else failed.push(r.Err);
       }
+    } catch (e) {
+      failed.push(String(e));
     }
     set({
       busy: false,
