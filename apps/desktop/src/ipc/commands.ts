@@ -1,5 +1,5 @@
 // Typed wrappers for every Tauri command (src-tauri/src/commands.rs).
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./transport";
 import type {
   AiSettings,
   ApplyResult,
