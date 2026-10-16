@@ -1,12 +1,14 @@
-// Fake OpenAI-compatible embedding server for e2e tests (no real API is
-// ever called). Same idea as tidy-core's MockEmbedder: words and character
-// trigrams hashed into buckets, plus synonym groups that share a reserved
-// bucket so "meaning" can be tested deterministically.
+// Fake OpenAI-compatible server for e2e tests (no real API is ever
+// called). Embeddings work like tidy-core's MockEmbedder: words and
+// character trigrams hashed into buckets, plus synonym groups that share a
+// reserved bucket so "meaning" can be tested deterministically. Chat
+// completions answer every classify request with one fixed suggestion.
 //
 //   node e2e/fake-embed.mjs [port]          (default 18080)
-//   POST /v1/embeddings  {model, input:[...]}
-//   POST /control        {fail: true|false}   simulate an outage
-//   GET  /stats          {calls, texts, fail}
+//   POST /v1/embeddings        {model, input:[...]}
+//   POST /v1/chat/completions  → {"dest": FAKE_DEST, "confidence": 0.6, ...}
+//   POST /control              {fail: true|false}   simulate an outage (503)
+//   GET  /stats                {calls, texts, chats, fail}
 
 import http from 'node:http';
 
@@ -21,6 +23,8 @@ const SYNONYMS = [
 let fail = false;
 let calls = 0;
 let texts = 0;
+let chats = 0;
+const DEST = process.env.FAKE_DEST || "/tmp/tidy-ai-dest";
 
 function fnv(s) {
   let h = 0xcbf29ce484222325n;
@@ -62,7 +66,7 @@ const server = http.createServer((req, res) => {
       res.writeHead(status, { 'content-type': 'application/json' });
       res.end(JSON.stringify(obj));
     };
-    if (req.method === 'GET' && req.url === '/stats') return send(200, { calls, texts, fail });
+    if (req.method === 'GET' && req.url === '/stats') return send(200, { calls, texts, chats, fail });
     if (req.method === 'POST' && req.url === '/control') {
       fail = !!JSON.parse(body || '{}').fail;
       return send(200, { fail });
@@ -80,8 +84,18 @@ const server = http.createServer((req, res) => {
         usage: { prompt_tokens: list.join(' ').length, total_tokens: list.join(' ').length },
       });
     }
+    if (req.method === 'POST' && req.url.endsWith('/chat/completions')) {
+      chats++;
+      if (fail) return send(503, { error: { message: 'fake model is down' } });
+      const answer = { dest: DEST, confidence: 0.6, reason: '테스트용 고정 제안', new_folder: true, suggested_rename: null };
+      return send(200, {
+        model: JSON.parse(body).model,
+        choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify(answer) } }],
+        usage: { prompt_tokens: 50, completion_tokens: 20 },
+      });
+    }
     send(404, { error: { message: 'not found' } });
   });
 });
 
-server.listen(PORT, '127.0.0.1', () => console.log(`fake embeddings on http://127.0.0.1:${PORT}/v1`));
+server.listen(PORT, '127.0.0.1', () => console.log(`fake OpenAI API on http://127.0.0.1:${PORT}/v1`));

@@ -300,7 +300,10 @@ pub async fn search_semantic(
         let out = match semantic::handle(&app) {
             Some(h) => {
                 let store = h.store.lock().unwrap_or_else(|e| e.into_inner());
-                hybrid_search(&store, Some(&h.sem), &q, &opts).map_err(|e| e.to_string())?
+                let out =
+                    hybrid_search(&store, Some(&h.sem), &q, &opts).map_err(|e| e.to_string())?;
+                semantic::notify_health(&app, &h);
+                out
             }
             None => {
                 let state = app.state::<AppState>();

@@ -86,7 +86,8 @@ pub enum WatchEvent<'a> {
     AiHealth(AiAvailability, Option<String>),
 }
 
-/// Files that skipped the AI while it was unavailable, retried on recovery.
+/// Files the AI failed on, offered to it once more after the next success
+/// (an outage, or just a failed call). Bounded.
 const MAX_DEFERRED: usize = 1000;
 
 /// Run until `stop` is set (checked every 500 ms) or the watcher dies.
@@ -187,6 +188,9 @@ pub fn run_watch(
 
     let mut retries: HashMap<PathBuf, u32> = HashMap::new();
     let mut deferred: Vec<PathBuf> = Vec::new();
+    // Each path is retried once, so a file the AI always fails on cannot
+    // cost a request after every success.
+    let mut retried: std::collections::HashSet<PathBuf> = Default::default();
     while !stop.load(Ordering::Relaxed) {
         let next = rx.recv_timeout(Duration::from_millis(500));
         if let Some(ai) = engine.ai() {
@@ -196,10 +200,16 @@ pub fn run_watch(
             }
             if let Some(change) = ai.health().take_change() {
                 on_event(WatchEvent::AiHealth(change, ai.health().last_error()));
-                if change == AiAvailability::Ready {
-                    for p in deferred.drain(..) {
-                        watcher.requeue(p);
-                    }
+            }
+            // The AI answers again (last call succeeded): retry the files it
+            // failed on — including those that failed before the outage was
+            // declared unavailable.
+            if !deferred.is_empty()
+                && ai.health().is_available()
+                && ai.health().consecutive_failures() == 0
+            {
+                for p in deferred.drain(..) {
+                    watcher.requeue(p);
                 }
             }
         }
@@ -234,11 +244,15 @@ pub fn run_watch(
                 }
                 retries.remove(&ev.path);
             }
-            Ok(Action::AiFailed { path, .. })
-                if engine.ai().is_some_and(|a| !a.health().is_available()) =>
-            {
+            Ok(Action::AiFailed { path, .. }) => {
                 retries.remove(&ev.path);
-                if deferred.len() < MAX_DEFERRED && !deferred.contains(path) {
+                if retried.len() > 10 * MAX_DEFERRED {
+                    retried.clear();
+                }
+                if deferred.len() < MAX_DEFERRED
+                    && !deferred.contains(path)
+                    && retried.insert(path.clone())
+                {
                     deferred.push(path.clone());
                 }
             }
