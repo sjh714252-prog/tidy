@@ -6,6 +6,8 @@ interface AiSettingsState {
   draft: AiSettings | null;
   /** Typed into the key field; sent once on save, then cleared. Never loaded back. */
   apiKey: string;
+  /** Key for the embedding model (OpenAI-compatible); same rules as apiKey. */
+  embedApiKey: string;
   busy: boolean;
   message: string | null;
   error: string | null;
@@ -13,8 +15,10 @@ interface AiSettingsState {
   patch: (p: Partial<AiSettings>) => void;
   setProvider: (p: AiProvider) => void;
   setApiKey: (k: string) => void;
+  setEmbedProvider: (p: AiSettings["embedProvider"]) => void;
+  setEmbedApiKey: (k: string) => void;
   save: () => Promise<boolean>;
-  deleteKey: () => Promise<void>;
+  deleteKey: (which?: "classify" | "embed") => Promise<void>;
   test: () => Promise<void>;
 }
 
@@ -25,9 +29,16 @@ const DEFAULTS: Record<Exclude<AiProvider, "">, Partial<AiSettings>> = {
   ollama: { model: "qwen3:8b", baseUrl: "http://localhost:11434", keyRef: "", effort: "" },
 };
 
+/** Embedding model suggestions (semantic search). */
+const EMBED_DEFAULTS: Record<"openai" | "ollama", Partial<AiSettings>> = {
+  openai: { embedModel: "text-embedding-3-small", embedBaseUrl: "https://api.openai.com/v1", embedKeyRef: "tidy/openai" },
+  ollama: { embedModel: "nomic-embed-text", embedBaseUrl: "http://localhost:11434", embedKeyRef: "" },
+};
+
 export const useAiSettings = create<AiSettingsState>((set, get) => ({
   draft: null,
   apiKey: "",
+  embedApiKey: "",
   busy: false,
   message: null,
   error: null,
@@ -49,13 +60,25 @@ export const useAiSettings = create<AiSettingsState>((set, get) => ({
     set({ draft: { ...d, ...defaults, provider, keyStored: false }, message: null });
   },
   setApiKey: (apiKey) => set({ apiKey, message: null }),
+  setEmbedProvider: (embedProvider) => {
+    const d = get().draft;
+    if (!d) return;
+    const defaults = embedProvider ? EMBED_DEFAULTS[embedProvider] : {};
+    set({ draft: { ...d, ...defaults, embedProvider, embedKeyStored: false }, message: null });
+  },
+  setEmbedApiKey: (embedApiKey) => set({ embedApiKey, message: null }),
   save: async () => {
     const d = get().draft;
     if (!d) return false;
     set({ busy: true, error: null, message: null });
     try {
-      const saved = await ipc.saveAiSettings(d, get().apiKey.trim() || null);
-      set({ draft: saved, apiKey: "", message: "AI 설정을 저장했습니다. 감시를 다시 시작합니다." });
+      const saved = await ipc.saveAiSettings(d, get().apiKey.trim() || null, get().embedApiKey.trim() || null);
+      set({
+        draft: saved,
+        apiKey: "",
+        embedApiKey: "",
+        message: "AI 설정을 저장했습니다. 감시를 다시 시작하고, 의미검색 모델이 있으면 임베딩을 시작합니다.",
+      });
       return true;
     } catch (e) {
       set({ error: String(e) });
@@ -64,12 +87,16 @@ export const useAiSettings = create<AiSettingsState>((set, get) => ({
       set({ busy: false });
     }
   },
-  deleteKey: async () => {
+  deleteKey: async (which = "classify") => {
     const d = get().draft;
-    if (!d?.keyRef) return;
+    const ref = which === "embed" ? d?.embedKeyRef : d?.keyRef;
+    if (!d || !ref) return;
     try {
-      const s = await ipc.deleteApiKey(d.keyRef);
-      set({ draft: { ...d, keyStored: s.keyStored }, message: "키체인에서 키를 지웠습니다." });
+      const s = await ipc.deleteApiKey(ref);
+      set({
+        draft: { ...d, keyStored: s.keyStored, embedKeyStored: s.embedKeyStored },
+        message: "키체인에서 키를 지웠습니다.",
+      });
     } catch (e) {
       set({ error: String(e) });
     }

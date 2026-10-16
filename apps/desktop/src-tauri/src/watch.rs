@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
+use tidy_core::ai::AiAvailability;
 use tidy_core::config::RootKind;
 use tidy_core::engine::Action;
 use tidy_core::index::{jobs_from_config, Indexer};
@@ -252,11 +253,36 @@ fn on_event(app: &AppHandle, ev: WatchEvent<'_>) {
                 Ok(m) => format!("AI 사용: {m}"),
                 Err(e) => format!("AI 꺼짐 (규칙만 사용): {e}"),
             };
-            *app.state::<AppState>()
-                .ai_state
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = Some(state);
+            let st = app.state::<AppState>();
+            *st.ai_desc.lock().unwrap_or_else(|e| e.into_inner()) = state.as_ref().ok().cloned();
+            *st.ai_state.lock().unwrap_or_else(|e| e.into_inner()) = Some(state);
             emit_activity(app, "info", Path::new(""), detail);
+        }
+        WatchEvent::AiHealth(avail, err) => {
+            let st = app.state::<AppState>();
+            let (kind, detail, state) = match avail {
+                AiAvailability::Unavailable => {
+                    let e = err.unwrap_or_default();
+                    (
+                        "warning",
+                        format!("AI 연속 실패 — 규칙만 사용하고 잠시 후 다시 시도합니다: {e}"),
+                        Err(format!("연속 실패로 일시 중단: {e}")),
+                    )
+                }
+                AiAvailability::Ready => (
+                    "info",
+                    "AI가 다시 응답합니다 — 기다리던 파일을 다시 분류합니다".to_string(),
+                    Ok(st
+                        .ai_desc
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clone()
+                        .unwrap_or_default()),
+                ),
+            };
+            *st.ai_state.lock().unwrap_or_else(|e| e.into_inner()) = Some(state);
+            emit_activity(app, kind, Path::new(""), detail);
+            let _ = app.emit(EV_STATUS, ());
         }
         WatchEvent::Handled(path, res) => match res {
             Ok(Action::Moved {
@@ -366,6 +392,8 @@ pub fn spawn_index(app: &AppHandle) {
                 .indexing
                 .store(false, Ordering::SeqCst);
             let _ = app.emit(EV_STATUS, ());
+            // New/changed files are waiting for their vectors: start a pass now.
+            crate::semantic::restart_embed(&app);
         })
         .expect("spawn index thread");
 }

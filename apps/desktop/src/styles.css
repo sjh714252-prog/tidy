@@ -72,7 +72,9 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; }
 .preview h3 { margin: 0 0 6px; font-size: 15px; word-break: break-all; }
 .preview p { margin: 2px 0; word-break: break-all; font-size: 12px; }
 .snippet { margin: 10px 0; padding: 8px 10px; background: var(--bg2); border-left: 3px solid var(--accent); white-space: pre-wrap; word-break: break-word; }
-.search-foot { padding: 4px 12px; font-size: 12px; border-top: 1px solid var(--line); }
+.search-foot { padding: 4px 12px; font-size: 12px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; gap: 12px; }
+.search-mode { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag.sem { color: var(--accent); }
 .actions { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px; }
 
 /* confirm popup */

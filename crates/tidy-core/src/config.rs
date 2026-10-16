@@ -43,6 +43,8 @@ pub struct SettingsPatch {
     pub store_path: Option<PathBuf>,
     pub quiet_mode: bool,
     pub hotkey: String,
+    /// Start (tray only) when the user logs in.
+    pub start_on_login: bool,
 }
 
 /// Apply `patch` to the config file at `path` (created if missing), keeping
@@ -73,6 +75,7 @@ pub fn write_settings(path: &Path, patch: &SettingsPatch) -> Result<(), ConfigEr
         .expect("[general] is a table");
     general.insert("quiet_mode", value(patch.quiet_mode));
     general.insert("hotkey", value(patch.hotkey.clone()));
+    general.insert("start_on_login", value(patch.start_on_login));
 
     let mut watches = ArrayOfTables::new();
     for w in &patch.watches {
@@ -959,6 +962,7 @@ path = "~/Desktop"
             store_path: None,
             quiet_mode: true,
             hotkey: "CmdOrCtrl+Alt+K".into(),
+            start_on_login: false,
         };
         write_settings(&path, &patch).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
@@ -976,6 +980,7 @@ path = "~/Desktop"
         assert_eq!(c.mover.duplicate_policy, DuplicatePolicy::Rename);
         assert!(c.general.quiet_mode);
         assert_eq!(c.general.hotkey, "CmdOrCtrl+Alt+K");
+        assert!(!c.general.start_on_login);
         assert_eq!(c.store.path, None);
 
         // Missing file: created from scratch.

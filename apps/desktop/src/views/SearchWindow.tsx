@@ -6,14 +6,31 @@ import { useSearch } from "../store/search";
 import { Highlight } from "../components/Highlight";
 import { formatSize, formatTime } from "../components/format";
 
-const MATCH_LABEL = { name: "이름", content: "본문", both: "이름+본문", filter: "필터" } as const;
+const MATCH_LABEL = { name: "이름", content: "본문", both: "이름+본문", filter: "필터", semantic: "의미" } as const;
+
+const pct = (x: number) => `${Math.round(x * 100)}%`;
 
 /**
  * Global-hotkey search (SPEC §5.6, §9.2). Keyboard only:
  * ↑/↓ select · Enter open · Ctrl+Enter open folder · Esc hide.
  */
 export function SearchWindow() {
-  const { query, hits, selected, loading, error, setQuery, move, select } = useSearch();
+  const {
+    query,
+    hits,
+    selected,
+    loading,
+    semanticLoading,
+    mode,
+    natural,
+    note,
+    semantic,
+    error,
+    setQuery,
+    move,
+    select,
+    refreshSemantic,
+  } = useSearch();
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLUListElement>(null);
 
@@ -23,7 +40,11 @@ export function SearchWindow() {
       input.current?.select();
     };
     focus();
-    const un = onFocusSearch(focus);
+    void refreshSemantic();
+    const un = onFocusSearch(() => {
+      focus();
+      void refreshSemantic();
+    });
     return () => {
       void un.then((f) => f());
     };
@@ -68,7 +89,11 @@ export function SearchWindow() {
       <input
         ref={input}
         className="search-input"
-        placeholder="검색어 · ext:pdf · in:~/Documents · after:2026-09 · size:>10mb · type:doc"
+        placeholder={
+          semantic?.state === "ready"
+            ? "검색어 또는 질문 (예: 작년 통신 요금 고지서) · ext:pdf · in:~/Documents · after:2026-09"
+            : "검색어 · ext:pdf · in:~/Documents · after:2026-09 · size:>10mb · type:doc"
+        }
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         spellCheck={false}
@@ -86,6 +111,11 @@ export function SearchWindow() {
             >
               <div className="r-name">
                 <Highlight text={h.nameHighlight} />
+                {h.matchedIn === "semantic" && (
+                  <span className="tag sem" title="단어는 없지만 뜻이 가까운 파일">
+                    의미 {h.similarity != null ? pct(h.similarity) : ""}
+                  </span>
+                )}
                 {!h.exists && <span className="tag warn">없음</span>}
               </div>
               <div className="r-dir">{h.dir}</div>
@@ -104,6 +134,7 @@ export function SearchWindow() {
               <p className="muted">{current.path}</p>
               <p className="muted">
                 {formatSize(current.size)} · {formatTime(current.mtime)} · {MATCH_LABEL[current.matchedIn]}
+                {current.similarity != null && ` · 유사도 ${pct(current.similarity)}`}
               </p>
               {current.snippet ? (
                 <blockquote className="snippet">
@@ -111,7 +142,11 @@ export function SearchWindow() {
                 </blockquote>
               ) : (
                 <p className="muted">
-                  {current.textStatus === "ok" ? "본문 일치 없음" : `본문 없음 (${current.textStatus})`}
+                  {current.matchedIn === "semantic"
+                    ? "단어는 일치하지 않지만 내용의 뜻이 질의와 가깝습니다"
+                    : current.textStatus === "ok"
+                      ? "본문 일치 없음"
+                      : `본문 없음 (${current.textStatus})`}
                 </p>
               )}
               <div className="actions">
@@ -126,7 +161,20 @@ export function SearchWindow() {
         </aside>
       </div>
       <footer className="search-foot muted">
-        {loading ? "검색 중…" : hits.length ? `${hits.length}건` : ""}
+        <span>{loading ? "검색 중…" : hits.length ? `${hits.length}건` : ""}</span>
+        <span className="search-mode" data-mode={mode ?? ""}>
+          {semanticLoading
+            ? "의미 분석 중…"
+            : note
+              ? note
+              : mode === "hybrid"
+                ? `단어+의미${natural ? " (질문형)" : ""}`
+                : semantic?.state === "ready"
+                  ? `의미검색 켜짐 · ${semantic.detail ?? ""} · ${semantic.embedded}/${semantic.files}`
+                  : semantic?.state === "unavailable"
+                    ? "의미검색 일시 중단 — 단어 검색만"
+                    : "단어 검색"}
+        </span>
       </footer>
     </div>
   );
