@@ -3,6 +3,8 @@
 //! `tidy-core`; this crate only wires it to windows, tray and IPC.
 
 mod commands;
+#[cfg(debug_assertions)]
+mod devbridge;
 mod report_cmds;
 mod state;
 mod tray;
@@ -58,6 +60,8 @@ pub fn run() {
             watch::spawn_index(&handle);
             watch::spawn_content_window_timer(&handle);
             watch::pending_changed(&handle, true);
+            #[cfg(debug_assertions)]
+            devbridge::start(&handle);
             if first_run {
                 // Nothing is watched until folders are configured.
                 windows::show_main(&handle, "settings");

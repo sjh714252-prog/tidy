@@ -1,5 +1,5 @@
 // Backend → frontend events (src-tauri/src/watch.rs, windows.rs).
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "./transport";
 import type { Activity, MainTab, TransferProgress } from "./types";
 
 export const EV_ACTIVITY = "tidy://activity";
