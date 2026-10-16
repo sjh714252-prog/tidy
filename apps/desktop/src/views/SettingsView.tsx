@@ -18,8 +18,14 @@ export function SettingsView() {
   if (!draft) return <p className="muted pad">{s.error ?? "불러오는 중…"}</p>;
 
   const addFolder = async () => {
-    const dir = await ipc.pickFolder();
-    if (dir) await s.addWatch(dir);
+    let dir: string | null;
+    try {
+      dir = await ipc.pickFolder();
+    } catch {
+      // No native dialog (dev bridge): add an empty row to type the path into.
+      dir = "";
+    }
+    if (dir !== null) await s.addWatch(dir);
   };
   const save = async () => {
     await s.save();
