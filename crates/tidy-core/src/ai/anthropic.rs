@@ -9,8 +9,6 @@ use super::provider::{parse_json_object, post_json, AiError, LlmProvider, LlmRes
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const API_VERSION: &str = "2023-06-01";
-/// Room for (adaptive) thinking plus a short JSON answer.
-const MAX_TOKENS: u32 = 2048;
 
 pub struct AnthropicProvider {
     http: reqwest::Client,
@@ -54,14 +52,14 @@ impl AnthropicProvider {
         }
     }
 
-    fn body(&self, system: &str, user: &str, schema: &Value) -> Value {
+    fn body(&self, system: &str, user: &str, schema: &Value, max_tokens: u32) -> Value {
         let mut output_config = json!({ "format": { "type": "json_schema", "schema": schema } });
         if let Some(e) = &self.effort {
             output_config["effort"] = json!(e);
         }
         json!({
             "model": self.model,
-            "max_tokens": MAX_TOKENS,
+            "max_tokens": max_tokens,
             "system": system,
             "messages": [{ "role": "user", "content": user }],
             "output_config": output_config,
@@ -107,8 +105,9 @@ impl LlmProvider for AnthropicProvider {
         system: &str,
         user: &str,
         schema: &Value,
+        max_tokens: u32,
     ) -> Result<LlmResponse, AiError> {
-        let body = self.body(system, user, schema);
+        let body = self.body(system, user, schema, max_tokens);
         let url = format!("{}/v1/messages", self.base_url);
         let v = post_json("anthropic", self.max_retries, || {
             self.http
@@ -159,12 +158,13 @@ mod tests {
     #[test]
     fn request_shape() {
         let p = provider("http://x".into());
-        let b = p.body("sys", "user", &json!({"type":"object"}));
+        let b = p.body("sys", "user", &json!({"type":"object"}), 2048);
         assert_eq!(b["model"], "claude-haiku-5-5");
         assert_eq!(b["system"], "sys");
         assert_eq!(b["messages"][0]["role"], "user");
         assert_eq!(b["output_config"]["format"]["type"], "json_schema");
         assert_eq!(b["output_config"]["effort"], "low");
+        assert_eq!(b["max_tokens"], 2048);
         assert!(b.get("temperature").is_none());
         assert!(!format!("{p:?}").contains("sk-test"));
     }
@@ -187,7 +187,7 @@ mod tests {
         ])
         .await;
         let r = provider(base)
-            .complete_json("s", "u", &json!({"type":"object"}))
+            .complete_json("s", "u", &json!({"type":"object"}), 256)
             .await
             .unwrap();
         assert_eq!(r.value["confidence"], 0.8);
@@ -211,7 +211,7 @@ mod tests {
         }])
         .await;
         let e = provider(base)
-            .complete_json("s", "u", &json!({}))
+            .complete_json("s", "u", &json!({}), 256)
             .await
             .unwrap_err();
         assert!(matches!(e, AiError::Http { status: 400, .. }), "{e}");

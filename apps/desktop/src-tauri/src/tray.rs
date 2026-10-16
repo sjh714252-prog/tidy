@@ -24,6 +24,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let pending = MenuItem::with_id(app, "pending", "대기 0건", true, None::<&str>)?;
     let pause = MenuItem::with_id(app, "pause", "일시정지", true, None::<&str>)?;
     let index = MenuItem::with_id(app, "index", "지금 인덱싱", true, None::<&str>)?;
+    let report = MenuItem::with_id(app, "report", "리포트", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "설정", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
@@ -31,7 +32,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let menu = Menu::with_items(
         app,
         &[
-            &search, &pending, &sep, &pause, &index, &settings, &sep2, &quit,
+            &search, &pending, &sep, &pause, &index, &report, &settings, &sep2, &quit,
         ],
     )?;
 
@@ -44,6 +45,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             "pending" => windows::show_main(app, "pending"),
             "pause" => toggle_pause(app),
             "index" => watch::spawn_index(app),
+            "report" => windows::show_main(app, "report"),
             "settings" => windows::show_main(app, "settings"),
             "quit" => {
                 watch::signal_stop(app);

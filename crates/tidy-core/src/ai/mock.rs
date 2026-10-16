@@ -41,6 +41,7 @@ impl LlmProvider for MockProvider {
         system: &str,
         user: &str,
         _schema: &Value,
+        _max_tokens: u32,
     ) -> Result<LlmResponse, AiError> {
         self.prompts
             .lock()
