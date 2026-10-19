@@ -10,5 +10,5 @@ pub mod rules_doc;
 pub mod starter;
 
 pub use ai::{AiCall, AiClassifier, AiSuggestion};
-pub use rules::{Anchors, Classification, FileFacts, Rule, RuleError, RuleSet};
+pub use rules::{Anchors, Classification, Encrypt, FileFacts, Rule, RuleError, RuleSet};
 pub use rules_doc::{append_cards, apply_cards, parse_cards, RuleCard};

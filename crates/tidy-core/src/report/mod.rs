@@ -55,8 +55,27 @@ pub struct Report {
     pub tree: DirNode,
     pub stats: Stats,
     pub duplicates: Vec<DupGroup>,
+    /// (M9) Personal-information suspects under the folder, from the
+    /// search index (`None` without an index).
+    pub pii: Option<PiiSummary>,
     /// Entries that could not be read (permissions etc.).
     pub errors: Vec<String>,
+}
+
+/// "개인정보 의심 파일 N개(미암호화 M개)".
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+pub struct PiiSummary {
+    pub suspected: u64,
+    pub unencrypted: u64,
+}
+
+impl PiiSummary {
+    pub fn label(&self) -> String {
+        format!(
+            "개인정보 의심 파일 {}개(미암호화 {}개)",
+            self.suspected, self.unencrypted
+        )
+    }
 }
 
 /// Build a report. `index` (optional) lets duplicate detection reuse
@@ -77,6 +96,13 @@ pub fn build(
         .as_ref()
         .map(|d| find_duplicates(&res.root, &res.tree, d, index))
         .unwrap_or_default();
+    let pii =
+        index
+            .and_then(|s| s.pii_totals(Some(&res.root)).ok())
+            .map(|(suspected, unencrypted)| PiiSummary {
+                suspected,
+                unencrypted,
+            });
     Ok(Report {
         root: res.root,
         generated_at: chrono::Utc::now().timestamp(),
@@ -84,6 +110,7 @@ pub fn build(
         tree: res.tree,
         stats,
         duplicates,
+        pii,
         errors: res.errors,
     })
 }

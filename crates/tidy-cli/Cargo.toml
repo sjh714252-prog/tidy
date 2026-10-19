@@ -22,3 +22,4 @@ toml.workspace = true
 chrono.workspace = true
 rpassword = "7"
 dunce.workspace = true
+walkdir.workspace = true

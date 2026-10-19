@@ -527,9 +527,18 @@ CREATE TABLE restructure_plans (
 );
 
 CREATE TABLE schema_version (version INTEGER NOT NULL);
+
+-- (M9) v7: 개인정보 판정·암호화 보관
+-- files.pii_flags INTEGER   -- NULL = 판정 불가/미판정, 0 = 없음, 비트 1 주민번호 · 2 계좌 · 4 이름+휴대전화 · 8 이름+이메일
+-- files.pii_counts TEXT     -- JSON {"rrn":2,"account":0,"name_phone":15,"name_email":0}
+-- files.vault INTEGER       -- 1 = 경로가 암호화 zip(본문은 잠그기 전 것)
+-- move_log.op TEXT          -- move | encrypt
+-- move_log.dst_hash TEXT    -- encrypt: 만든 zip의 해시 (hash는 원본 해시)
+-- pending.encrypt INTEGER   -- 승인하면 암호화
+-- pending.pii TEXT          -- 탐지 결과 JSON (배지)
 ```
 
-마이그레이션: `schema_version`에 적용 버전을 기록하고 순서대로 적용. M1(v1)은 `move_log`, `pending`, `ignored`, M2(v2)는 `roots`, `files`, `files_fts`, `files_fts_word`를 만든다. M4(v3)는 `pending.source/suggested_name` 열과 `decisions`, `ai_log`, `learn_dismissed`를 추가한다. M5(v4)는 `restructure_plans`를 추가한다. M6(v5)는 `move_log.state`와 `dst_path`·`state` 인덱스를 추가한다(기존 행은 `done`). M7(v6)은 `vectors`, `file_vectors`를 추가한다.
+마이그레이션: `schema_version`에 적용 버전을 기록하고 순서대로 적용. M1(v1)은 `move_log`, `pending`, `ignored`, M2(v2)는 `roots`, `files`, `files_fts`, `files_fts_word`를 만든다. M4(v3)는 `pending.source/suggested_name` 열과 `decisions`, `ai_log`, `learn_dismissed`를 추가한다. M5(v4)는 `restructure_plans`를 추가한다. M6(v5)는 `move_log.state`와 `dst_path`·`state` 인덱스를 추가한다(기존 행은 `done`). M7(v6)은 `vectors`, `file_vectors`를 추가한다. M9(v7)은 `files.pii_flags/pii_counts/vault`, `move_log.op/dst_hash`, `pending.encrypt/pii`를 추가한다.
 
 **DB 파일 위치**: SQLite는 파일 잠금이 필요하므로 `store.path`는 반드시 로컬 디스크여야 한다. NAS/공유 폴더/네트워크 드라이브에 두면 `disk I/O error`로 실패한다(에러 메시지에 힌트를 붙인다. M6: `kind = "network"` 루트 아래이거나 네트워크 위치로 보이는 store.path는 기동 시 경고 — CLI `# warning:`, 앱 활동 탭 "주의").
 
@@ -623,6 +632,25 @@ top_n = 10
 max_moves = 500                # AI 재구성 한 번에 받는 이동 상한
 # scan_depth = 3               # (M7) 큰 폴더: 이 깊이까지만 스캔 (`tidy report --scan-depth N`)
 
+[security]                     # (M9, §14.2) 비밀번호는 여기 없다 — OS 키체인 tidy/vault에만
+mode = "rules"                 # rules: 규칙 encrypt 옵션만(모드 B) | vault: 개인정보면 vault_dir로 먼저(모드 A)
+vault_dir = "D:/정리/보안"
+approval = "confirm"           # confirm(기본): 확인 팝업·대기열에서 승인 | auto: 묻지 않고 암호화
+open_ttl_minutes = 10          # 검색에서 연 복호화 사본을 지우는 시간
+
+[security.pii]
+enabled = true
+rrn = true                     # 주민등록번호
+account = true                 # 계좌번호(근접어·은행명 동반)
+name_phone = true              # 이름 + 휴대전화 (같은 줄/행)
+name_email = true              # 이름 + 이메일 (같은 줄/행)
+min_rrn = 1                    # 항목별 임계치(건수)
+min_account = 1
+min_name_phone = 1
+min_name_email = 1
+exclude = ["^010-?0000-?0000$"]  # 값(그대로 또는 숫자만)이 맞으면 세지 않음
+ai_check = false               # AI가 켜져 있으면 정규식 양성을 AI에 한 번 더 묻기
+
 [ai.profiles.home]
 classify = { provider = "anthropic", model = "claude-haiku-5-5", key_ref = "tidy/anthropic", effort = "low" }
 embed    = { provider = "ollama", model = "nomic-embed-text", base_url = "http://localhost:11434" }
@@ -690,6 +718,12 @@ send_content = false
   - 창 4개: `wizard`(첫 실행 마법사, `#/wizard`)가 추가됐다. 첫 실행은 `onboarded`로 판정하고, 트레이 좌클릭·두 번째 실행도 설정이 끝나기 전에는 마법사를 연다. 감시는 마법사를 마친 뒤에만 돈다(상태줄 "설정 마법사를 마치면 감시를 시작합니다" + "마법사 열기").
   - 설정 탭: 감시 폴더(정리 방식 열 추가) → 규칙 카드 → 접힌 "고급: rules.toml 직접 편집" → AI → DB → 기타("마법사 다시 실행"). rules.toml이 없을 때 에디터는 설명 주석만 보여 준다(예시 규칙을 자동으로 넣지 않는다).
   - 리포트 탭은 `main:report?plan=rules&path=…`로 열리면 그 폴더의 규칙 정리 미리보기를 바로 만든다(마법사의 "기존 파일 미리보기").
+- **M9 추가** (§14.2)
+  - 설정 탭: AI 다음에 "보안(개인정보)" 섹션(탐지 항목·임계치·제외 패턴·AI 2차 확인, 보관 방식, 보안 폴더, 승인 방식, 비밀번호 두 번 입력 + 키체인 저장소·이전 비밀번호 수). 저장은 탭 아래 **저장 버튼 하나**로 한다(섹션 저장 버튼 없음, #8). 비밀번호가 다르거나 8자 미만이면 저장 버튼이 꺼진다.
+  - 규칙 카드 옵션 "🔒 개인정보면 암호화"(`encrypt = "pii"`)와, 켰을 때 "개인정보가 아니어도 항상 암호화"(`"always"`).
+  - 확인 팝업·대기열: "개인정보: 주민번호 2 · 이름+휴대전화 15" 배지, "🔒 암호화해서 보관" 표시, 승인 버튼은 "암호화해서 이동".
+  - 검색: 보관 zip에 🔒 배지와 미리보기 안내, 암호화되지 않은 개인정보 파일에 "개인정보" 배지. "열기"는 임시 사본을 풀어 연다.
+  - 리포트: 카드 "개인정보 의심 (미암호화)"와 "개인정보 의심 파일 N개(미암호화 M개)" 한 줄.
 - **M7 추가**
   - 검색창 의미검색(§5.6 M7), 상태줄 "의미검색 켜짐 / 일시 중단", AI 설정의 "의미검색(임베딩 모델)" 칸(제공자·모델·주소·키 이름·API 키, 키 저장 위치 표시).
   - **자동 시작**: 설정 "로그인 시 자동 시작"(`general.start_on_login`, 기본 켜짐). `tauri-plugin-autostart`로 Windows `HKCU\…\Run`, macOS LaunchAgent, Linux `~/.config/autostart/Tidy.desktop`에 등록한다. 앱이 시작될 때와 설정을 저장할 때 OS 상태를 설정값에 맞춘다. 등록 명령에는 `--autostart`가 붙고, 이렇게 시작하면 창 없이 트레이에만 있는다. 개발 빌드는 `target/debug` 경로가 등록되지 않게 막는다(테스트는 `TIDY_DEV_AUTOSTART=1`).
@@ -783,7 +817,7 @@ send_content = false
 - **매치 미리보기**: 감시 폴더의 기존 파일(감시 설정의 하위 폴더 여부·무시 패턴 그대로, 최대 20,000개, 네트워크 폴더는 건너뛰고 표시)을 대상으로 규칙별 `count`·예시 3개·예시 목적지를 낸다. 앱은 `check_rules`, CLI는 `tidy rules check [rules.toml]`.
 - **폴더 트리**: `list_dirs`(하위 폴더만, 숨김 제외, 펼칠 때만 읽음, 5초 넘으면 "응답 없음"), 시작점은 `fs_roots`(드라이브/`/`, 홈·바탕 화면·문서·다운로드, 감시 폴더, 기준 폴더). "새 폴더"는 `mover::create_dir`(파일시스템 변경은 mover만, CLAUDE.md 규칙 1)로 만든다.
 - **AI로 규칙 만들기**: 재구성(§5.7)의 트리 요약(`summarize_tree`)을 감시 폴더마다 만들어 보내고 `{rules:[{name, ext[], name_contains, dest(상대), confirm, reason}]}`를 받는다. 목적지는 상대 경로만 받고(절대 경로·`..`는 거부), 받은 초안은 "AI 제안" 표시가 붙은 카드로 편집기에 들어갈 뿐 저장 전까지 아무것도 쓰지 않는다. `ai_log` 목적은 `rules`.
-- (M9) 규칙 카드 옵션의 "개인정보면 암호화"는 자리만 있고 꺼져 있다.
+- (M9) 규칙 카드 옵션의 "개인정보면 암호화"는 M8에서는 자리만 있고 꺼져 있었다 → M9에서 켜짐(§14.2).
 
 ### 14.2 M9 — 개인정보 탐지 + 암호화 보관
 
@@ -799,11 +833,24 @@ send_content = false
 - 모드 A **보안 폴더로 모으기**: `pii = true`면 다른 규칙보다 먼저 `security.vault_dir`(예 `D:\정리\보안`)로 이동하며 암호화.
 - 모드 B **규칙 안에서 암호화**: 일반 규칙대로 목적지를 정하되 `encrypt = "pii"`(개인정보일 때만) 또는 `encrypt = "always"`.
 - **승인 방식(설정)**: `security.approval = "auto" | "confirm"`. `auto`는 묻지 않고 암호화·이동, `confirm`은 확인 팝업(파일명·탐지된 항목 종류·건수 표시)에서 승인해야 진행. 기본 `confirm`.
-- **포맷**: ZIP + AES-256(WinZip AE-2, `zip` crate `aes-crypto`). 파일 1개 → `<이름>.<확장자>.zip` 1개(안에 원본 1개). 탐색기·반디집·7-Zip에서 열린다. 비밀번호는 설정에서 1회 지정 → OS 키체인(`tidy/vault`)에만 저장, 설정 파일·로그에 평문 금지. 비밀번호 변경 시 기존 파일은 재암호화하지 않고 "이전 비밀번호" 목록을 키체인에 함께 보관.
+- **포맷**: ZIP + AES-256(WinZip AE-2, `zip` crate `aes-crypto`). 파일 1개 → `<이름>.<확장자>.zip` 1개(안에 원본 1개). 반디집·7-Zip·알집에서 열린다(Windows 탐색기 기본 기능은 AES zip 불가 — 아래 확정 참조). 비밀번호는 설정에서 1회 지정 → OS 키체인(`tidy/vault`)에만 저장, 설정 파일·로그에 평문 금지. 비밀번호 변경 시 기존 파일은 재암호화하지 않고 "이전 비밀번호" 목록을 키체인에 함께 보관.
 - **안전 절차 (mover 전용)**: 원본 해시 → 임시 zip 작성 → zip을 열어 복호화 스트림 해시가 원본과 같은지 검증 → 목적지로 이동 → 그제야 원본 제거. 중단 복구(§5.9)는 `.tidy-tmp`를 치우고 원본을 남긴다. `move_log`에 `op = "encrypt"`와 zip 경로·원본 해시 기록.
 - **되돌리기**: 배치 undo 시 복호화해 원래 경로·이름으로 복원(zip은 제거). 비밀번호를 못 찾으면 zip을 그대로 두고 충돌로 보고.
 - **검색**: 암호화 전 인덱스(본문 FTS·임베딩)는 유지하고 경로만 zip으로 갱신한다. 결과에서 열기 → 키체인 비밀번호로 임시 폴더에 풀어 연 뒤 닫히면 정리(`%TEMP%\tidy-open\`, 10분 후 삭제 — 이 삭제만 예외적으로 허용, 임시 사본 한정).
 - **범위 밖**: 폴더 단위 암호화, 원본 문서 자체 암호(xlsx 비밀번호) 설정, 클라우드 동기화 폴더의 충돌 처리는 3차.
+
+**M9 구현 확정 (구현 중 정한 세부)**
+- **설정**: `[security] mode = "rules" | "vault"`(모드 B / 모드 A), `vault_dir`, `approval = "confirm" | "auto"`(기본 confirm), `open_ttl_minutes = 10`. `[security.pii]` `enabled`, 항목별 `rrn` `account` `name_phone` `name_email`(켜고 끄기)와 `min_*`(임계치, 기본 1), `exclude`(정규식 목록, 찾은 값 그대로 또는 숫자만으로 맞춰 봄), `ai_check`(기본 false). `mode = "vault"`인데 `vault_dir`가 없으면 경고하고 모드 B로 동작한다. 규칙 옵션은 `[[rule]] encrypt = "pii" | "always"`(없으면 암호화 안 함), 카드의 "(M9) 개인정보면 암호화" 토글이 `"pii"`를 쓴다.
+- **탐지 세부**: 숫자는 하이픈으로만 이어진 덩어리 단위로 본다(앞뒤에 숫자가 붙으면 다른 번호). 주민번호는 `6-7`/`13`자리 + 월·일 + 성별 1~4 + 검증 자릿수(2020-10 이후 발급된 검증 자릿수 없는 번호는 놓친다 — 한계로 둔다). 계좌는 10~14자리·1~4덩어리(덩어리마다 2자리 이상)에서 휴대·지역번호 모양, 주민번호, 사업자번호(3-2-5)를 뺀다. 근접어: 같은 줄에 "계좌·입금·예금주·이체·송금·account" 또는 은행명, 또는 그런 말이 있는 머리글 줄 아래(빈 줄·다음 시트까지)의 표. 휴대전화는 `01[016789]`로 시작하는 10~11자리(하이픈 없음 또는 3-3/4-4), `+82-10-…`도 받는다. 이름은 흔한 성씨로 시작하는 3음절 낱말, 복성(남궁·황보·제갈·선우·독고·사공·서문·동방) 4음절, 또는 "이름·성명·성함·담당자·예금주…" 바로 뒤의 2~4음절 낱말이다. "연락처·이메일·고객님" 같은 일반 낱말과 "…세요·…니다·…에서" 같은 어미는 이름이 아니다. 건수: 주민번호·계좌는 찾은 개수, 이름+휴대전화/이메일은 줄마다 min(이름 수, 번호 수)의 합. 스프레드시트는 행 하나가 한 줄(셀은 공백으로 이어짐)이다.
+- **판정 저장**: 인덱싱 때 본문으로 판정해 `files.pii_flags`(NULL = 판정 불가)·`pii_counts`에 둔다. 본문이 없으면 판정 불가지만 파일 이름만으로 양성이면 양성. M9 이전에 인덱싱된 행은 다음 인덱싱 때 저장된 본문으로 다시 판정한다(파일을 다시 읽지 않음).
+- **엔진 순서**: Tidy가 놓은 파일 → (모드 A) 보안 폴더 안 파일은 그대로, 개인정보면 보안 폴더로 → 규칙(`encrypt` 반영) → AI. 엔진은 인덱스의 판정이 최신(크기·mtime 같음)이면 그것을 쓰고, 아니면 그 자리에서 본문을 읽는다. Undo로 돌아온 파일은 다시 잠그지 않는다. 승인이 필요하면(`approval = confirm`, 규칙의 `confirm`, **비밀번호가 아직 없음** — auto라도) 대기열(`pending.encrypt = 1`, 탐지 결과 배지)로 간다. 암호화해야 할 파일을 암호화 없이 옮기는 경우는 없다.
+- **zip 세부**: 안의 항목 이름은 원래 파일 이름(이름 바꿔 승인하면 새 이름), zip의 수정 시각은 원본 것. 같은 이름 zip이 있으면 `이름.pdf (1).zip`. **정정**: Windows 탐색기의 기본 압축 풀기는 AES 암호화 zip을 열지 못한다(ZipCrypto만 지원) — 반디집·7-Zip·알집 같은 AES 지원 프로그램 또는 Tidy의 "열기"로 연다.
+- **로그·복구**: `move_log.op = "encrypt"`, `hash` = 원본 해시, `dst_hash` = zip 해시(엔진의 "Tidy가 놓은 파일" 판단은 `dst_hash`로 한다). 중단 복구에서 원본과 zip이 둘 다 있으면: 원본이 기록 해시와 같을 때 우리 zip을 지우고 행을 철회(원본 보존), 다르면 둘 다 두고 "확인 필요"로 보고. `.tidy-tmp` 임시 zip은 기존 규칙대로 치운다.
+- **되돌리기**: 현재 → 이전 비밀번호 순서로 열고, 임시 파일에 풀어 원본 해시와 같아야 제자리에 둔다(mtime 복원) — 그다음 zip을 지운다. 맞는 비밀번호가 없으면 zip을 그대로 두고 충돌로 보고(행은 활성으로 남아 재시도 가능).
+- **비밀번호**: 8자 이상. 바꾸면 이전 것은 `tidy/vault-previous`(JSON 목록, 최대 20개)로 옮긴다. Linux에서 Secret Service가 없으면 커널 키링(로그아웃 시 삭제)에 저장되므로 설정 화면이 저장소 이름을 보여 준다. 커널 키링은 스레드에 세션 키링이 없으면 첫 조회에서 새로 만들며 그 조회는 빈 키링을 보므로, 키를 읽기 전에 한 번 준비해 다른 스레드·프로세스가 저장한 키(M7의 API 키 포함)도 찾게 했다. `TIDY_VAULT_KEYCHAIN`(기본 `tidy`)으로 키체인 서비스 이름을 바꿀 수 있다 — 헤드리스 GUI 테스트가 실제 보관 비밀번호를 건드리지 않게 쓴다.
+- **검색·인덱스**: 암호화 직전에 원본을 인덱싱해 두고, 그 행을 zip 경로로 바꾼다(`files.vault = 1`, FTS·벡터 그대로). 이후 인덱싱은 vault 행을 다시 읽지 않는다. `tidy index --rebuild`는 zip의 본문을 잃는다(이름만 남음). 열기는 `<temp>/tidy-open/<uuid>/원래이름`에 풀고, 앱이 시작할 때와 1분마다 `open_ttl_minutes`가 지난 `<uuid>` 폴더만 지운다.
+- **AI 2차 판단**(`ai_check`): 정규식 양성일 때만, 파일 이름·탐지 결과와(`send_content`일 때만) 숫자를 0으로·메일 아이디를 `***`로 가린 본문 일부를 보낸다. "개인정보 아님"이면 양성을 지우고, 실패하면 정규식 판정을 유지한다. `ai_log` 목적은 `pii`.
+- **CLI**: `tidy pii scan <폴더> [--all] [--no-recursive] [--format json]`(읽기만), `tidy vault lock <파일> [--to 폴더]`, `tidy vault unlock <zip>`(그 zip을 만든 이동의 undo), `tidy vault status`, `tidy vault password`(설정·변경).
 
 **UI**: 설정 → "보안(개인정보)" 섹션: 탐지 항목 체크, 보관 모드, 승인 방식, 보안 폴더, 비밀번호 설정/변경(키체인 저장 표시). 확인 팝업·대기열에 "개인정보: 주민번호 2 · 이름+휴대전화 15" 배지. 리포트에 "개인정보 의심 파일 N개(미암호화 M개)".
 

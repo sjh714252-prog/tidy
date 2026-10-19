@@ -78,6 +78,13 @@ td.n{{text-align:right;white-space:nowrap}}pre{{font-family:Consolas,"D2Coding",
         size(wasted)
     );
 
+    if let Some(p) = &r.pii {
+        let _ = write!(
+            h,
+            "<p class=pii>🔒 {} — 검색 인덱스 기준</p>",
+            esc(&p.label())
+        );
+    }
     h.push_str("<h2>종류별</h2><table><tr><th>확장자</th><th>파일</th><th>용량</th></tr>");
     for t in &s.by_type {
         let _ = write!(

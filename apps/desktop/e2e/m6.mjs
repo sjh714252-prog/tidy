@@ -84,6 +84,8 @@ const evStart = (await events(1e9)).next;
   fs.writeFileSync(path.join(NAS, "nas-small.pdf"), "small");
   const movedSmall = await waitFor(() => fs.existsSync(path.join(LOCAL, "nas-small.pdf")), 20000);
   ok("B", "폴링으로 새 파일 감지 → 규칙대로 이동 (≤20 s)", movedSmall);
+  // The activity event reaches the page shortly after the file lands on disk.
+  await waitFor(async () => /nas-small\.pdf/.test(await main.locator(".activity").innerText()), 5000, 300);
   const feed = await main.locator(".activity").innerText();
   ok("B", "활동 탭에 이동 기록", /nas-small\.pdf/.test(feed) && /이동/.test(feed));
 

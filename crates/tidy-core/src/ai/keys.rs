@@ -105,6 +105,13 @@ mod imp {
 
     fn keyutils(key_ref: &str) -> Result<Entry, Error> {
         let (service, user) = split(key_ref);
+        // Building a credential on a thread without its own session keyring
+        // creates one (linking the persistent keyring into it), but that
+        // first credential still searches the keyring that was there
+        // before — so a key saved by another thread or process is "not
+        // found" once per thread. Build it twice: the second one searches
+        // the new session keyring, which reaches the persistent one.
+        let _ = KeyutilsCredential::new_with_target(None, service, user);
         KeyutilsCredential::new_with_target(None, service, user)
             .map(|c| Entry::new_with_credential(Box::new(c)))
     }

@@ -32,6 +32,8 @@ pub struct RuleCard {
     pub newer_than_days: Option<u32>,
     pub from_dir: String,
     pub dest: String,
+    /// (M9) `""` (never) | `"pii"` | `"always"`.
+    pub encrypt: String,
     /// Keys of the rule the card does not edit (shown read-only, kept).
     pub other_keys: Vec<String>,
 }
@@ -52,12 +54,13 @@ impl Default for RuleCard {
             newer_than_days: None,
             from_dir: String::new(),
             dest: String::new(),
+            encrypt: String::new(),
             other_keys: Vec::new(),
         }
     }
 }
 
-const CARD_KEYS: &[&str] = &["name", "match", "dest", "confirm", "enabled"];
+const CARD_KEYS: &[&str] = &["name", "match", "dest", "confirm", "enabled", "encrypt"];
 const MATCH_KEYS: &[&str] = &[
     "ext",
     "name_regex",
@@ -132,6 +135,7 @@ pub fn parse_cards(text: &str) -> Result<Vec<RuleCard>, RuleError> {
             name: str_of(t.get("name")),
             enabled: t.get("enabled").and_then(Item::as_bool).unwrap_or(true),
             confirm: t.get("confirm").and_then(Item::as_bool).unwrap_or(false),
+            encrypt: str_of(t.get("encrypt")),
             ext: mget("ext")
                 .and_then(Item::as_array)
                 .map(|a| {
@@ -268,6 +272,12 @@ fn fill(t: &mut Table, c: &RuleCard) {
     set(t, "dest", Some(Value::from(c.dest.trim())));
     set_bool(t, "confirm", c.confirm, false);
     set_bool(t, "enabled", c.enabled, true);
+    let enc = c.encrypt.trim();
+    set(
+        t,
+        "encrypt",
+        (!enc.is_empty() && enc != "never").then(|| Value::from(enc)),
+    );
 }
 
 /// Split a table prefix into the file header (up to the last blank line)

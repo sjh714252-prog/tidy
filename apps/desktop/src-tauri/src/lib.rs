@@ -8,6 +8,7 @@ mod commands;
 mod devbridge;
 mod onboarding;
 mod report_cmds;
+mod security_cmds;
 mod semantic;
 mod state;
 mod tray;
@@ -74,6 +75,7 @@ pub fn run() {
             watch::restart(&handle);
             watch::spawn_index(&handle); // starts embedding when done
             watch::spawn_content_window_timer(&handle);
+            security_cmds::spawn_open_sweeper(&handle);
             watch::pending_changed(&handle, true);
             #[cfg(debug_assertions)]
             devbridge::start(&handle);
@@ -135,6 +137,10 @@ pub fn run() {
             commands::save_ai_settings,
             commands::delete_api_key,
             commands::test_ai,
+            security_cmds::get_security_settings,
+            security_cmds::save_security_settings,
+            security_cmds::open_vault_file,
+            security_cmds::vault_copy,
             commands::list_learn,
             commands::accept_learn,
             commands::dismiss_learn,

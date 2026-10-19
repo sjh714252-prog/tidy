@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 
 use super::{transfer, Mover, MoverError};
-use crate::store::MoveLogEntry;
+use crate::store::{MoveLogEntry, MoveOp};
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct UndoReport {
@@ -88,6 +88,9 @@ impl Mover {
             ));
             return Ok(());
         }
+        if e.op == MoveOp::Encrypt {
+            return self.undo_encrypt(e, report);
+        }
         if let Some(parent) = e.src_path.parent() {
             fs::create_dir_all(parent).map_err(MoverError::io("create dir", parent))?;
         }
@@ -105,7 +108,7 @@ impl Mover {
     }
 }
 
-fn conflict(e: &MoveLogEntry, reason: &str) -> UndoConflict {
+pub(super) fn conflict(e: &MoveLogEntry, reason: &str) -> UndoConflict {
     UndoConflict {
         log_id: e.id,
         src_path: e.src_path.clone(),
@@ -133,6 +136,7 @@ mod tests {
                 rule_name: None,
                 ai_confidence: None,
                 new_name: None,
+                encrypt: false,
             })
             .unwrap()
         {

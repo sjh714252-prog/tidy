@@ -49,6 +49,10 @@ export interface SearchHit {
   exists: boolean;
   /** Cosine similarity to the query (0..1) when semantic search ranked it. */
   similarity: number | null;
+  /** (M9) Encrypted vault zip (🔒); opening decrypts a temporary copy. */
+  vault: boolean;
+  /** (M9) "주민번호 2 · 이름+휴대전화 15" when judged personal. */
+  pii: string | null;
 }
 
 /** Words + meaning search (search_semantic). */
@@ -102,6 +106,10 @@ export interface PendingItem {
   createdAt: number;
   exists: boolean;
   size: number | null;
+  /** (M9) Approving locks the file into an encrypted zip. */
+  encrypt: boolean;
+  /** (M9) "주민번호 2 · 이름+휴대전화 15". */
+  pii: string | null;
 }
 
 /** Confirm popup actions (SPEC §5.3). */
@@ -216,6 +224,8 @@ export interface RuleCard {
   newerThanDays: number | null;
   fromDir: string;
   dest: string;
+  /** (M9) "" (never) | "pii" | "always". */
+  encrypt: string;
   /** Keys the card does not edit (kept as they are, e.g. ai_auto). */
   otherKeys: string[];
 }
@@ -307,6 +317,7 @@ export const emptyCard = (): RuleCard => ({
   newerThanDays: null,
   fromDir: "",
   dest: "",
+  encrypt: "",
   otherKeys: [],
 });
 
@@ -378,6 +389,10 @@ export interface Report {
   stats: Stats;
   /** Paths are relative to root, "/"-separated. */
   duplicates: DupGroup[];
+  /** (M9) "개인정보 의심 파일 N개(미암호화 M개)" (search index). */
+  pii: string | null;
+  piiSuspected: number;
+  piiUnencrypted: number;
   errors: string[];
 }
 
@@ -453,4 +468,36 @@ export interface TransferProgress {
   copied: number;
   total: number;
   phase: "copy" | "verify" | "done";
+}
+
+/** (M9) [security.pii] — what counts as personal information. */
+export interface PiiSettings {
+  enabled: boolean;
+  rrn: boolean;
+  account: boolean;
+  namePhone: boolean;
+  nameEmail: boolean;
+  minRrn: number;
+  minAccount: number;
+  minNamePhone: number;
+  minNameEmail: number;
+  exclude: string[];
+  aiCheck: boolean;
+}
+
+/** (M9) Settings → 보안(개인정보). Never contains the password. */
+export interface SecuritySettings {
+  /** rules = 규칙 옵션으로만 (B) · vault = 보안 폴더로 모으기 (A) */
+  mode: "rules" | "vault";
+  vaultDir: string;
+  approval: "confirm" | "auto";
+  pii: PiiSettings;
+  // read-only
+  hasPassword: boolean;
+  previousPasswords: number;
+  keyStore: string;
+  keyError: string | null;
+  suspected: number;
+  unencrypted: number;
+  locked: number;
 }
