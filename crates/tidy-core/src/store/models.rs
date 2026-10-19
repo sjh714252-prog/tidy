@@ -44,6 +44,35 @@ pub struct NewMove {
     pub decided_by: DecidedBy,
     pub rule_name: Option<String>,
     pub ai_confidence: Option<f64>,
+    /// (M9) `encrypt`: `dst_path` is a password-protected zip of the file.
+    pub op: MoveOp,
+}
+
+/// `move_log.op` (M9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum MoveOp {
+    #[default]
+    Move,
+    /// Moved into an AES-256 zip (`<name>.zip`); undo decrypts it back.
+    Encrypt,
+}
+
+impl MoveOp {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MoveOp::Move => "move",
+            MoveOp::Encrypt => "encrypt",
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        if s == "encrypt" {
+            MoveOp::Encrypt
+        } else {
+            MoveOp::Move
+        }
+    }
 }
 
 /// A row of `move_log`.
@@ -66,6 +95,9 @@ pub struct MoveLogEntry {
     /// (a long copy to a NAS is running, or it was interrupted by a crash
     /// and waits for [`crate::mover::Mover::recover_interrupted`]).
     pub in_progress: bool,
+    pub op: MoveOp,
+    /// (M9) Hash of the zip an encrypt produced.
+    pub dst_hash: Option<String>,
 }
 
 /// `files.text_status`: what happened to the body text of a file.
@@ -117,6 +149,12 @@ pub struct FileStamp {
     /// Body text was never attempted (`text_status = none`): indexed as
     /// metadata only, e.g. a NAS folder outside its content window.
     pub text_none: bool,
+    /// (M9) The row is an encrypted vault zip: its text came from the
+    /// file before it was locked, so it is never re-extracted.
+    pub vault: bool,
+    /// (M9) Text was extracted but no personal-information verdict was
+    /// stored yet (indexed before M9): judge it from the stored text.
+    pub pii_unjudged: bool,
 }
 
 /// A file row about to be written (insert or replace by path).
@@ -135,6 +173,8 @@ pub struct NewFile {
     pub excerpt: Option<String>,
     /// Full extracted text (already truncated by the indexer).
     pub content: Option<String>,
+    /// (M9) Personal-information verdict (`None` = not judged).
+    pub pii: Option<crate::pii::PiiFinding>,
 }
 
 /// A row of `files` without the body text.
@@ -152,6 +192,11 @@ pub struct FileRecord {
     pub text_status: TextStatus,
     pub excerpt: Option<String>,
     pub indexed_at: i64,
+    /// (M9) `None` = not judged ("판정 불가"), 0 = clean.
+    pub pii_flags: Option<u32>,
+    pub pii_counts: Option<crate::pii::PiiCounts>,
+    /// (M9) The path is an encrypted vault zip (🔒).
+    pub vault: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -203,6 +248,10 @@ pub struct PendingEntry {
     pub confidence: Option<f64>,
     /// AI-suggested new file name, if any.
     pub suggested_name: Option<String>,
+    /// (M9) Approving encrypts the file into a zip at the destination.
+    pub encrypt: bool,
+    /// (M9) What the detector found (badge "개인정보: 주민번호 2 · …").
+    pub pii: Option<crate::pii::PiiFinding>,
 }
 
 /// Input for [`Store::upsert_pending_entry`](super::Store::upsert_pending_entry).
@@ -214,6 +263,8 @@ pub struct NewPending<'a> {
     pub source: PendingSource,
     pub confidence: Option<f64>,
     pub suggested_name: Option<&'a str>,
+    pub encrypt: bool,
+    pub pii: Option<&'a crate::pii::PiiFinding>,
 }
 
 /// What the user did with a queued file (`decisions.action`).

@@ -239,6 +239,7 @@ mod tests {
                 text_status: TextStatus::Ok,
                 excerpt: None,
                 content: body.map(str::to_string),
+                pii: None,
             },
             seen,
         )

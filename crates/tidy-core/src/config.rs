@@ -254,6 +254,8 @@ pub struct Config {
     pub ai: Ai,
     pub report: ReportCfg,
     pub search: SearchCfg,
+    /// (M9) Personal information detection + encrypted vault.
+    pub security: Security,
 }
 
 /// `[search]` (SPEC §5.6): semantic search on top of FTS.
@@ -747,6 +749,210 @@ pub struct Store {
     pub path: Option<PathBuf>,
 }
 
+/// `[security]` (SPEC §14.2, M9): personal-information detection and the
+/// encrypted vault. Passwords are never here — only in the OS keychain
+/// (`tidy/vault`, CLAUDE.md rule 5).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Security {
+    /// `rules`: only rules with `encrypt = "pii" | "always"` encrypt
+    /// (mode B). `vault`: files judged personal go to `vault_dir` before
+    /// any rule, encrypted (mode A); rule options still apply to the rest.
+    pub mode: SecurityMode,
+    /// Where mode A collects encrypted files (e.g. `D:\정리\보안`).
+    pub vault_dir: Option<PathBuf>,
+    /// `confirm` (default): every encryption waits in the confirm popup /
+    /// queue. `auto`: encrypt and move without asking.
+    pub approval: Approval,
+    pub pii: PiiCfg,
+    /// Opened vault files are decrypted to `<temp>/tidy-open` and the copy
+    /// is removed after this many minutes.
+    pub open_ttl_minutes: u64,
+}
+
+impl Default for Security {
+    fn default() -> Self {
+        Self {
+            mode: SecurityMode::Rules,
+            vault_dir: None,
+            approval: Approval::Confirm,
+            pii: PiiCfg::default(),
+            open_ttl_minutes: 10,
+        }
+    }
+}
+
+impl Security {
+    /// Mode A is in effect (needs a vault folder).
+    pub fn collects(&self) -> Option<&Path> {
+        match self.mode {
+            SecurityMode::Vault => self
+                .vault_dir
+                .as_deref()
+                .filter(|d| !d.as_os_str().is_empty()),
+            SecurityMode::Rules => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SecurityMode {
+    #[default]
+    Rules,
+    Vault,
+}
+
+impl SecurityMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SecurityMode::Rules => "rules",
+            SecurityMode::Vault => "vault",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Approval {
+    Auto,
+    #[default]
+    Confirm,
+}
+
+impl Approval {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Approval::Auto => "auto",
+            Approval::Confirm => "confirm",
+        }
+    }
+}
+
+/// `[security.pii]`: what counts as personal information (offline regex).
+/// A file is personal when any enabled item reaches its minimum count.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct PiiCfg {
+    /// Detect at all (index + engine). Off = every file is "not judged".
+    pub enabled: bool,
+    pub rrn: bool,
+    pub account: bool,
+    pub name_phone: bool,
+    pub name_email: bool,
+    pub min_rrn: u32,
+    pub min_account: u32,
+    pub min_name_phone: u32,
+    pub min_name_email: u32,
+    /// Regexes; a found value (as written, or its digits only) matching
+    /// one of them is not counted (test numbers, the company's own
+    /// account, …).
+    pub exclude: Vec<String>,
+    /// Ask the AI (when on) to confirm a regex hit. Off by default; an AI
+    /// failure keeps the regex verdict.
+    pub ai_check: bool,
+}
+
+impl Default for PiiCfg {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            rrn: true,
+            account: true,
+            name_phone: true,
+            name_email: true,
+            min_rrn: 1,
+            min_account: 1,
+            min_name_phone: 1,
+            min_name_email: 1,
+            exclude: vec!["^010-?0000-?0000$".into()],
+            ai_check: false,
+        }
+    }
+}
+
+/// The `[security]` fields the desktop settings screen edits.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityPatch {
+    pub mode: SecurityMode,
+    pub vault_dir: Option<PathBuf>,
+    pub approval: Approval,
+    pub pii: PiiCfg,
+}
+
+/// Apply `patch` to `[security]` / `[security.pii]` of the config at `path`,
+/// keeping everything else as is. Never writes a password.
+pub fn write_security_settings(path: &Path, patch: &SecurityPatch) -> Result<(), ConfigError> {
+    use toml_edit::{value, Array, DocumentMut, Item, Table};
+
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(source) => {
+            return Err(ConfigError::Read {
+                path: path.to_path_buf(),
+                source,
+            })
+        }
+    };
+    let mut doc: DocumentMut = text.parse().map_err(|e| ConfigError::Edit {
+        path: path.to_path_buf(),
+        source: Box::new(e),
+    })?;
+    let sec = doc
+        .entry("security")
+        .or_insert(Item::Table(Table::new()))
+        .as_table_mut()
+        .expect("[security] is a table");
+    sec.insert("mode", value(patch.mode.as_str()));
+    sec.insert("approval", value(patch.approval.as_str()));
+    match patch
+        .vault_dir
+        .as_ref()
+        .filter(|d| !d.as_os_str().is_empty())
+    {
+        Some(d) => {
+            sec.insert("vault_dir", value(d.to_string_lossy().into_owned()));
+        }
+        None => {
+            sec.remove("vault_dir");
+        }
+    }
+    let pii = sec
+        .entry("pii")
+        .or_insert(Item::Table(Table::new()))
+        .as_table_mut()
+        .expect("[security.pii] is a table");
+    let p = &patch.pii;
+    pii.insert("enabled", value(p.enabled));
+    for (k, on, min) in [
+        ("rrn", p.rrn, p.min_rrn),
+        ("account", p.account, p.min_account),
+        ("name_phone", p.name_phone, p.min_name_phone),
+        ("name_email", p.name_email, p.min_name_email),
+    ] {
+        pii.insert(k, value(on));
+        pii.insert(&format!("min_{k}"), value(i64::from(min.max(1))));
+    }
+    let mut ex = Array::new();
+    for e in p.exclude.iter().filter(|e| !e.trim().is_empty()) {
+        ex.push(e.as_str());
+    }
+    pii.insert("exclude", value(ex));
+    pii.insert("ai_check", value(p.ai_check));
+
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    std::fs::write(path, doc.to_string()).map_err(|source| ConfigError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
 impl Store {
     pub fn default_db_path() -> PathBuf {
         dirs::data_local_dir()
@@ -798,6 +1004,9 @@ impl Config {
             if let Some(r) = &w.organize_root {
                 w.organize_root = Some(expand_home(r));
             }
+        }
+        if let Some(v) = &cfg.security.vault_dir {
+            cfg.security.vault_dir = Some(expand_home(v));
         }
         for r in &mut cfg.index_only {
             r.path = expand_home(&r.path);
@@ -865,6 +1074,17 @@ impl Config {
                     w.path.display()
                 ));
             }
+        }
+        if self.security.mode == SecurityMode::Vault && self.security.collects().is_none() {
+            out.push(
+                "보안 폴더로 모으기가 켜져 있지만 보안 폴더(security.vault_dir)가 없습니다 — 규칙 옵션으로만 암호화합니다."
+                    .into(),
+            );
+        }
+        if let Err(e) = crate::pii::Detector::new(&self.security.pii) {
+            out.push(format!(
+                "개인정보 제외 패턴 오류: {e} (제외 패턴 없이 탐지)"
+            ));
         }
         out
     }

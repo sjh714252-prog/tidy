@@ -204,6 +204,62 @@ impl AiClassifier {
         })
     }
 
+    /// (M9) Ask whether a regex hit is really a personal-information file
+    /// (`security.pii.ai_check`). Sends the file name, what was found and
+    /// — only with `send_content` — an excerpt with every digit and mail
+    /// user name masked. Logged with purpose "pii".
+    pub fn confirm_pii(
+        &self,
+        store: &Store,
+        facts: &FileFacts,
+        finding: &crate::pii::PiiFinding,
+    ) -> Result<bool, AiError> {
+        if !self.health.is_available() && !self.health.probe_due() {
+            return Err(AiError::Paused(
+                self.health.last_error().unwrap_or_default(),
+            ));
+        }
+        let excerpt = (self.settings.send_content
+            && self.settings.content_chars > 0
+            && facts.size <= self.settings.max_content_bytes)
+            .then(|| self.extractors.extract(&facts.path))
+            .flatten()
+            .and_then(Result::ok)
+            .map(|t| {
+                prompts::mask_pii(
+                    &t.chars()
+                        .take(self.settings.content_chars)
+                        .collect::<String>(),
+                )
+            });
+        let user = prompts::pii_user(&facts.name, &finding.summary(), excerpt.as_deref());
+        let call = AiCall {
+            purpose: "pii",
+            system: prompts::PII_SYSTEM,
+            user: &user,
+            schema: &prompts::pii_schema(),
+            max_tokens: 512,
+            timeout: self.settings.timeout,
+        };
+        self.call(store, &call, |v| {
+            let personal = v
+                .get("personal")
+                .and_then(serde_json::Value::as_bool)
+                .ok_or_else(|| AiError::BadResponse("missing \"personal\"".into()))?;
+            Ok((
+                personal,
+                Some(
+                    if personal {
+                        "개인정보"
+                    } else {
+                        "개인정보 아님"
+                    }
+                    .into(),
+                ),
+            ))
+        })
+    }
+
     /// One tiny request to check model, key and network ("연결 테스트").
     /// Logged in `ai_log` with purpose "test". Returns the answering model.
     pub fn test_connection(&self, store: &Store) -> Result<String, AiError> {

@@ -13,10 +13,16 @@
 //!   place with the same logged hash (finishing that move),
 //! - `duplicate_policy = "replace"`, which sends the identical existing copy
 //!   to the OS trash (`trash` crate), never `remove_file`.
+//! - (M9) the original of an encrypt, after its zip was decrypted and
+//!   hash-verified; the zip of an undone encrypt, after the original was
+//!   restored and verified; our own unfinished zip when recovery keeps
+//!   the unchanged original; decrypted "open" copies under
+//!   `<temp>/tidy-open` (see `vault.rs`).
 
 mod recover;
 mod transfer;
 mod undo;
+mod vault;
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
@@ -30,12 +36,14 @@ use thiserror::Error;
 pub use recover::{RecoveryReport, DEFAULT_RECOVERY_GRACE};
 pub use transfer::{ProgressFn, TransferProgress};
 pub use undo::{UndoConflict, UndoReport};
+pub use vault::{open_dir, open_temp_copy, sweep_open_copies, zip_name_for};
 
 use transfer::{transfer, TransferOpts};
 
 use crate::config::DuplicatePolicy;
 use crate::paths::normalize_lexical;
-use crate::store::{DecidedBy, NewMove, Store, StoreError};
+use crate::security::VaultKeys;
+use crate::store::{DecidedBy, MoveOp, NewMove, Store, StoreError};
 
 /// Create an empty folder (and missing parents) for a rule destination
 /// picked in the folder tree ("새 폴더", SPEC §14.1). Kept here because
@@ -92,6 +100,9 @@ pub enum MoverError {
     InvalidName(String),
     #[error("could not send {path} to trash: {msg}")]
     Trash { path: PathBuf, msg: String },
+    /// (M9) No vault password, wrong password, not a Tidy zip.
+    #[error("{0}")]
+    Vault(String),
 }
 
 impl MoverError {
@@ -140,6 +151,9 @@ pub struct MoveRequest {
     /// name without separators; the original extension is kept when the
     /// new name has none.
     pub new_name: Option<String>,
+    /// (M9) Lock the file into `<dest_dir>/<name>.zip` (AES-256) instead
+    /// of moving it as is.
+    pub encrypt: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,11 +229,20 @@ impl Drop for InFlight {
     }
 }
 
+/// Where the mover gets vault passwords (M9).
+#[derive(Debug, Clone)]
+enum VaultSource {
+    /// Read the OS keychain each time (a changed password applies at once).
+    Keychain,
+    Fixed(VaultKeys),
+}
+
 pub struct Mover {
     store: Store,
     policy: DuplicatePolicy,
     expected: Arc<ExpectedMoves>,
     transfer: TransferOpts,
+    vault: VaultSource,
 }
 
 impl Mover {
@@ -229,6 +252,28 @@ impl Mover {
             policy,
             expected: ExpectedMoves::new(),
             transfer: TransferOpts::default(),
+            vault: VaultSource::Keychain,
+        }
+    }
+
+    /// Use these vault passwords instead of the keychain (tests, CLI with
+    /// an explicit password).
+    pub fn with_vault_keys(mut self, keys: VaultKeys) -> Self {
+        self.vault = VaultSource::Fixed(keys);
+        self
+    }
+
+    pub fn set_vault_keys(&mut self, keys: VaultKeys) {
+        self.vault = VaultSource::Fixed(keys);
+    }
+
+    /// Current + previous vault passwords.
+    pub fn vault_keys(&self) -> Result<VaultKeys, MoverError> {
+        match &self.vault {
+            VaultSource::Fixed(k) => Ok(k.clone()),
+            VaultSource::Keychain => {
+                VaultKeys::from_keychain().map_err(|e| MoverError::Vault(e.to_string()))
+            }
         }
     }
 
@@ -260,6 +305,9 @@ impl Mover {
 
     /// Move `req.src` into `req.dest_dir`, logging it in `move_log`.
     pub fn move_file(&self, req: &MoveRequest) -> Result<MoveOutcome, MoverError> {
+        if req.encrypt {
+            return self.encrypt_file(req);
+        }
         let src = &req.src;
         let meta = fs::symlink_metadata(src).map_err(MoverError::io("stat", src))?;
         if !meta.is_file() {
@@ -321,6 +369,7 @@ impl Mover {
             decided_by: req.decided_by,
             rule_name: req.rule_name.clone(),
             ai_confidence: req.ai_confidence,
+            op: MoveOp::Move,
         })?;
         self.expected.expect(src);
         self.expected.expect(&dst);
@@ -441,6 +490,7 @@ mod tests {
             rule_name: Some("test".into()),
             ai_confidence: None,
             new_name: None,
+            encrypt: false,
         }
     }
 

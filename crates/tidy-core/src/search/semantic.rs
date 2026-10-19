@@ -719,6 +719,7 @@ mod tests {
                 text_status: TextStatus::Ok,
                 excerpt: Some(body.chars().take(500).collect()),
                 content: Some(body.into()),
+                pii: None,
             },
             mtime,
         )

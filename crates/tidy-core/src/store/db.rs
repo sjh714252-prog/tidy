@@ -4,7 +4,9 @@ use std::time::Duration;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use thiserror::Error;
 
-use super::models::{DecidedBy, MoveLogEntry, NewMove, NewPending, PendingEntry, PendingSource};
+use super::models::{
+    DecidedBy, MoveLogEntry, MoveOp, NewMove, NewPending, PendingEntry, PendingSource,
+};
 
 /// Hint appended to SQLite disk I/O errors. SQLite needs real file locks,
 /// which SMB/NFS shares and some mounted folders do not provide, so a
@@ -244,6 +246,23 @@ CREATE TABLE file_vectors (
 CREATE INDEX idx_file_vectors_model ON file_vectors(model, id);
 CREATE INDEX idx_file_vectors_hash ON file_vectors(model, text_hash);
 "#,
+    // v7 (M9): personal-information verdicts and the encrypted vault.
+    // `files.pii_flags` NULL = not judged ("판정 불가"), 0 = clean, else
+    // bits of `pii::FLAG_*`; `pii_counts` is JSON. `files.vault` = the
+    // row's path is an encrypted zip whose text was indexed before it was
+    // locked. `move_log.op` = move | encrypt; `dst_hash` = hash of the
+    // zip an encrypt produced (`hash` stays the original's). Pending
+    // entries can carry an encrypt request and the finding for badges.
+    r#"
+ALTER TABLE files ADD COLUMN pii_flags INTEGER;
+ALTER TABLE files ADD COLUMN pii_counts TEXT;
+ALTER TABLE files ADD COLUMN vault INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX idx_files_pii ON files(pii_flags);
+ALTER TABLE move_log ADD COLUMN op TEXT NOT NULL DEFAULT 'move';
+ALTER TABLE move_log ADD COLUMN dst_hash TEXT;
+ALTER TABLE pending ADD COLUMN encrypt INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE pending ADD COLUMN pii TEXT;
+"#,
 ];
 
 pub struct Store {
@@ -366,8 +385,8 @@ impl Store {
     fn insert_move_state(&self, m: &NewMove, state: &str) -> Result<i64, StoreError> {
         self.conn.execute(
             "INSERT INTO move_log (batch_id, src_path, dst_path, hash, size, decided_by,
-                                   rule_name, ai_confidence, moved_at, state)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                                   rule_name, ai_confidence, moved_at, state, op)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 m.batch_id,
                 path_str(&m.src_path)?,
@@ -379,9 +398,20 @@ impl Store {
                 m.ai_confidence,
                 now(),
                 state,
+                m.op.as_str(),
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
+    }
+
+    /// (M9) Hash of the zip an encrypt produced (the row's `hash` is the
+    /// original file's).
+    pub(crate) fn set_dst_hash(&self, id: i64, hash: &str) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE move_log SET dst_hash = ?1 WHERE id = ?2",
+            params![hash, id],
+        )?;
+        Ok(())
     }
 
     /// Remove a log row whose move never happened (the mover writes the row
@@ -419,7 +449,7 @@ impl Store {
         Ok(self
             .conn
             .query_row(
-                "SELECT hash FROM move_log
+                "SELECT COALESCE(dst_hash, hash) FROM move_log
                  WHERE dst_path = ?1 AND undone_at IS NULL AND state = 'done'
                  ORDER BY id DESC LIMIT 1",
                 [path_str(dst)?],
@@ -427,6 +457,32 @@ impl Store {
             )
             .optional()?
             .flatten())
+    }
+
+    /// (M9) The active, finished move that put a file at `dst` (to unlock
+    /// a vault zip by its path).
+    pub fn active_move_to(&self, dst: &Path) -> Result<Option<MoveLogEntry>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                &format!(
+                    "{SELECT_MOVE} WHERE dst_path = ?1 AND undone_at IS NULL AND state = 'done'
+                     ORDER BY id DESC LIMIT 1"
+                ),
+                [path_str(dst)?],
+                move_from_row,
+            )
+            .optional()?)
+    }
+
+    /// (M9) Vault zips currently in effect (active encrypt moves).
+    pub fn active_encrypted(&self) -> Result<u64, StoreError> {
+        Ok(self.conn.query_row(
+            "SELECT COUNT(*) FROM move_log
+             WHERE op = 'encrypt' AND undone_at IS NULL AND state = 'done'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )? as u64)
     }
 
     pub(crate) fn mark_undone(&self, id: i64) -> Result<(), StoreError> {
@@ -533,20 +589,25 @@ impl Store {
             source: PendingSource::Rule,
             confidence: None,
             suggested_name: None,
+            encrypt: false,
+            pii: None,
         })
     }
 
     pub fn upsert_pending_entry(&self, p: &NewPending<'_>) -> Result<(), StoreError> {
         let dest = p.suggested_dest.map(path_str).transpose()?;
+        let pii = p.pii.map(|f| serde_json::to_string(f).unwrap_or_default());
         self.conn.execute(
             "INSERT INTO pending (path, suggested_dest, reason, source, confidence,
-                                  suggested_name, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                                  suggested_name, created_at, encrypt, pii)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(path) DO UPDATE SET suggested_dest = excluded.suggested_dest,
                                              reason = excluded.reason,
                                              source = excluded.source,
                                              confidence = excluded.confidence,
-                                             suggested_name = excluded.suggested_name",
+                                             suggested_name = excluded.suggested_name,
+                                             encrypt = excluded.encrypt,
+                                             pii = excluded.pii",
             params![
                 path_str(p.path)?,
                 dest,
@@ -554,7 +615,9 @@ impl Store {
                 p.source.as_str(),
                 p.confidence,
                 p.suggested_name,
-                now()
+                now(),
+                p.encrypt,
+                pii,
             ],
         )?;
         Ok(())
@@ -635,7 +698,7 @@ impl Store {
 }
 
 const SELECT_PENDING: &str = "SELECT id, path, suggested_dest, reason, created_at, source, \
-                              confidence, suggested_name FROM pending";
+                              confidence, suggested_name, encrypt, pii FROM pending";
 
 fn pending_from_row(r: &Row<'_>) -> rusqlite::Result<PendingEntry> {
     Ok(PendingEntry {
@@ -647,11 +710,16 @@ fn pending_from_row(r: &Row<'_>) -> rusqlite::Result<PendingEntry> {
         source: PendingSource::parse(&r.get::<_, String>(5)?),
         confidence: r.get(6)?,
         suggested_name: r.get(7)?,
+        encrypt: r.get::<_, i64>(8)? != 0,
+        pii: r
+            .get::<_, Option<String>>(9)?
+            .and_then(|j| serde_json::from_str(&j).ok()),
     })
 }
 
 const SELECT_MOVE: &str = "SELECT id, batch_id, src_path, dst_path, hash, size, decided_by, \
-                           rule_name, ai_confidence, moved_at, undone_at, state FROM move_log";
+                           rule_name, ai_confidence, moved_at, undone_at, state, op, \
+                           dst_hash FROM move_log";
 
 fn move_from_row(r: &Row<'_>) -> rusqlite::Result<MoveLogEntry> {
     let decided: String = r.get(6)?;
@@ -668,6 +736,8 @@ fn move_from_row(r: &Row<'_>) -> rusqlite::Result<MoveLogEntry> {
         moved_at: r.get(9)?,
         undone_at: r.get(10)?,
         in_progress: r.get::<_, String>(11)? == "moving",
+        op: MoveOp::parse(&r.get::<_, String>(12)?),
+        dst_hash: r.get(13)?,
     })
 }
 
@@ -696,6 +766,7 @@ mod tests {
             decided_by: DecidedBy::Rule,
             rule_name: Some("r".into()),
             ai_confidence: None,
+            op: MoveOp::Move,
         }
     }
 
