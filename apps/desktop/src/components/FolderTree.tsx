@@ -29,6 +29,12 @@ export function FolderTree({
   const [roots, setRoots] = useState<FsRoot[]>([]);
   const [nodes, setNodes] = useState<Record<string, NodeState>>({});
   const [error, setError] = useState<string | null>(null);
+  // The tree keeps its own selection (the parent may only want the result).
+  const [sel, setSel] = useState<string | null>(selected);
+  const pick = (p: string) => {
+    setSel(p);
+    onSelect(p);
+  };
 
   useEffect(() => {
     ipc.fsRoots().then(setRoots, (e) => setError(String(e)));
@@ -51,13 +57,13 @@ export function FolderTree({
   };
 
   const newFolder = async () => {
-    if (!selected) return;
+    if (!sel) return;
     const name = window.prompt("새 폴더 이름", "새 폴더")?.trim();
     if (!name) return;
     try {
-      const made = await ipc.makeDir(selected, name);
-      await load(selected);
-      onSelect(made);
+      const made = await ipc.makeDir(sel, name);
+      await load(sel);
+      pick(made);
     } catch (e) {
       setError(String(e));
     }
@@ -68,14 +74,14 @@ export function FolderTree({
     return (
       <li key={e.path}>
         <div
-          className={selected === e.path ? "tree-row sel" : "tree-row"}
+          className={sel === e.path ? "tree-row sel" : "tree-row"}
           style={{ paddingLeft: 6 + depth * 14 }}
           data-path={e.path}
         >
           <button className="twisty" onClick={() => toggle(e.path)} aria-label={st?.open ? "접기" : "펼치기"}>
             {st?.loading ? "…" : st?.open ? "▾" : "▸"}
           </button>
-          <button className="tree-name" onClick={() => onSelect(e.path)} title={e.path}>
+          <button className="tree-name" onClick={() => pick(e.path)} title={e.path}>
             📁 {label ?? e.name}
           </button>
         </div>
@@ -103,8 +109,8 @@ export function FolderTree({
     <div className="folder-tree">
       <ul>{all.map((r) => row({ name: r.label, path: r.path }, 0, r.label))}</ul>
       <div className="tree-actions">
-        <span className="muted small path">{selected ?? "폴더를 고르세요"}</span>
-        <button disabled={!selected} onClick={() => void newFolder()}>
+        <span className="muted small path">{sel ?? "폴더를 고르세요"}</span>
+        <button disabled={!sel} onClick={() => void newFolder()}>
           새 폴더
         </button>
       </div>

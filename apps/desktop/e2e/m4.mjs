@@ -17,6 +17,11 @@ const ok = (step, what, pass, note = "") => {
   console.log(`${pass ? "PASS" : "FAIL"} [${step}] ${what} ${note}`);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// M8: the rules TOML editor sits in the collapsed "고급" section.
+const openAdvanced = async (page) => {
+  const d = page.locator("details.advanced");
+  if (!(await d.evaluate((e) => e.open))) await d.locator("summary").click();
+};
 const bridge = async (cmd, args = {}) =>
   (await (await fetch(`http://127.0.0.1:1421/invoke/${cmd}`, { method: "POST", body: JSON.stringify(args) })).json()).value;
 
@@ -30,14 +35,16 @@ await sleep(1000);
 
 // A. watch folder + rules via settings (same as M3 step 3)
 {
-  await main.getByRole("button", { name: "설정" }).click();
+  await main.getByRole("button", { name: "설정", exact: true }).click();
   await sleep(600);
   process.env.PROMPT_ANSWER = DESK;
   await main.getByRole("button", { name: "폴더 추가…" }).click();
   await sleep(300);
+  await openAdvanced(main);
   const ta = main.locator("textarea.rules");
   await ta.fill(
     `[[rule]]\nname = "설치 확인"\nmatch = { ext = ["exe"] }\ndest = '${T}/설치 파일'\nconfirm = true\n\n` +
+      `[[rule]]\nname = "Tidy 테스트"\nmatch = { ext = ["txt"], name_regex = "^tidy-test" }\ndest = "~/Documents/Tidy/테스트 결과/{yyyy}/{mm}"\n\n` +
       (await ta.inputValue()),
   );
   await main.getByRole("button", { name: "저장", exact: true }).click();

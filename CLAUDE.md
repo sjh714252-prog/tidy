@@ -55,13 +55,15 @@ cargo run -p tidy-cli -- search "키워드"          # 임베딩 모델이 있�
 cargo run -p tidy-cli -- embed [--status | --rebuild | --limit N]   # 의미검색 벡터 (index가 끝나면 자동)
 cargo run -p tidy-cli -- ai status / ai key set tidy/anthropic / ai test <파일> / ai log
 cargo run -p tidy-cli -- learn [--accept N | --dismiss N]   # 학습 규칙 제안
+cargo run -p tidy-cli -- rules check [rules.toml] [--each]   # 규칙별 지금 매치되는 파일 수·예시 (이동 없음)
+cargo run -p tidy-cli -- rules starters [--toml documents,archives]   # 마법사 시작 규칙 목록 / TOML로 출력
 cargo run -p tidy-cli -- report [폴더] [--format text|json|html] [--scan-depth N]
 cargo run -p tidy-cli -- restructure [폴더] --rules|--ai  → --apply ID [--only 1,3]   # 승인 전엔 아무것도 안 옮김
 cargo run -p tidy-cli -- log --batches / undo --batch <id>
 cargo run -p tidy-cli -- recover [--grace-secs 0]        # 중단된 이동(복사 도중 종료·NAS 끊김) 정리
 cd apps/desktop && npm ci && npm run tauri dev   # 클라우드: npm run build + (src-tauri) cargo clippy 까지만
 cd apps/desktop && npx tauri build [--bundles deb,appimage]   # 설치 패키지 (docs/packaging.md), 태그 v*는 release.yml
-S=/tmp/tidy-e2e bash apps/desktop/e2e/run-headless.sh m7     # 헤드리스 GUI e2e (m3~m7)
+S=/tmp/tidy-e2e bash apps/desktop/e2e/run-headless.sh m8     # 헤드리스 GUI e2e (m3~m8)
 ```
 
 ## 진행 상태
@@ -73,6 +75,7 @@ S=/tmp/tidy-e2e bash apps/desktop/e2e/run-headless.sh m7     # 헤드리스 GUI 
 - [x] M5 Reporter + 재구성 diff (2026-10-15) — 리포트·규칙/AI 재구성(승인 후 한 배치 적용)·이동 기록
 - [x] M6 NAS 폴링/복사-검증 이동 (2026-10-15) — 끊김/복구·중단 복구·메타 인덱싱. 실제 NAS 확인은 로컬에서
 - [x] M7 의미검색 + 패키징 (2026-10-16) — 임베딩(OpenAI 호환/Ollama)·BLOB+int8 brute-force·RRF, AI 가용성, Linux Secret Service, 자동 시작, 설치 패키지(release.yml). 설치판 실행 확인은 Windows 로컬에서 (`docs/packaging.md`)
+- [x] M8 첫 실행 마법사 + 시각 규칙 편집기 + 폴더별 정리 방식 (2026-10-19) — onboarded 플래그로 첫 실행 판정(마법사 전 무이동), in_place/collect·{root}, 규칙 카드↔TOML 라운드트립, 폴더 트리, AI 규칙 초안. 트레이·실제 창 확인은 Windows 로컬에서
 
 ## 열린 결정
 SPEC §13 참조. 결정되면 여기와 SPEC 양쪽 갱신.
