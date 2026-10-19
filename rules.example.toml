@@ -10,6 +10,8 @@
 #     newer_than_days = 7                  최근 N일 안에 수정한 파일
 #     from_dir        = "~/Downloads"      이 폴더 바로 안에 있는 파일만
 #     source_app                           아직 미지원(SPEC §13) — 쓰면 그 규칙은 매치되지 않음
+# - encrypt = "pii"     (M9) 본문·이름에 개인정보가 있으면 목적지에 암호화 zip으로 보관
+#   encrypt = "always"  (M9) 항상 암호화. 생략하면 암호화하지 않음. 승인 방식은 config의 [security]
 # - dest 변수: {yyyy} {mm} {dd}(파일 수정 날짜), {ext}, {stem}(확장자 뺀 이름),
 #   {source_dir_name}(원래 있던 폴더 이름), {root}(기준 폴더). "~"는 홈 폴더.
 #   상대 경로("문서/{yyyy}-{mm}")와 {root}는 감시 폴더의 정리 방식을 따릅니다:
