@@ -16,11 +16,13 @@ use tidy_core::config::{
 use tidy_core::engine::{new_batch_id, reindex_undo};
 use tidy_core::index::IndexOptions;
 use tidy_core::pending::{resolve, Decision, Resolution};
-use tidy_core::search::{search as fts_search, MatchedIn, Query, SearchOptions};
+use tidy_core::search::{
+    hybrid_search, search as fts_search, MatchedIn, Query, SearchHit, SearchMode, SearchOptions,
+};
 use tidy_core::store::PendingSource;
 
 use crate::state::AppState;
-use crate::{tray, watch, windows};
+use crate::{autostart, semantic, tray, watch, windows};
 
 type CmdResult<T> = Result<T, String>;
 
@@ -73,10 +75,29 @@ pub struct StatusDto {
     pub ai_detail: Option<String>,
     /// Network watch folders that are unreachable right now (paused).
     pub offline: Vec<String>,
+    /// Semantic search: "off" | "ready" | "unavailable" (repeated failures).
+    pub semantic_state: &'static str,
+    /// Model when on, why not otherwise.
+    pub semantic_detail: Option<String>,
 }
 
 fn status(app: &AppHandle) -> StatusDto {
     let state = app.state::<AppState>();
+    let (semantic_state, semantic_detail) = {
+        let slot = state.semantic.lock().unwrap_or_else(|e| e.into_inner());
+        match &slot.handle {
+            Some(h) if h.sem.health().is_available() => ("ready", Some(h.sem.describe())),
+            Some(h) => (
+                "unavailable",
+                Some(format!(
+                    "{} — 연속 실패: {}",
+                    h.sem.describe(),
+                    h.sem.health().last_error().unwrap_or_default()
+                )),
+            ),
+            None => ("off", slot.off.clone()),
+        }
+    };
     let ai = state
         .ai_state
         .lock()
@@ -136,6 +157,8 @@ fn status(app: &AppHandle) -> StatusDto {
         } else {
             Vec::new()
         },
+        semantic_state,
+        semantic_detail,
     }
 }
 
@@ -183,12 +206,47 @@ pub struct HitDto {
     pub ext: Option<String>,
     pub size: u64,
     pub mtime: i64,
-    /// name | content | both | filter
+    /// name | content | both | filter | semantic
     pub matched_in: &'static str,
     pub name_highlight: String,
     pub snippet: String,
     pub text_status: &'static str,
     pub exists: bool,
+    /// Cosine similarity to the query (semantic search only).
+    pub similarity: Option<f32>,
+}
+
+fn hit_dto(h: SearchHit) -> HitDto {
+    let (name, dir) = name_and_dir(&h.file.path);
+    HitDto {
+        exists: h.file.path.exists(),
+        path: s(&h.file.path),
+        name,
+        dir,
+        ext: h.file.ext,
+        size: h.file.size,
+        mtime: h.file.mtime,
+        matched_in: match h.matched_in {
+            MatchedIn::Name => "name",
+            MatchedIn::Content => "content",
+            MatchedIn::Both => "both",
+            MatchedIn::Filter => "filter",
+            MatchedIn::Semantic => "semantic",
+        },
+        name_highlight: h.name_highlight,
+        snippet: h.snippet,
+        text_status: h.file.text_status.as_str(),
+        similarity: h.similarity,
+    }
+}
+
+fn search_opts(limit: Option<u32>) -> SearchOptions {
+    SearchOptions {
+        limit: limit.unwrap_or(50) as usize,
+        mark_start: MARK_START.into(),
+        mark_end: MARK_END.into(),
+        snippet_tokens: 24,
+    }
 }
 
 #[tauri::command]
@@ -201,37 +259,112 @@ pub async fn search(app: AppHandle, query: String, limit: Option<u32>) -> CmdRes
         let state = app.state::<AppState>();
         let inner = state.lock_inner();
         let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
-        let opts = SearchOptions {
-            limit: limit.unwrap_or(50) as usize,
-            mark_start: MARK_START.into(),
-            mark_end: MARK_END.into(),
-            snippet_tokens: 24,
+        let hits = fts_search(mover.store(), &q, &search_opts(limit)).map_err(|e| e.to_string())?;
+        Ok(hits.into_iter().map(hit_dto).collect())
+    })
+    .await
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResultDto {
+    pub hits: Vec<HitDto>,
+    /// "fts" (words only) | "hybrid" (words + meaning)
+    pub mode: &'static str,
+    /// The query read like a sentence/question.
+    pub natural: bool,
+    /// Why meaning did not take part, when it didn't.
+    pub note: Option<String>,
+}
+
+/// Words + meaning (SPEC §5.6). Without an embedding model, or when it
+/// fails or is slow, this is the plain word search with a note — never an
+/// error because of the AI (CLAUDE.md rule 4).
+#[tauri::command]
+pub async fn search_semantic(
+    app: AppHandle,
+    query: String,
+    limit: Option<u32>,
+) -> CmdResult<SearchResultDto> {
+    blocking(move || {
+        let q = Query::parse(&query);
+        if q.is_empty() {
+            return Ok(SearchResultDto {
+                hits: Vec::new(),
+                mode: "fts",
+                natural: false,
+                note: None,
+            });
+        }
+        let opts = search_opts(limit);
+        let out = match semantic::handle(&app) {
+            Some(h) => {
+                let store = h.store.lock().unwrap_or_else(|e| e.into_inner());
+                let out =
+                    hybrid_search(&store, Some(&h.sem), &q, &opts).map_err(|e| e.to_string())?;
+                semantic::notify_health(&app, &h);
+                out
+            }
+            None => {
+                let state = app.state::<AppState>();
+                let inner = state.lock_inner();
+                let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+                let mut out =
+                    hybrid_search(mover.store(), None, &q, &opts).map_err(|e| e.to_string())?;
+                out.note = state
+                    .semantic
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .off
+                    .clone()
+                    .map(|why| format!("의미검색 꺼짐 — 단어 검색만: {why}"));
+                out
+            }
         };
-        let hits = fts_search(mover.store(), &q, &opts).map_err(|e| e.to_string())?;
-        Ok(hits
-            .into_iter()
-            .map(|h| {
-                let (name, dir) = name_and_dir(&h.file.path);
-                HitDto {
-                    exists: h.file.path.exists(),
-                    path: s(&h.file.path),
-                    name,
-                    dir,
-                    ext: h.file.ext,
-                    size: h.file.size,
-                    mtime: h.file.mtime,
-                    matched_in: match h.matched_in {
-                        MatchedIn::Name => "name",
-                        MatchedIn::Content => "content",
-                        MatchedIn::Both => "both",
-                        MatchedIn::Filter => "filter",
-                    },
-                    name_highlight: h.name_highlight,
-                    snippet: h.snippet,
-                    text_status: h.file.text_status.as_str(),
-                }
-            })
-            .collect())
+        Ok(SearchResultDto {
+            mode: match out.mode {
+                SearchMode::Fts => "fts",
+                SearchMode::Hybrid => "hybrid",
+            },
+            natural: out.natural,
+            note: out.note,
+            hits: out.hits.into_iter().map(hit_dto).collect(),
+        })
+    })
+    .await
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticStatusDto {
+    /// "off" | "ready" | "unavailable"
+    pub state: &'static str,
+    pub detail: Option<String>,
+    /// Files with a current vector / indexed files.
+    pub embedded: u64,
+    pub files: u64,
+}
+
+#[tauri::command]
+pub async fn semantic_status(app: AppHandle) -> CmdResult<SemanticStatusDto> {
+    blocking(move || {
+        let st = status(&app);
+        let (embedded, files) = match semantic::handle(&app) {
+            Some(h) => {
+                let store = h.store.lock().unwrap_or_else(|e| e.into_inner());
+                let v = store
+                    .vector_stats(h.sem.model_key())
+                    .map_err(|e| e.to_string())?;
+                (v.embedded, v.files)
+            }
+            None => (0, st.files_indexed),
+        };
+        Ok(SemanticStatusDto {
+            state: st.semantic_state,
+            detail: st.semantic_detail,
+            embedded,
+            files,
+        })
     })
     .await
 }
@@ -528,6 +661,8 @@ pub struct SettingsDto {
     pub db_path_default: String,
     pub quiet_mode: bool,
     pub hotkey: String,
+    /// `general.start_on_login` and the OS login item state.
+    pub autostart: autostart::AutostartDto,
 }
 
 /// Shown in the rules editor when there is no rules.toml yet (not saved
@@ -571,6 +706,7 @@ pub async fn get_settings(app: AppHandle) -> CmdResult<SettingsDto> {
             db_path_default: s(&tidy_core::config::Store::default_db_path()),
             quiet_mode: cfg.general.quiet_mode,
             hotkey: cfg.general.hotkey.clone(),
+            autostart: autostart::state(&app, cfg.general.start_on_login),
         })
     })
     .await
@@ -608,6 +744,12 @@ pub struct SaveSettingsArgs {
     pub quiet_mode: bool,
     pub hotkey: String,
     pub rules_text: String,
+    #[serde(default = "default_true")]
+    pub start_on_login: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Validate, write config.toml (comments kept) and rules.toml, then reload:
@@ -662,6 +804,7 @@ pub async fn save_settings(app: AppHandle, args: SaveSettingsArgs) -> CmdResult<
                 .map(PathBuf::from),
             quiet_mode: args.quiet_mode,
             hotkey: hotkey.clone(),
+            start_on_login: args.start_on_login,
         };
         write_settings(&state.config_path, &patch).map_err(|e| e.to_string())?;
         // Rules path comes from the (re)loaded config.
@@ -672,9 +815,14 @@ pub async fn save_settings(app: AppHandle, args: SaveSettingsArgs) -> CmdResult<
         if state.lock_inner().hotkey.as_deref() != Some(hotkey.as_str()) {
             windows::register_hotkey(&app, &hotkey);
         }
+        let auto = autostart::sync(&app, args.start_on_login);
+        if let Some(e) = auto.error {
+            state.set_error(e);
+        }
         watch::restart(&app);
         watch::spawn_index(&app);
         watch::pending_changed(&app, false);
+        semantic::restart_embed(&app);
         Ok(status(&app))
     })
     .await
@@ -702,10 +850,29 @@ pub struct AiSettingsDto {
     /// (the key itself never leaves the backend).
     #[serde(default)]
     pub key_stored: bool,
+    /// Embedding model (semantic search): "openai" | "ollama" | "" (none).
+    #[serde(default)]
+    pub embed_provider: String,
+    #[serde(default)]
+    pub embed_model: String,
+    #[serde(default)]
+    pub embed_base_url: String,
+    #[serde(default)]
+    pub embed_key_ref: String,
+    #[serde(default)]
+    pub embed_key_stored: bool,
+    /// Where keys go on this machine (e.g. "Secret Service(GNOME 키링/KWallet)").
+    #[serde(default)]
+    pub key_store: String,
 }
 
 fn ai_settings(cfg: &tidy_core::Config) -> AiSettingsDto {
     let pc = cfg.ai.active().and_then(|p| p.classify.clone());
+    let ec = cfg.ai.active().and_then(|p| p.embed.clone());
+    let embed_key_ref = ec
+        .as_ref()
+        .and_then(|p| p.key_ref.clone())
+        .unwrap_or_default();
     let key_ref = pc
         .as_ref()
         .and_then(|p| p.key_ref.clone())
@@ -728,6 +895,18 @@ fn ai_settings(cfg: &tidy_core::Config) -> AiSettingsDto {
         effort: pc.and_then(|p| p.effort).unwrap_or_default(),
         auto_threshold: cfg.ai.auto_threshold,
         send_content: cfg.ai.send_content,
+        embed_provider: ec
+            .as_ref()
+            .map(|p| p.provider.as_str().to_string())
+            .unwrap_or_default(),
+        embed_model: ec.as_ref().map(|p| p.model.clone()).unwrap_or_default(),
+        embed_base_url: ec
+            .as_ref()
+            .and_then(|p| p.base_url.clone())
+            .unwrap_or_default(),
+        embed_key_stored: !embed_key_ref.is_empty() && tidy_core::ai::keys::has_key(&embed_key_ref),
+        embed_key_ref,
+        key_store: tidy_core::ai::keys::store_name().to_string(),
     }
 }
 
@@ -742,6 +921,7 @@ pub async fn save_ai_settings(
     app: AppHandle,
     settings: AiSettingsDto,
     api_key: Option<String>,
+    embed_api_key: Option<String>,
 ) -> CmdResult<AiSettingsDto> {
     blocking(move || {
         let provider = match settings.provider.as_str() {
@@ -772,11 +952,47 @@ pub async fn save_ai_settings(
             }
             None => None,
         };
-        if let (Some(key), Some(r)) = (
-            api_key.as_deref().filter(|k| !k.trim().is_empty()),
-            classify.as_ref().and_then(|c| c.key_ref.as_deref()),
-        ) {
-            tidy_core::ai::keys::set_key(r, key).map_err(|e| e.to_string())?;
+        let embed = match settings.embed_provider.as_str() {
+            "" => None,
+            "anthropic" => {
+                return Err(
+                    "Anthropic에는 임베딩 API가 없습니다 — OpenAI 호환 또는 Ollama를 고르세요"
+                        .into(),
+                )
+            }
+            p @ ("openai" | "ollama") => {
+                if settings.embed_model.trim().is_empty() {
+                    return Err("임베딩 모델 이름을 입력하세요".into());
+                }
+                let key_ref = settings.embed_key_ref.trim().to_string();
+                Some(ProviderConfig {
+                    provider: if p == "openai" {
+                        ProviderKind::Openai
+                    } else {
+                        ProviderKind::Ollama
+                    },
+                    model: settings.embed_model.trim().to_string(),
+                    key_ref: (!key_ref.is_empty()).then_some(key_ref),
+                    base_url: Some(settings.embed_base_url.trim().to_string())
+                        .filter(|u| !u.is_empty()),
+                    effort: None,
+                })
+            }
+            other => return Err(format!("알 수 없는 임베딩 제공자: {other}")),
+        };
+        for (key, r) in [
+            (
+                &api_key,
+                classify.as_ref().and_then(|c| c.key_ref.as_deref()),
+            ),
+            (
+                &embed_api_key,
+                embed.as_ref().and_then(|c| c.key_ref.as_deref()),
+            ),
+        ] {
+            if let (Some(key), Some(r)) = (key.as_deref().filter(|k| !k.trim().is_empty()), r) {
+                tidy_core::ai::keys::set_key(r, key).map_err(|e| e.to_string())?;
+            }
         }
         let profile = if settings.active_profile.trim().is_empty() {
             "default".to_string()
@@ -792,11 +1008,13 @@ pub async fn save_ai_settings(
                 auto_threshold: settings.auto_threshold.clamp(0.0, 1.0),
                 send_content: settings.send_content,
                 classify,
+                embed,
             },
         )
         .map_err(|e| e.to_string())?;
         state.reload();
         watch::restart(&app);
+        semantic::restart_embed(&app);
         Ok(ai_settings(&state.config()))
     })
     .await

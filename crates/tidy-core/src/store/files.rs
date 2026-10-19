@@ -178,6 +178,23 @@ impl Store {
             .optional()?)
     }
 
+    /// Rows for `ids` (missing ids are skipped), in no particular order.
+    pub fn get_files_by_ids(&self, ids: &[i64]) -> Result<Vec<FileRecord>, StoreError> {
+        let mut out = Vec::with_capacity(ids.len());
+        // Stay well under SQLite's bound-parameter limit.
+        for chunk in ids.chunks(500) {
+            let marks = vec!["?"; chunk.len()].join(", ");
+            let mut stmt = self
+                .conn()
+                .prepare(&format!("{SELECT_FILE} WHERE id IN ({marks})"))?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(chunk), file_from_row)?;
+            for r in rows {
+                out.push(r?);
+            }
+        }
+        Ok(out)
+    }
+
     /// Stored body text of a file (what the FTS index was built from).
     pub fn file_content(&self, id: i64) -> Result<Option<String>, StoreError> {
         Ok(self

@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{FileFacts, RuleSet};
 use crate::ai::{
-    build_provider, estimate_cost_usd, prompts, AiError, LlmProvider, LlmResponse, Usage,
+    build_provider, estimate_cost_usd, prompts, AiError, AiHealth, LlmProvider, LlmResponse, Usage,
 };
 use crate::config::{expand_home, Config};
 use crate::index::Extractors;
@@ -80,6 +80,7 @@ struct Settings {
 pub struct AiClassifier {
     provider: Arc<dyn LlmProvider>,
     settings: Settings,
+    health: AiHealth,
     extractors: Extractors,
     rt: tokio::runtime::Runtime,
 }
@@ -152,6 +153,7 @@ impl AiClassifier {
                 ai_auto_roots: rules.ai_auto_roots(),
             },
             extractors: Extractors::default_set(),
+            health: AiHealth::new(cfg.ai.unavailable_after),
             rt,
         })
     }
@@ -164,10 +166,22 @@ impl AiClassifier {
         self.provider.model()
     }
 
+    /// Consecutive-failure state (status bar "AI 사용 불가").
+    pub fn health(&self) -> &AiHealth {
+        &self.health
+    }
+
     /// Ask the model where `facts` belongs. Logged in `ai_log` either way.
     /// Must not be called from inside an async runtime (it blocks on its own
     /// small runtime); the watch loop and `spawn_blocking` threads are fine.
+    /// While the AI is unavailable (repeated failures) this fails at once
+    /// without a request, except when a retry is due.
     pub fn suggest(&self, store: &Store, facts: &FileFacts) -> Result<AiSuggestion, AiError> {
+        if !self.health.is_available() && !self.health.probe_due() {
+            return Err(AiError::Paused(
+                self.health.last_error().unwrap_or_default(),
+            ));
+        }
         let input = self.build_input(store, facts);
         let user = prompts::classify_user(&input);
         let call = AiCall {
@@ -228,6 +242,12 @@ impl AiClassifier {
             Ok(r) => (r.usage, r.model.clone()),
             Err(_) => (Usage::default(), self.provider.model().to_string()),
         };
+        // Only transport-level results count for availability: a refusal or
+        // an answer that fails validation still means the AI is reachable.
+        match &res {
+            Ok(_) | Err(AiError::Refusal) => self.health.record_success(),
+            Err(e) => self.health.record_failure(&e.to_string()),
+        }
         let outcome = res.and_then(|r| check(r.value));
         let log = AiLogEntry {
             provider: self.provider.name().to_string(),
@@ -507,6 +527,37 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("connection refused"));
+    }
+
+    #[test]
+    fn repeated_failures_pause_the_ai_until_it_answers_again() {
+        use crate::ai::AiAvailability;
+        let tmp = tempfile::tempdir().unwrap();
+        let ok = json!({"dest": tmp.path(), "confidence": 0.5, "reason": "r"});
+        let mock = Arc::new(MockProvider::sequence(vec![
+            Err("down".into()),
+            Err("down".into()),
+            Err("down".into()),
+            Ok(ok),
+        ]));
+        let mut cfg = Config::default();
+        cfg.ai.enabled = true;
+        cfg.ai.unavailable_after = 3;
+        let ai = AiClassifier::with_provider(mock.clone(), &cfg, &RuleSet::default()).unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let f = facts(tmp.path(), "a.txt", "x");
+        for _ in 0..3 {
+            assert!(ai.suggest(&store, &f).is_err());
+        }
+        assert_eq!(ai.health().take_change(), Some(AiAvailability::Unavailable));
+        // Paused: no request until a probe is due.
+        let e = ai.suggest(&store, &f).unwrap_err();
+        assert!(matches!(e, AiError::Paused(_)), "{e}");
+        assert_eq!(mock.prompts().len(), 3);
+        // An explicit probe (connection test) brings it back.
+        ai.test_connection(&store).unwrap();
+        assert_eq!(ai.health().take_change(), Some(AiAvailability::Ready));
+        assert!(ai.suggest(&store, &f).is_ok());
     }
 
     #[test]

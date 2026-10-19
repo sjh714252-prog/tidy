@@ -77,7 +77,10 @@ pub async fn build_report(app: AppHandle, path: String, duplicates: bool) -> Cmd
             top_n: cfg.report.top_n,
             stale_days: cfg.report.stale_days,
             duplicates: duplicates.then(report::DupOptions::default),
-            ..Default::default()
+            scan: report::ScanOptions {
+                max_depth: cfg.report.scan_depth,
+                ..Default::default()
+            },
         };
         let r = report::build(&expand(&path), &opts, store.as_ref()).map_err(err)?;
         Ok(ReportDto {

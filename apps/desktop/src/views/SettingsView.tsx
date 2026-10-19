@@ -180,6 +180,21 @@ export function SettingsView() {
           <input type="checkbox" checked={draft.quietMode} onChange={(e) => s.patch({ quietMode: e.target.checked })} />
           <span>조용 모드 — 확인 팝업을 띄우지 않고 대기열에만 쌓기</span>
         </label>
+        <label className="row">
+          <input
+            type="checkbox"
+            checked={draft.autostart.wanted}
+            onChange={(e) => s.patch({ autostart: { ...draft.autostart, wanted: e.target.checked } })}
+          />
+          <span>로그인 시 자동 시작 — 창 없이 트레이에서 감시</span>
+          <span className="muted small" data-testid="autostart-state">
+            {draft.autostart.registered == null
+              ? "(개발 빌드에서는 OS에 등록하지 않음)"
+              : draft.autostart.registered
+                ? "OS 시작 항목에 등록됨"
+                : "등록 안 됨"}
+          </span>
+        </label>
         <p className="muted small">설정 파일: {draft.configPath}</p>
       </section>
 

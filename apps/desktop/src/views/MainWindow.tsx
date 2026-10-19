@@ -113,6 +113,15 @@ function StatusBar() {
         {AI_LABEL[status.aiState]}
         {status.aiState === "ready" && status.aiDetail ? ` (${status.aiDetail})` : ""}
       </span>
+      {status.semanticState !== "off" && (
+        <span
+          className={status.semanticState === "unavailable" ? "warn" : "muted"}
+          title={status.semanticDetail ?? ""}
+          data-testid="semantic-state"
+        >
+          {status.semanticState === "ready" ? "의미검색 켜짐" : "의미검색 일시 중단 (단어 검색만)"}
+        </span>
+      )}
       {status.offline.length > 0 && (
         <span className="warn" title="연결이 돌아오면 자동으로 다시 감시합니다 (60초마다 확인)">
           연결 끊김(일시정지): {status.offline.join(" · ")}

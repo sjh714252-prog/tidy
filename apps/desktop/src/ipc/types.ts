@@ -21,9 +21,14 @@ export interface Status {
   aiDetail: string | null;
   /** Network watch folders unreachable right now (paused, retried every 60 s). */
   offline: string[];
+  /** Semantic search: off | ready | unavailable (repeated failures, words only). */
+  semanticState: "off" | "ready" | "unavailable";
+  /** Embedding model when on, the reason otherwise. */
+  semanticDetail: string | null;
 }
 
-export type MatchedIn = "name" | "content" | "both" | "filter";
+/** "semantic" = found by meaning only (no word matched). */
+export type MatchedIn = "name" | "content" | "both" | "filter" | "semantic";
 
 export interface SearchHit {
   path: string;
@@ -40,6 +45,36 @@ export interface SearchHit {
   snippet: string;
   textStatus: "none" | "ok" | "unsupported" | "failed" | "skipped";
   exists: boolean;
+  /** Cosine similarity to the query (0..1) when semantic search ranked it. */
+  similarity: number | null;
+}
+
+/** Words + meaning search (search_semantic). */
+export interface SearchResult {
+  hits: SearchHit[];
+  /** fts = words only; hybrid = words + meaning. */
+  mode: "fts" | "hybrid";
+  /** The query read like a question/sentence (meaning weighted up). */
+  natural: boolean;
+  /** Why meaning did not take part. */
+  note: string | null;
+}
+
+export interface SemanticStatus {
+  state: "off" | "ready" | "unavailable";
+  detail: string | null;
+  /** Files with a current vector / indexed files. */
+  embedded: number;
+  files: number;
+}
+
+/** Start at login (tray only). */
+export interface Autostart {
+  /** general.start_on_login */
+  wanted: boolean;
+  /** Registered with the OS now; null in dev builds (not applied). */
+  registered: boolean | null;
+  error: string | null;
 }
 
 /** Highlight markers used by the backend (Unicode private use area). */
@@ -116,6 +151,7 @@ export interface Settings {
   dbPathDefault: string;
   quietMode: boolean;
   hotkey: string;
+  autostart: Autostart;
 }
 
 export interface SaveSettingsArgs {
@@ -124,6 +160,7 @@ export interface SaveSettingsArgs {
   quietMode: boolean;
   hotkey: string;
   rulesText: string;
+  startOnLogin: boolean;
 }
 
 export interface RulesCheck {
@@ -170,6 +207,14 @@ export interface AiSettings {
   sendContent: boolean;
   /** A key is stored in the OS keychain under keyRef. */
   keyStored: boolean;
+  /** Embedding model for semantic search ("" = none; Anthropic has no embeddings). */
+  embedProvider: "" | "openai" | "ollama";
+  embedModel: string;
+  embedBaseUrl: string;
+  embedKeyRef: string;
+  embedKeyStored: boolean;
+  /** Where keys are stored on this machine. */
+  keyStore: string;
 }
 
 /** Learner rule suggestion (SPEC §5.2). */

@@ -173,6 +173,11 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "index_now" => ok(commands::index_now(app).await?),
         "show_window" => ok(commands::show_window(app, arg(&args, "which")?).await?),
         "search" => ok(commands::search(app, arg(&args, "query")?, arg(&args, "limit")?).await?),
+        // M7: semantic search.
+        "search_semantic" => {
+            ok(commands::search_semantic(app, arg(&args, "query")?, arg(&args, "limit")?).await?)
+        }
+        "semantic_status" => ok(commands::semantic_status(app).await?),
         "open_path" => ok(commands::open_path(app, arg(&args, "path")?).await?),
         "reveal_path" => ok(commands::reveal_path(app, arg(&args, "path")?).await?),
         "list_pending" => ok(commands::list_pending(app).await?),
@@ -198,12 +203,13 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "is_network_path" => ok(commands::is_network_path(arg(&args, "path")?).await?),
         // M4: AI settings and learner.
         "get_ai_settings" => ok(commands::get_ai_settings(app).await?),
-        "save_ai_settings" => {
-            ok(
-                commands::save_ai_settings(app, arg(&args, "settings")?, arg(&args, "apiKey")?)
-                    .await?,
-            )
-        }
+        "save_ai_settings" => ok(commands::save_ai_settings(
+            app,
+            arg(&args, "settings")?,
+            arg(&args, "apiKey")?,
+            arg(&args, "embedApiKey")?,
+        )
+        .await?),
         "delete_api_key" => ok(commands::delete_api_key(app, arg(&args, "keyRef")?).await?),
         "test_ai" => ok(commands::test_ai(app).await?),
         "list_learn" => ok(commands::list_learn(app).await?),
