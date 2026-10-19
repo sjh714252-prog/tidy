@@ -132,3 +132,20 @@ embed_chars = 1000       # 파일명 뒤에 붙여 임베딩하는 본문 글자
 protected = []           # 예: ['C:\Users\나\바탕 화면\진행 중']
 stale_days = 90          # 이 기간 동안 안 쓴 파일을 '오래 안 쓴 파일'로 표시
 # scan_depth = 3         # 아주 큰 폴더: 이 깊이까지만 스캔 (`tidy report --scan-depth N`이 우선)
+
+[security]
+# 개인정보 탐지 + 암호화 보관 (M9, SPEC §14.2). 비밀번호는 여기 쓰지 않습니다 — 설정 화면이나
+# `tidy vault password`로 정하면 OS 키체인(tidy/vault)에만 저장됩니다.
+mode = "rules"           # "rules": 규칙의 encrypt 옵션만 | "vault": 개인정보면 vault_dir로 먼저(암호화)
+# vault_dir = 'D:\정리\보안'
+approval = "confirm"     # "confirm": 확인 팝업에서 승인 | "auto": 묻지 않고 암호화 (비밀번호가 없으면 항상 확인)
+
+[security.pii]
+enabled = true
+rrn = true               # 주민등록번호 (검증 자릿수까지)
+account = true           # 계좌번호 (근처에 계좌·입금·예금주 또는 은행명)
+name_phone = true        # 같은 줄/행에 이름 + 휴대전화
+name_email = true        # 같은 줄/행에 이름 + 이메일
+# min_name_phone = 3     # 항목별 "이 건수 이상이면 개인정보" (기본 1)
+exclude = ["^010-?0000-?0000$"]   # 세지 않을 값(정규식): 테스트 번호, 회사 대표 계좌 …
+ai_check = false         # AI가 켜져 있으면 정규식 양성을 한 번 더 확인 (숫자·메일 아이디는 가려서 보냄)

@@ -27,6 +27,7 @@ import type {
   SaveSettingsArgs,
   SearchHit,
   SearchResult,
+  SecuritySettings,
   SemanticStatus,
   Settings,
   Status,
@@ -45,7 +46,15 @@ export const search = (query: string, limit = 50) =>
 export const searchSemantic = (query: string, limit = 50) =>
   invoke<SearchResult>("search_semantic", { query, limit });
 export const semanticStatus = () => invoke<SemanticStatus>("semantic_status");
-export const openPath = (path: string) => invoke<void>("open_path", { path });
+/** Opens with the default app. For a vault zip (M9) a temporary decrypted
+ * copy is opened instead and its path returned. */
+export const openPath = (path: string) => invoke<string | null>("open_path", { path });
+/** (M9) Decrypt a vault zip to a temporary copy without opening it. */
+export const vaultCopy = (path: string) => invoke<string>("vault_copy", { path });
+export const getSecuritySettings = () => invoke<SecuritySettings>("get_security_settings");
+/** The password goes to the OS keychain only; null = keep the current one. */
+export const saveSecuritySettings = (settings: SecuritySettings, password: string | null) =>
+  invoke<SecuritySettings>("save_security_settings", { settings, password });
 export const revealPath = (path: string) => invoke<void>("reveal_path", { path });
 
 export const listPending = () => invoke<PendingItem[]>("list_pending");

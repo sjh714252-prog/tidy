@@ -30,8 +30,10 @@ reqwest.workspace = true
 tokio.workspace = true
 async-trait.workspace = true
 keyring.workspace = true
+zeroize = "1"
 # M2 extractors (SPEC §5.5): pure-Rust, no external CLIs.
-zip = { version = "8", default-features = false, features = ["deflate"] }
+# M9 vault: ZIP + AES-256 (WinZip AE-2) via aes-crypto.
+zip = { version = "8", default-features = false, features = ["deflate", "aes-crypto"] }
 quick-xml = "0.41"
 calamine = { version = "0.36", features = ["dates"] }
 pdf-extract = "0.12"

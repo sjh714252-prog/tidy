@@ -76,6 +76,13 @@ enum Cmd {
     Report(ReportArgs),
     /// Propose a reorganisation (rules or AI), show the diff, apply on approval.
     Restructure(RestructureArgs),
+    /// (M9) Find personal information in a folder (reads only, moves nothing).
+    #[command(subcommand)]
+    Pii(PiiCmd),
+    /// (M9) Encrypted vault: lock a file into an AES-256 zip, unlock it,
+    /// show the state, set the password (OS keychain only).
+    #[command(subcommand)]
+    Vault(VaultCmd),
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -155,6 +162,40 @@ enum RulesCmd {
         #[arg(long, value_delimiter = ',')]
         toml: Vec<String>,
     },
+}
+
+#[derive(Subcommand)]
+enum PiiCmd {
+    /// Judge every file under FOLDER: 주민번호, 계좌번호, 이름+휴대전화,
+    /// 이름+이메일 ([security.pii] settings). Nothing is written.
+    Scan {
+        folder: PathBuf,
+        /// Only the folder itself, not its subfolders.
+        #[arg(long)]
+        no_recursive: bool,
+        /// Also list files without personal information.
+        #[arg(long)]
+        all: bool,
+        #[arg(short, long, value_enum, default_value_t = Format::Text)]
+        format: Format,
+    },
+}
+
+#[derive(Subcommand)]
+enum VaultCmd {
+    /// Lock FILE into `<name>.zip` (AES-256) in --to, the vault folder, or
+    /// next to it; logged and undoable like any move.
+    Lock {
+        file: PathBuf,
+        #[arg(long)]
+        to: Option<PathBuf>,
+    },
+    /// Decrypt a zip Tidy locked back to where the file came from (undo).
+    Unlock { zip: PathBuf },
+    /// Password, mode, vault folder, locked files, personal files in the index.
+    Status,
+    /// Set or change the vault password (old ones are kept for old zips).
+    Password,
 }
 
 #[derive(Subcommand)]
@@ -390,6 +431,8 @@ fn main() -> Result<()> {
         Cmd::Learn(args) => cmd_learn(cli.config, args),
         Cmd::Report(args) => cmd_report(cli.config, args),
         Cmd::Restructure(args) => cmd_restructure(cli.config, args),
+        Cmd::Pii(cmd) => cmd_pii(cli.config, cmd),
+        Cmd::Vault(cmd) => cmd_vault(cli.config, cmd),
     }
 }
 
@@ -706,9 +749,11 @@ fn report_action(res: &Result<Action, tidy_core::engine::EngineError>, path: &Pa
             rule,
             batch_id,
             confidence,
+            encrypted,
             ..
         }) => println!(
-            "moved     {} -> {}  [{}{}] batch {}",
+            "{} {} -> {}  [{}{}] batch {}",
+            if *encrypted { "locked   " } else { "moved    " },
             src.display(),
             dst.display(),
             rule,
@@ -721,25 +766,33 @@ fn report_action(res: &Result<Action, tidy_core::engine::EngineError>, path: &Pa
             suggested,
             confidence,
             reason,
+            encrypt,
+            pii,
             ..
         }) => println!(
-            "pending   {} (suggested {})  [{}{}] {}",
+            "pending   {} (suggested {}{})  [{}{}] {}{}",
             path.display(),
             suggested.display(),
+            if *encrypt { ", encrypt" } else { "" },
             rule,
             pct(*confidence),
-            reason.as_deref().unwrap_or("confirm=true")
+            reason.as_deref().unwrap_or("confirm"),
+            pii.as_ref()
+                .map(|f| format!("  개인정보: {}", f.summary()))
+                .unwrap_or_default()
         ),
         Ok(Action::WouldMove {
             path,
             rule,
             dest_dir,
             confirm,
+            encrypt,
         }) => println!(
-            "would {}  {} -> {}  [{}]",
+            "would {}  {} -> {}{}  [{}]",
             if *confirm { "ask " } else { "move" },
             path.display(),
             dest_dir.display(),
+            if *encrypt { " (encrypted .zip)" } else { "" },
             rule
         ),
         Ok(Action::Duplicate {
@@ -1630,6 +1683,9 @@ fn cmd_report(config: Option<PathBuf>, args: ReportArgs) -> Result<()> {
                 )
             );
             print_stats(&r.stats, r.stale_days);
+            if let Some(p) = &r.pii {
+                println!("🔒 {} (검색 인덱스 기준)", p.label());
+            }
             if !r.stats.stale.is_empty() {
                 println!("\n── Long unused (>{}d) ───────────────────", r.stale_days);
                 for f in &r.stats.stale {
@@ -1839,4 +1895,228 @@ fn cmd_restructure(config: Option<PathBuf>, args: RestructureArgs) -> Result<()>
         }
     );
     Ok(())
+}
+
+// ── M9: personal information + vault ───────────────────────────────────
+
+fn cmd_pii(config: Option<PathBuf>, cmd: PiiCmd) -> Result<()> {
+    let PiiCmd::Scan {
+        folder,
+        no_recursive,
+        all,
+        format,
+    } = cmd;
+    let cfg = load_config(config)?;
+    let detector = tidy_core::pii::Detector::lenient(&cfg.security.pii);
+    if !detector.enabled() {
+        bail!("[security.pii] enabled = false — 개인정보 탐지가 꺼져 있습니다");
+    }
+    let filter = tidy_core::watcher::IgnoreFilter::new(&cfg.classify.ignore_globs)?;
+    let max_bytes = cfg.index.max_content_size_mb * 1024 * 1024;
+    let mut rows = Vec::new();
+    let (mut pii, mut clean, mut unknown) = (0u64, 0u64, 0u64);
+    let walker = walkdir::WalkDir::new(&folder)
+        .min_depth(1)
+        .max_depth(if no_recursive { 1 } else { usize::MAX })
+        .into_iter()
+        .filter_entry(|e| {
+            let n = e.file_name().to_string_lossy();
+            !n.starts_with('.') && !n.contains(tidy_core::mover::TMP_MARKER)
+        });
+    for e in walker.filter_map(Result::ok) {
+        if !e.file_type().is_file() || filter.is_ignored(e.path()) {
+            continue;
+        }
+        let f = detector.judge_path(e.path(), max_bytes, cfg.index.max_text_chars);
+        match f.status {
+            tidy_core::pii::PiiStatus::Pii => pii += 1,
+            tidy_core::pii::PiiStatus::Clean => clean += 1,
+            tidy_core::pii::PiiStatus::Unknown => unknown += 1,
+        }
+        if all || f.is_pii() {
+            rows.push((e.path().to_path_buf(), f));
+        }
+    }
+    match format {
+        Format::Json => {
+            let items: Vec<_> = rows
+                .iter()
+                .map(|(p, f)| {
+                    serde_json::json!({
+                        "path": p, "status": f.status, "flags": f.flags,
+                        "counts": f.counts, "summary": f.summary(),
+                    })
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "personal": pii, "clean": clean, "unknown": unknown, "files": items,
+                }))?
+            );
+        }
+        _ => {
+            for (p, f) in &rows {
+                let tag = match f.status {
+                    tidy_core::pii::PiiStatus::Pii => "🔒 개인정보",
+                    tidy_core::pii::PiiStatus::Clean => "   없음    ",
+                    tidy_core::pii::PiiStatus::Unknown => "   판정 불가",
+                };
+                println!("{tag}  {}  {}", p.display(), f.summary());
+            }
+            println!(
+                "개인정보 의심 {pii}개 · 없음 {clean}개 · 판정 불가(본문 없음) {unknown}개 — 파일은 그대로입니다"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn read_password(prompt: &str) -> Result<String> {
+    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        Ok(rpassword::prompt_password(prompt)?)
+    } else {
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+        Ok(line.trim_end_matches(['\r', '\n']).to_string())
+    }
+}
+
+fn cmd_vault(config: Option<PathBuf>, cmd: VaultCmd) -> Result<()> {
+    use tidy_core::security;
+    let cfg = load_config(config)?;
+    match cmd {
+        VaultCmd::Password => {
+            let pw = read_password("새 보관 비밀번호: ")?;
+            if std::io::IsTerminal::is_terminal(&std::io::stdin())
+                && read_password("한 번 더: ")? != pw
+            {
+                bail!("두 비밀번호가 다릅니다");
+            }
+            security::set_vault_password(&pw)?;
+            let st = security::vault_key_status();
+            if !st.has_password {
+                bail!("the keychain did not keep the vault password");
+            }
+            println!(
+                "stored in {}: {} (이전 비밀번호 {}개 보관)",
+                st.store,
+                security::vault_key_ref(),
+                st.previous
+            );
+            Ok(())
+        }
+        VaultCmd::Status => {
+            let st = security::vault_key_status();
+            let s = &cfg.security;
+            println!(
+                "password: {}  (store: {}{})",
+                if st.has_password { "set" } else { "NOT SET" },
+                st.store,
+                if st.previous > 0 {
+                    format!(", 이전 비밀번호 {}개", st.previous)
+                } else {
+                    String::new()
+                }
+            );
+            if let Some(e) = st.error {
+                println!("keychain error: {e}");
+            }
+            println!(
+                "mode: {}   approval: {}   vault_dir: {}",
+                s.mode.as_str(),
+                s.approval.as_str(),
+                s.vault_dir
+                    .as_deref()
+                    .map(|d| d.display().to_string())
+                    .unwrap_or_else(|| "(없음)".into())
+            );
+            let mover = open_mover(&cfg)?;
+            let store = mover.store();
+            let (n, open) = store.pii_totals(None)?;
+            println!(
+                "locked zips: {}   개인정보 의심 파일(인덱스): {n}개 (미암호화 {open}개)",
+                store.active_encrypted()?
+            );
+            for w in cfg.warnings() {
+                println!("# warning: {w}");
+            }
+            Ok(())
+        }
+        VaultCmd::Lock { file, to } => {
+            let file = dunce::canonicalize(&file)
+                .with_context(|| format!("no such file: {}", file.display()))?;
+            let dest = to
+                .or_else(|| cfg.security.collects().map(Path::to_path_buf))
+                .or_else(|| file.parent().map(Path::to_path_buf))
+                .context("no destination folder")?;
+            let mover = open_mover(&cfg)?;
+            let opts = IndexOptions::from_config(&cfg);
+            tidy_core::engine::prepare_vault_index(mover.store(), &file, &opts);
+            let batch = new_batch_id();
+            let out = mover.move_file(&tidy_core::mover::MoveRequest {
+                src: file.clone(),
+                dest_dir: dest,
+                batch_id: batch.clone(),
+                decided_by: tidy_core::store::DecidedBy::User,
+                rule_name: Some("vault lock".into()),
+                ai_confidence: None,
+                new_name: None,
+                encrypt: true,
+            })?;
+            match out {
+                tidy_core::mover::MoveOutcome::Moved { log_id, src, dst } => {
+                    tidy_core::engine::reindex_for(
+                        mover.store(),
+                        &Action::Moved {
+                            src: src.clone(),
+                            dst: dst.clone(),
+                            rule: "vault lock".into(),
+                            batch_id: batch.clone(),
+                            log_id,
+                            by: tidy_core::store::DecidedBy::User,
+                            confidence: None,
+                            encrypted: true,
+                        },
+                        &opts,
+                    );
+                    println!(
+                        "locked    {} -> {}  batch {} (tidy undo --batch {} / tidy vault unlock)",
+                        src.display(),
+                        dst.display(),
+                        short(&batch),
+                        short(&batch)
+                    );
+                }
+                other => println!("{other:?}"),
+            }
+            Ok(())
+        }
+        VaultCmd::Unlock { zip } => {
+            let zip = dunce::canonicalize(&zip)
+                .with_context(|| format!("no such file: {}", zip.display()))?;
+            let mover = open_mover(&cfg)?;
+            let Some(e) = mover.store().active_move_to(&zip)? else {
+                bail!(
+                    "{}: Tidy가 잠근 기록이 없습니다 — 반디집·7-Zip 같은 AES 지원 압축 프로그램으로 여세요",
+                    zip.display()
+                );
+            };
+            if e.op != tidy_core::store::MoveOp::Encrypt {
+                bail!("{}: 암호화 기록이 아닙니다", zip.display());
+            }
+            let r = mover.undo_one(e.id)?;
+            reindex_undo(mover.store(), &r, &IndexOptions::from_config(&cfg));
+            for (from, to) in &r.restored {
+                println!("unlocked  {} -> {}", from.display(), to.display());
+            }
+            for c in &r.conflicts {
+                println!("conflict  {}: {}", c.dst_path.display(), c.reason);
+            }
+            if !r.conflicts.is_empty() {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+    }
 }

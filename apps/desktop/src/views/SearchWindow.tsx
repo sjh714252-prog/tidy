@@ -116,6 +116,16 @@ export function SearchWindow() {
                     의미 {h.similarity != null ? pct(h.similarity) : ""}
                   </span>
                 )}
+                {h.vault && (
+                  <span className="tag lock" data-testid="lock-badge" title="암호화 보관 파일 — 열면 임시 사본으로 풀어 엽니다">
+                    🔒
+                  </span>
+                )}
+                {!h.vault && h.pii && (
+                  <span className="tag warn" title={`개인정보: ${h.pii} — 암호화되지 않음`}>
+                    개인정보
+                  </span>
+                )}
                 {!h.exists && <span className="tag warn">없음</span>}
               </div>
               <div className="r-dir">{h.dir}</div>
@@ -132,6 +142,13 @@ export function SearchWindow() {
                 <Highlight text={current.nameHighlight} />
               </h3>
               <p className="muted">{current.path}</p>
+              {current.vault && (
+                <p className="small" data-testid="lock-note">
+                  🔒 암호화 보관 파일{current.pii ? ` · 개인정보: ${current.pii}` : ""}. 열기를 누르면 보관 비밀번호로 임시
+                  사본을 풀어 열고, 임시 사본은 잠시 뒤 지웁니다.
+                </p>
+              )}
+              {!current.vault && current.pii && <p className="warn small">개인정보: {current.pii} (암호화되지 않음)</p>}
               <p className="muted">
                 {formatSize(current.size)} · {formatTime(current.mtime)} · {MATCH_LABEL[current.matchedIn]}
                 {current.similarity != null && ` · 유사도 ${pct(current.similarity)}`}

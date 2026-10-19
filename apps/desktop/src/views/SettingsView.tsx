@@ -4,6 +4,8 @@ import { useSettings } from "../store/settings";
 import { useStatus } from "../store/status";
 import { AiSettingsSection } from "../components/AiSettingsSection";
 import { useAiSettings } from "../store/aiSettings";
+import { useSecurity } from "../store/security";
+import { SecuritySection } from "../components/SecuritySection";
 import { OrganizeModeField, anchorOf } from "../components/OrganizeMode";
 import { RuleCards } from "../components/RuleCards";
 
@@ -16,6 +18,7 @@ export function SettingsView() {
   const load = useSettings((st) => st.load);
   const refreshStatus = useStatus((st) => st.refresh);
   const ai = useAiSettings();
+  const sec = useSecurity();
   const { draft, rulesCheck, editor, cards } = s;
   const aiState = useStatus((st) => st.status?.aiState);
 
@@ -30,19 +33,24 @@ export function SettingsView() {
     if (dir) await s.addWatch(dir);
   };
   // One save for everything (issue #8): general settings first, then the AI
-  // section if it has unsaved edits (incl. a typed key). Each is independent;
-  // a failure in one is shown in its own section.
+  // and security sections if they have unsaved edits (incl. a typed key or
+  // vault password). Each is independent; a failure in one is shown in its
+  // own section.
   const save = async () => {
     await s.save();
     if (ai.dirty()) await ai.save();
+    if (sec.dirty()) await sec.save();
     await refreshStatus();
   };
+  const anyDirty = () => s.dirty() || ai.dirty() || sec.dirty();
   const revert = async () => {
-    if ((s.dirty() || ai.dirty()) && !window.confirm("저장하지 않은 변경을 버릴까요?")) return;
+    if (anyDirty() && !window.confirm("저장하지 않은 변경을 버릴까요?")) return;
     await s.load();
     await ai.load(true);
+    await sec.load(true);
   };
   const aiError = ai.error;
+  const secBlock = sec.dirty() ? sec.invalid() : null;
   const dbChanged = (s.loaded?.dbPathCustom ?? "") !== (draft.dbPathCustom ?? "");
 
   return (
@@ -213,6 +221,8 @@ export function SettingsView() {
 
       <AiSettingsSection />
 
+      <SecuritySection />
+
       <section>
         <h2>데이터베이스</h2>
         <label className="row">
@@ -262,18 +272,20 @@ export function SettingsView() {
       <footer className="savebar">
         {s.error && <span className="error">{s.error}</span>}
         {!s.error && aiError && <span className="error">AI: {aiError}</span>}
+        {!s.error && !aiError && sec.error && <span className="error">보안: {sec.error}</span>}
+        {!s.error && !aiError && !sec.error && secBlock && <span className="warn small">보안: {secBlock}</span>}
         {s.message && !s.error && <span className="ok">{s.message}</span>}
-        {!s.message && !s.error && (s.dirty() || ai.dirty()) && <span className="muted small">저장하지 않은 변경이 있습니다</span>}
+        {!s.message && !s.error && anyDirty() && <span className="muted small">저장하지 않은 변경이 있습니다</span>}
         <div className="spacer" />
-        <button onClick={() => void revert()} disabled={s.saving || ai.busy}>
+        <button onClick={() => void revert()} disabled={s.saving || ai.busy || sec.busy}>
           되돌리기
         </button>
         <button
           className="primary"
           onClick={() => void save()}
-          disabled={s.saving || ai.busy || (rulesCheck ? !rulesCheck.ok : false)}
+          disabled={s.saving || ai.busy || sec.busy || !!secBlock || (rulesCheck ? !rulesCheck.ok : false)}
         >
-          {s.saving || ai.busy ? "저장 중…" : "저장"}
+          {s.saving || ai.busy || sec.busy ? "저장 중…" : "저장"}
         </button>
       </footer>
     </div>

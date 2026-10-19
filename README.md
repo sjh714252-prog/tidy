@@ -149,3 +149,22 @@ cargo run -p tidy-cli -- report ~/Desktop --scan-depth 2        # 큰 폴더는 
 cargo run -p tidy-cli -- rules check                      # 규칙별로 지금 걸리는 파일 수·예시 (이동 없음)
 cargo run -p tidy-cli -- rules starters --toml documents  # 시작 규칙을 TOML로
 ```
+
+## 개인정보 탐지와 암호화 보관 (M9)
+
+인터넷 없이 본문·파일 이름에서 **주민등록번호, 계좌번호(근처에 '계좌·입금·예금주'나 은행명), 이름+휴대전화, 이름+이메일**(같은 줄·같은 행)을 찾습니다. 항목별 켜고 끄기·건수 기준·제외 패턴은 설정 → 보안(개인정보)에서 정합니다. 본문이 없는 파일(이미지 등)은 "판정 불가"입니다.
+
+- **보관 방식**: *규칙 안에서 암호화*(규칙 카드의 "🔒 개인정보면 암호화", `encrypt = "pii" | "always"`) 또는 *보안 폴더로 모으기*(개인정보 파일은 다른 규칙보다 먼저 `security.vault_dir`로).
+- **승인**: 기본은 확인 팝업(파일명·"개인정보: 주민번호 2 · 이름+휴대전화 15")에서 승인해야 진행. 자동으로 바꿀 수 있지만, 비밀번호를 정하기 전에는 언제나 묻습니다.
+- **형식**: 파일 1개 → `<이름>.zip` 1개(AES-256). 반디집·7-Zip·알집 또는 Tidy 검색의 "열기"로 엽니다(Windows 탐색기 기본 기능은 AES zip을 열지 못함).
+- **안전**: 원본 해시 → 임시 zip → 풀어서 해시 확인 → 제자리 → 그다음 원본 정리. 모두 이동 기록에 남고 **되돌리기**로 원래 자리에 풀립니다.
+- **비밀번호**: OS 키체인(`tidy/vault`)에만. 바꾸면 이전 비밀번호를 함께 보관해 예전 zip도 열립니다. 설정 파일·로그에는 남지 않습니다.
+- 암호화한 파일도 검색에 🔒로 나오고, 열면 임시 사본(`<temp>/tidy-open`, 10분 뒤 삭제)으로 엽니다. 리포트에는 "개인정보 의심 파일 N개(미암호화 M개)".
+
+```
+cargo run -p tidy-cli -- pii scan ~/Desktop [--all]          # 개인정보 의심 파일 목록 (읽기만)
+cargo run -p tidy-cli -- vault password                      # 보관 비밀번호 설정/변경
+cargo run -p tidy-cli -- vault lock <파일> [--to 폴더]        # 암호화해서 보관 (되돌리기 가능)
+cargo run -p tidy-cli -- vault unlock <zip>                  # 원래 자리로 풀기
+cargo run -p tidy-cli -- vault status
+```

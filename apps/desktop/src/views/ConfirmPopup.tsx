@@ -49,9 +49,19 @@ export function ConfirmPopup() {
         {item.size != null && <span className="muted"> · {formatSize(item.size)}</span>}
       </div>
       <div className="muted c-from">{item.dir}</div>
+      {item.pii && (
+        <div className="pii-badge" data-testid="pii-badge" title="본문·파일 이름에서 찾은 개인정보 (항목 · 건수)">
+          개인정보: {item.pii}
+        </div>
+      )}
       <div className="c-dest">
         <span className="muted">제안 위치</span>
         <div title={item.suggestedDest ?? ""}>{item.suggestedDest ?? "(제안 없음)"}</div>
+        {item.encrypt && (
+          <span className="tag lock" data-testid="encrypt-tag" title="승인하면 암호화 zip(AES-256)으로 만들어 이 위치에 두고, 확인한 뒤 원본을 정리합니다">
+            🔒 암호화해서 보관
+          </span>
+        )}
         {item.rule && <span className="tag">규칙: {item.rule}</span>}
         {item.source === "ai" && (
           <span className="tag ai" title="AI 제안 — 확신도가 자동 이동 기준보다 낮거나 자동 이동이 허용되지 않은 폴더">
@@ -92,7 +102,7 @@ export function ConfirmPopup() {
           disabled={busy || !item.suggestedDest}
           onClick={() => void resolve(item.id, { kind: "move", destDir: null })}
         >
-          이동
+          {item.encrypt ? "암호화해서 이동" : "이동"}
         </button>
         <button disabled={busy} onClick={() => void elsewhere()}>
           다른 곳…

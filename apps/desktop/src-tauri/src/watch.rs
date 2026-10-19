@@ -290,18 +290,26 @@ fn on_event(app: &AppHandle, ev: WatchEvent<'_>) {
                 dst,
                 rule,
                 confidence,
+                encrypted,
                 ..
             }) => emit_activity(
                 app,
                 "moved",
                 path,
-                format!("→ {} [{rule}{}]", dst.display(), pct(*confidence)),
+                format!(
+                    "{}→ {} [{rule}{}]",
+                    if *encrypted { "🔒 암호화 " } else { "" },
+                    dst.display(),
+                    pct(*confidence)
+                ),
             ),
             Ok(Action::Pending {
                 suggested,
                 rule,
                 confidence,
                 reason,
+                encrypt,
+                pii,
                 ..
             }) => {
                 emit_activity(
@@ -309,12 +317,17 @@ fn on_event(app: &AppHandle, ev: WatchEvent<'_>) {
                     "pending",
                     path,
                     format!(
-                        "확인 필요 → {} [{rule}{}]{}",
+                        "확인 필요{} → {} [{rule}{}]{}{}",
+                        if *encrypt { " (🔒 암호화)" } else { "" },
                         suggested.display(),
                         pct(*confidence),
                         reason
                             .as_deref()
                             .map(|r| format!(" {r}"))
+                            .unwrap_or_default(),
+                        pii.as_ref()
+                            .filter(|f| f.is_pii())
+                            .map(|f| format!(" · 개인정보: {}", f.summary()))
                             .unwrap_or_default()
                     ),
                 );

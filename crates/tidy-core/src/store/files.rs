@@ -92,7 +92,8 @@ impl Store {
         Ok(self
             .conn()
             .query_row(
-                "SELECT id, size, mtime, text_status FROM files WHERE path = ?1",
+                "SELECT id, size, mtime, text_status, vault, pii_flags IS NULL
+                 FROM files WHERE path = ?1",
                 [path_str(path)?],
                 |r| {
                     Ok(FileStamp {
@@ -100,6 +101,8 @@ impl Store {
                         size: r.get::<_, i64>(1)? as u64,
                         mtime: r.get(2)?,
                         text_none: r.get::<_, String>(3)? == "none",
+                        vault: r.get::<_, i64>(4)? != 0,
+                        pii_unjudged: r.get::<_, String>(3)? == "ok" && r.get::<_, bool>(5)?,
                     })
                 },
             )
@@ -119,15 +122,17 @@ impl Store {
     pub fn upsert_file(&self, f: &NewFile, seen_at: i64) -> Result<i64, StoreError> {
         self.conn().execute(
             "INSERT INTO files (path, root_id, name, ext, mime, size, mtime, ctime, hash,
-                                text_status, excerpt, content, indexed_at, last_seen_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)
+                                text_status, excerpt, content, indexed_at, last_seen_at,
+                                pii_flags, pii_counts, vault)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13, ?14, ?15, 0)
              ON CONFLICT(path) DO UPDATE SET
                 root_id = excluded.root_id, name = excluded.name, ext = excluded.ext,
                 mime = excluded.mime, size = excluded.size, mtime = excluded.mtime,
                 ctime = excluded.ctime, hash = excluded.hash,
                 text_status = excluded.text_status, excerpt = excluded.excerpt,
                 content = excluded.content, indexed_at = excluded.indexed_at,
-                last_seen_at = excluded.last_seen_at",
+                last_seen_at = excluded.last_seen_at, pii_flags = excluded.pii_flags,
+                pii_counts = excluded.pii_counts, vault = 0",
             params![
                 path_str(&f.path)?,
                 f.root_id,
@@ -142,6 +147,10 @@ impl Store {
                 f.excerpt,
                 f.content,
                 seen_at,
+                f.pii.and_then(|p| p.stored_flags()),
+                f.pii
+                    .filter(|p| !p.counts.is_empty())
+                    .map(|p| serde_json::to_string(&p.counts).unwrap_or_default()),
             ],
         )?;
         Ok(self.conn().query_row(
@@ -206,6 +215,117 @@ impl Store {
             .flatten())
     }
 
+    /// (M9) Store a verdict for an existing row.
+    pub fn set_file_pii(&self, id: i64, f: &crate::pii::PiiFinding) -> Result<(), StoreError> {
+        self.conn().execute(
+            "UPDATE files SET pii_flags = ?1, pii_counts = ?2 WHERE id = ?3",
+            params![
+                f.stored_flags(),
+                (!f.counts.is_empty())
+                    .then(|| serde_json::to_string(&f.counts).unwrap_or_default()),
+                id
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// (M9) A file was locked into `zip`: keep its row (text, FTS, vector)
+    /// and point it at the zip. `root_id` is the zip's root.
+    pub fn mark_vaulted(
+        &self,
+        from: &Path,
+        zip: &Path,
+        root_id: i64,
+        size: u64,
+        mtime: i64,
+        hash: Option<&str>,
+    ) -> Result<bool, StoreError> {
+        // A stale row at the zip's path (an earlier zip there) gives way.
+        self.conn()
+            .execute("DELETE FROM files WHERE path = ?1", [path_str(zip)?])?;
+        let name = zip
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        Ok(self.conn().execute(
+            "UPDATE files SET path = ?1, name = ?2, ext = 'zip', mime = 'application/zip',
+                              size = ?3, mtime = ?4, hash = ?5, root_id = ?6, vault = 1
+             WHERE path = ?7",
+            params![
+                path_str(zip)?,
+                name,
+                size as i64,
+                mtime,
+                hash,
+                root_id,
+                path_str(from)?
+            ],
+        )? > 0)
+    }
+
+    pub fn set_vault_flag(&self, path: &Path) -> Result<(), StoreError> {
+        self.conn().execute(
+            "UPDATE files SET vault = 1 WHERE path = ?1",
+            [path_str(path)?],
+        )?;
+        Ok(())
+    }
+
+    /// (M9) Personal-information counts over the index: (suspected files,
+    /// of which not encrypted). With `under`, only files below that folder.
+    pub fn pii_totals(&self, under: Option<&Path>) -> Result<(u64, u64), StoreError> {
+        let mut stmt = self
+            .conn()
+            .prepare("SELECT path, vault FROM files WHERE pii_flags > 0")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        let (mut n, mut open) = (0, 0);
+        for row in rows {
+            let (p, vault) = row?;
+            if under.is_some_and(|u| !Path::new(&p).starts_with(u)) {
+                continue;
+            }
+            n += 1;
+            if vault == 0 {
+                open += 1;
+            }
+        }
+        Ok((n, open))
+    }
+
+    /// (M9) Stored verdict for an indexed file whose size and mtime still
+    /// match (so it can be reused instead of extracting the text again).
+    pub fn fresh_pii(
+        &self,
+        path: &Path,
+        size: u64,
+        mtime: i64,
+    ) -> Result<Option<crate::pii::PiiFinding>, StoreError> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT pii_flags, pii_counts, text_status FROM files
+                 WHERE path = ?1 AND size = ?2 AND mtime = ?3 AND vault = 0",
+                params![path_str(path)?, size as i64, mtime],
+                |r| {
+                    Ok((
+                        r.get::<_, Option<u32>>(0)?,
+                        r.get::<_, Option<String>>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+            .and_then(|(flags, counts, status)| {
+                // Metadata-only rows were never read: no verdict to reuse.
+                (status != "none").then(|| {
+                    crate::pii::PiiFinding::from_stored(
+                        flags,
+                        counts.and_then(|c| serde_json::from_str(&c).ok()),
+                    )
+                })
+            }))
+    }
+
     pub fn index_stats(&self) -> Result<IndexStats, StoreError> {
         let roots: i64 = self
             .conn()
@@ -254,7 +374,7 @@ impl Store {
 
 pub(crate) const SELECT_FILE: &str =
     "SELECT id, path, root_id, name, ext, mime, size, mtime, hash, text_status, excerpt, \
-     indexed_at FROM files";
+     indexed_at, pii_flags, pii_counts, vault FROM files";
 
 pub(crate) fn file_from_row(r: &Row<'_>) -> rusqlite::Result<FileRecord> {
     let status: String = r.get(9)?;
@@ -271,6 +391,11 @@ pub(crate) fn file_from_row(r: &Row<'_>) -> rusqlite::Result<FileRecord> {
         text_status: TextStatus::parse(&status).unwrap_or(TextStatus::None),
         excerpt: r.get(10)?,
         indexed_at: r.get(11)?,
+        pii_flags: r.get(12)?,
+        pii_counts: r
+            .get::<_, Option<String>>(13)?
+            .and_then(|c| serde_json::from_str(&c).ok()),
+        vault: r.get::<_, i64>(14)? != 0,
     })
 }
 
@@ -298,6 +423,7 @@ mod tests {
             },
             excerpt: content.map(|c| c.chars().take(500).collect()),
             content: content.map(str::to_string),
+            pii: None,
         }
     }
 
@@ -320,6 +446,8 @@ mod tests {
                 size: 3,
                 mtime: 1_700_000_000,
                 text_none: false,
+                vault: false,
+                pii_unjudged: true,
             })
         );
         // Next run: a seen, b not → b pruned.

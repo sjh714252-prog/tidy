@@ -146,6 +146,7 @@ mod tests {
                 decided_by: DecidedBy::Restructure,
                 rule_name: Some("재구성 #1".into()),
                 ai_confidence: None,
+                op: crate::store::MoveOp::Move,
             })
             .unwrap();
         }

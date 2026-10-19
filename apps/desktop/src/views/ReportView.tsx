@@ -52,7 +52,13 @@ export function ReportView() {
             <Card label="맨 위 파일" value={rep.stats.root_level_files.toLocaleString()} />
             <Card label={`${rep.staleDays}일 넘게 안 쓴 파일`} value={rep.stats.stale_files.toLocaleString()} />
             <Card label="중복 낭비" value={formatSize(wasted)} />
+            {rep.pii && <Card label="개인정보 의심 (미암호화)" value={`${rep.piiSuspected} (${rep.piiUnencrypted})`} />}
           </div>
+          {rep.pii && (
+            <p className={rep.piiUnencrypted ? "warn small" : "muted small"} data-testid="report-pii">
+              🔒 {rep.pii} — 검색 인덱스 기준. 설정 → 보안(개인정보)에서 보관 방식을 정할 수 있습니다.
+            </p>
+          )}
 
           <div className="cols">
             <section>

@@ -11,7 +11,7 @@ mod vectors;
 pub use db::{Store, StoreError, NETWORK_PATH_HINT};
 pub use models::{
     AiLogEntry, DecidedBy, Decision, DecisionAction, FileRecord, FileStamp, IndexStats,
-    MoveLogEntry, NewFile, NewMove, NewPending, PendingEntry, PendingSource, TextStatus,
+    MoveLogEntry, MoveOp, NewFile, NewMove, NewPending, PendingEntry, PendingSource, TextStatus,
 };
 
 pub(crate) use db::now as now_unix;
