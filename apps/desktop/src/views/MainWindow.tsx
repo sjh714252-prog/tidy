@@ -7,6 +7,8 @@ import type { MainTab } from "../ipc/types";
 import { useActivity } from "../store/activity";
 import { usePending } from "../store/pending";
 import { useStatus } from "../store/status";
+import { useSettings } from "../store/settings";
+import { useAiSettings } from "../store/aiSettings";
 import { useReport } from "../store/report";
 import { ActivityView } from "./ActivityView";
 import { HistoryView } from "./HistoryView";
@@ -25,6 +27,15 @@ const TABS: { id: MainTab; label: string }[] = [
 /** Main window: status bar + tabs (활동 / 대기열 / 설정). Hidden to tray on close. */
 export function MainWindow() {
   const [tab, setTab] = useState<MainTab>("activity");
+  const settingsDirty = useSettings((s) => s.dirty);
+  const aiDirty = useAiSettings((s) => s.dirty);
+  // Leaving the settings tab with unsaved edits asks first (issue #8).
+  const switchTab = (next: MainTab) => {
+    if (tab === "settings" && next !== "settings" && (settingsDirty() || aiDirty())) {
+      if (!window.confirm("설정에 저장하지 않은 변경이 있습니다. 저장하지 않고 이동할까요?")) return;
+    }
+    setTab(next);
+  };
   const { status, refresh, setPaused } = useStatus();
   const refreshPending = usePending((s) => s.refresh);
   const push = useActivity((s) => s.push);
@@ -71,7 +82,7 @@ export function MainWindow() {
         <div className="brand">Tidy</div>
         <nav>
           {TABS.map((t) => (
-            <button key={t.id} className={tab === t.id ? "tab on" : "tab"} onClick={() => setTab(t.id)}>
+            <button key={t.id} className={tab === t.id ? "tab on" : "tab"} onClick={() => switchTab(t.id)}>
               {t.label}
               {t.id === "pending" && status?.pendingCount ? <span className="badge">{status.pendingCount}</span> : null}
             </button>
