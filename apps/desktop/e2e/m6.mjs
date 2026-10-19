@@ -56,7 +56,7 @@ const evStart = (await events(1e9)).next;
   await main.getByRole("button", { name: "폴더 추가…" }).click();
   await sleep(500);
   const row = main.locator(".settings tbody tr").first();
-  await row.locator("select").selectOption("network");
+  await row.locator("select").first().selectOption("network"); // kind (2nd select = M8 정리 방식)
   await sleep(300);
   const sub = main.locator(".settings tbody tr.subrow");
   ok("A", "네트워크 선택 → 폴링/시간대 하위 행 표시", (await sub.count()) === 1);
