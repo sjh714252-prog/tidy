@@ -138,3 +138,44 @@ textarea.protect { width: 100%; min-height: 60px; font-size: 12px; }
 .subrow label { margin-right: 16px; white-space: nowrap; }
 input.narrow { width: 110px; }
 .tag.warning { color: var(--warn); }
+
+/* ── M8: rule cards, folder tree, wizard ───────────────────────────── */
+.rule-cards { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-direction: column; gap: 8px; }
+.rule-card { border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.rule-card.dragging { opacity: 0.5; }
+.rule-card > header { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--bg2); border-bottom: 1px solid var(--line); border-radius: 8px 8px 0 0; }
+.rule-card .handle { cursor: grab; color: var(--muted); user-select: none; }
+.rule-card .rule-name { font-weight: 600; min-width: 160px; }
+.rule-card .match-count, .starter-list .match-count, .custom-rule .match-count { color: var(--accent); font-size: 12px; }
+.rule-body { display: grid; grid-template-columns: 1fr 1fr 0.7fr; gap: 8px; padding: 8px 10px; }
+.rule-body fieldset { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-width: 0; }
+.rule-body legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
+.rule-body .row { flex-wrap: wrap; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 4px 0; }
+.chip { background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 1px 4px 1px 8px; font-size: 12px; }
+.chip-btn { font-size: 11px; padding: 1px 6px; border-radius: 10px; }
+.input.dest, input.dest { min-width: 220px; }
+.folder-tree { border: 1px solid var(--line); border-radius: 6px; max-height: 260px; overflow: auto; margin-top: 6px; background: var(--bg); }
+.folder-tree ul { list-style: none; padding: 0; margin: 0; }
+.tree-row { display: flex; align-items: center; gap: 2px; }
+.tree-row.sel { background: var(--bg2); }
+.tree-row .twisty, .tree-row .tree-name { border: none; background: none; padding: 2px 4px; text-align: left; cursor: pointer; color: var(--fg); }
+.tree-actions { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-top: 1px solid var(--line); position: sticky; bottom: 0; background: var(--bg); }
+.tree-actions .path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+details.advanced { margin-top: 12px; }
+details.advanced summary { cursor: pointer; color: var(--muted); }
+.organize-mode { display: inline-flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.organize-root { min-width: 180px; }
+.wizard { display: flex; flex-direction: column; height: 100vh; }
+.wizard-head { padding: 12px 20px 4px; border-bottom: 1px solid var(--line); }
+.wizard-head h1 { margin: 0 0 6px; font-size: 20px; }
+.wizard .steps { display: flex; gap: 16px; list-style: none; padding: 0; margin: 0 0 4px; color: var(--muted); }
+.wizard .steps .on { color: var(--accent); font-weight: 600; }
+.wizard .steps .done { color: var(--ok); }
+.wizard-body { flex: 1; overflow: auto; padding: 12px 20px; }
+.wizard-foot { display: flex; gap: 8px; padding: 10px 20px; border-top: 1px solid var(--line); }
+.starter-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.starter-list li { display: flex; justify-content: space-between; gap: 12px; }
+.custom-rule input { min-width: 120px; }
+.summary-folder { margin-bottom: 12px; }
+@media (max-width: 900px) { .rule-body { grid-template-columns: 1fr; } }

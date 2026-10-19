@@ -19,6 +19,26 @@ pub fn show_main(app: &AppHandle, tab: &str) {
     }
 }
 
+/// First-run wizard (SPEC §14.1): its own window.
+pub fn show_wizard(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("wizard") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+        let _ = w.emit(EV_NAVIGATE, "wizard");
+    }
+}
+
+/// Tray left click / second launch: the wizard until setup is done, then
+/// the main window.
+pub fn show_start(app: &AppHandle) {
+    if app.state::<AppState>().config().onboarded() {
+        show_main(app, "activity");
+    } else {
+        show_wizard(app);
+    }
+}
+
 pub fn show_search(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("search") {
         let _ = w.center();

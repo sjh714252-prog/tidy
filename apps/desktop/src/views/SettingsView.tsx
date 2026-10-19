@@ -3,13 +3,19 @@ import * as ipc from "../ipc/commands";
 import { useSettings } from "../store/settings";
 import { useStatus } from "../store/status";
 import { AiSettingsSection } from "../components/AiSettingsSection";
+import { OrganizeModeField, anchorOf } from "../components/OrganizeMode";
+import { RuleCards } from "../components/RuleCards";
 
-/** Settings (SPEC §9.7, M3 subset): watch folders, rules (raw TOML), DB path, hotkey. */
+/**
+ * Settings (SPEC §9.7, §14.1): watch folders with their organize mode →
+ * rule cards (TOML under "고급", kept in sync both ways) → AI → DB → misc.
+ */
 export function SettingsView() {
   const s = useSettings();
   const load = useSettings((st) => st.load);
   const refreshStatus = useStatus((st) => st.refresh);
-  const { draft, rulesCheck } = s;
+  const { draft, rulesCheck, editor, cards } = s;
+  const aiState = useStatus((st) => st.status?.aiState);
 
   useEffect(() => {
     void load();
@@ -41,6 +47,7 @@ export function SettingsView() {
               <th>하위 폴더</th>
               <th>본문 인덱싱</th>
               <th>종류</th>
+              <th>정리 방식</th>
               <th />
             </tr>
           </thead>
@@ -79,6 +86,9 @@ export function SettingsView() {
                     </select>
                   </td>
                   <td>
+                    <OrganizeModeField w={w} onChange={(p) => s.setWatch(i, p)} />
+                  </td>
+                  <td>
                     <button className="link" onClick={() => s.removeWatch(i)}>
                       삭제
                     </button>
@@ -86,7 +96,7 @@ export function SettingsView() {
                 </tr>
                 {w.kind === "network" && (
                   <tr className="subrow">
-                    <td colSpan={5}>
+                    <td colSpan={6}>
                       <label>
                         폴링 간격(초){" "}
                         <input
@@ -131,24 +141,62 @@ export function SettingsView() {
         <button onClick={() => void addFolder()}>폴더 추가…</button>
       </section>
 
-      <section>
-        <h2>규칙 (rules.toml)</h2>
+      <section className="rules-section">
+        <h2>규칙</h2>
         <p className="muted small">
-          {draft.rulesPath}
-          {!draft.rulesExists && " — 아직 없음: 아래는 예시이며 저장하면 이 내용으로 만들어집니다."}
+          위에서부터 검사하고 처음 맞는 규칙 하나만 적용합니다. 목적지가 상대 경로면 각 감시 폴더의 정리 방식을
+          따릅니다(이 폴더 안 / 기준 폴더 아래). 저장하기 전에는 아무것도 바뀌지 않습니다.
+          {editor?.preview &&
+            ` 지금 감시 폴더의 파일 ${editor.preview.scanned}개 중 ${editor.preview.scanned - editor.preview.unmatched}개가 규칙에 걸립니다.`}
+          {editor?.preview?.skipped.length ? ` (네트워크 폴더는 세지 않음: ${editor.preview.skipped.join(", ")})` : ""}
         </p>
-        <textarea
-          className="rules"
-          spellCheck={false}
-          value={draft.rulesText}
-          onChange={(e) => s.setRules(e.target.value)}
-        />
+        {cards && (
+          <RuleCards
+            cards={cards}
+            preview={editor?.preview ?? null}
+            anchors={draft.watches.map(anchorOf)}
+            readOnly={!!editor && !editor.cards}
+            aiMarked={s.aiMarked}
+            onChange={s.setCards}
+          />
+        )}
+        {cards && !cards.length && <p className="muted">아직 규칙이 없습니다. 규칙을 추가하거나 마법사로 시작 규칙을 고르세요.</p>}
+        <div className="actions">
+          <button onClick={() => s.addCard()} disabled={!!editor && !editor.cards}>
+            + 규칙 추가
+          </button>
+          <button
+            disabled={aiState !== "ready" || s.drafting || (!!editor && !editor.cards)}
+            title={aiState === "ready" ? "감시 폴더의 파일 목록(이름·크기·날짜)을 보내 규칙 초안을 받습니다" : "AI를 켜면 쓸 수 있습니다"}
+            onClick={() => void s.aiDraft()}
+          >
+            {s.drafting ? "AI가 규칙을 만드는 중…" : "AI로 규칙 만들기"}
+          </button>
+        </div>
+        {s.draftNote && <p className="muted small">{s.draftNote}</p>}
         {rulesCheck &&
           (rulesCheck.ok ? (
             <p className="ok small">✓ 규칙 {rulesCheck.rules.length}개: {rulesCheck.rules.join(", ")}</p>
           ) : (
-            <p className="error small">✗ {rulesCheck.error}</p>
+            <p className="error small">
+              ✗ {rulesCheck.error}
+              {editor && !editor.cards && " — 고칠 때까지 카드는 읽기 전용입니다"}
+            </p>
           ))}
+        <details className="advanced">
+          <summary>고급: rules.toml 직접 편집</summary>
+          <p className="muted small">
+            {draft.rulesPath}
+            {!draft.rulesExists && " — 아직 없음: 저장하면 만들어집니다."} 여기서 고치면 카드에 바로 반영되고, 카드를
+            고치면 여기도 바뀝니다(주석·순서·카드에 없는 키는 그대로).
+          </p>
+          <textarea
+            className="rules"
+            spellCheck={false}
+            value={draft.rulesText}
+            onChange={(e) => s.setRules(e.target.value)}
+          />
+        </details>
       </section>
 
       <AiSettingsSection />
@@ -196,6 +244,7 @@ export function SettingsView() {
           </span>
         </label>
         <p className="muted small">설정 파일: {draft.configPath}</p>
+        <button onClick={() => void ipc.openWizard()}>마법사 다시 실행</button>
       </section>
 
       <footer className="savebar">

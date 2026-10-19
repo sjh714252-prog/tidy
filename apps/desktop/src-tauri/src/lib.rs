@@ -6,6 +6,7 @@ mod autostart;
 mod commands;
 #[cfg(debug_assertions)]
 mod devbridge;
+mod onboarding;
 mod report_cmds;
 mod semantic;
 mod state;
@@ -29,8 +30,6 @@ pub fn run() {
     let config_path = state::config_path_from_env();
     tracing::info!(config = %config_path.display(), "starting");
 
-    let first_run = !config_path.exists();
-
     tauri::Builder::default()
         // Register state before any window exists: Tauri 2 creates the
         // windows from tauri.conf.json *before* `setup` runs, so the webview
@@ -39,7 +38,7 @@ pub fn run() {
         .manage(AppState::new(config_path.clone()))
         // A second launch just brings the running instance forward.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            windows::show_main(app, "activity");
+            windows::show_start(app);
         }))
         .plugin(autostart::plugin())
         .plugin(tauri_plugin_opener::init())
@@ -60,6 +59,10 @@ pub fn run() {
             let hotkey = handle.state::<AppState>().config().general.hotkey;
             windows::register_hotkey(&handle, &hotkey);
             let cfg = handle.state::<AppState>().config();
+            // First run = setup not finished ([general] onboarded), not "no
+            // config file": an installer or another feature may have
+            // written one (SPEC §14.1).
+            let first_run = !cfg.onboarded();
             if !first_run {
                 // Keep the OS login item in line with the config (it may have
                 // been edited by hand, or the app moved).
@@ -75,8 +78,8 @@ pub fn run() {
             #[cfg(debug_assertions)]
             devbridge::start(&handle);
             if first_run {
-                // Nothing is watched until folders are configured.
-                windows::show_main(&handle, "settings");
+                // Nothing is watched (or moved) until the wizard is done.
+                windows::show_wizard(&handle);
             } else if autostart::launched_at_login() {
                 // Login start: tray only, never a window.
             } else if cfg!(debug_assertions) {
@@ -106,6 +109,16 @@ pub fn run() {
             commands::show_window,
             commands::search,
             commands::search_semantic,
+            onboarding::wizard_info,
+            onboarding::preview_rules,
+            onboarding::finish_onboarding,
+            onboarding::rules_editor,
+            onboarding::rules_from_cards,
+            onboarding::ai_rule_drafts,
+            onboarding::fs_roots,
+            onboarding::list_dirs,
+            onboarding::make_dir,
+            onboarding::open_wizard,
             commands::semantic_status,
             commands::open_path,
             commands::reveal_path,
