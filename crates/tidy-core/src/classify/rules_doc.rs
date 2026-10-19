@@ -289,11 +289,27 @@ pub fn apply_cards(text: &str, cards: &[RuleCard]) -> Result<String, RuleError> 
     };
     let orig = tables(&doc)?;
     let first_pos = orig.iter().filter_map(Table::position).min().unwrap_or(0);
-    let (header, first_own) = orig
-        .first()
-        .and_then(|t| t.decor().prefix().and_then(|p| p.as_str()))
-        .map(split_header)
-        .unwrap_or_default();
+    let (header, first_own) = match orig.first() {
+        Some(t) => t
+            .decor()
+            .prefix()
+            .and_then(|p| p.as_str())
+            .map(split_header)
+            .unwrap_or_default(),
+        // A file with only comments keeps them as the document's trailing
+        // text: they become the header in front of the first rule.
+        None => {
+            let t = doc.trailing().as_str().unwrap_or_default().to_string();
+            if !cards.is_empty() {
+                doc.set_trailing("");
+            }
+            let mut h = t;
+            if !h.is_empty() && !h.ends_with("\n\n") {
+                h.push('\n');
+            }
+            (h, String::new())
+        }
+    };
     let mut out = toml_edit::ArrayOfTables::new();
     for (k, c) in cards.iter().enumerate() {
         let mut t = match c.origin.and_then(|i| orig.get(i)) {
@@ -458,6 +474,25 @@ confirm = true
         let back = parse_cards(&out).unwrap();
         assert_eq!(back[0].newer_than_days, Some(7));
         assert_eq!(back[0].max_size, "2048");
+    }
+
+    #[test]
+    fn comment_only_file_keeps_its_header_on_top() {
+        let head = "# 설명\n# 둘째 줄\n\n";
+        let out = apply_cards(
+            head,
+            &[RuleCard {
+                name: "문서".into(),
+                ext: vec!["pdf".into()],
+                dest: "문서".into(),
+                ..Default::default()
+            }],
+        )
+        .unwrap();
+        assert!(out.starts_with("# 설명\n# 둘째 줄\n\n[[rule]]"), "{out}");
+        assert_eq!(out.matches("# 설명").count(), 1);
+        let more = append_cards("# 한 줄\n", &parse_cards(&out).unwrap()).unwrap();
+        assert!(more.starts_with("# 한 줄\n\n[[rule]]"), "{more}");
     }
 
     #[test]

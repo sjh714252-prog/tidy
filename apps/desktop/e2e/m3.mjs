@@ -14,6 +14,11 @@ const ok = (step, what, pass, note = "") => {
   console.log(`${pass ? "PASS" : "FAIL"} [${step}] ${what} ${note}`);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// M8: the rules TOML editor sits in the collapsed "고급" section.
+const openAdvanced = async (page) => {
+  const d = page.locator("details.advanced");
+  if (!(await d.evaluate((e) => e.open))) await d.locator("summary").click();
+};
 const bridge = async (cmd, args = {}) =>
   (await (await fetch(`http://127.0.0.1:1421/invoke/${cmd}`, { method: "POST", body: JSON.stringify(args) })).json()).value;
 
@@ -31,8 +36,9 @@ await sleep(1500);
   const settingsOn = await main.locator("button.tab.on").innerText();
   // The startup "navigate: settings" event predates this page (bridge replays
   // only events after connect), so the tab itself is checked in the real window.
-  ok(2, "첫 실행: 감시 폴더 없음 표시", bar.includes("감시 중인 폴더 없음"), `tab=${settingsOn} bar=${bar}`);
-  await main.getByRole("button", { name: "설정" }).click();
+  // M8: before setup the status bar says watching starts after the wizard.
+  ok(2, "첫 실행: 감시 전 (마법사 안내) 표시", bar.includes("마법사를 마치면"), `tab=${settingsOn} bar=${bar}`);
+  await main.getByRole("button", { name: "설정", exact: true }).click();
   await sleep(800);
   await main.screenshot({ path: `${SHOT}/02-first-run.png` });
 }
@@ -44,11 +50,15 @@ await sleep(1500);
   await sleep(300);
   const pathVal = await main.locator("input.wide").first().inputValue();
   ok(3, "폴더 추가 → 경로 행 생성", pathVal === DESK, pathVal);
+  await openAdvanced(main);
   const ta = main.locator("textarea.rules");
   const cur = await ta.inputValue();
   // Prepended: rules are first-match, and the example already has an exe rule.
   await ta.fill(
-    `[[rule]]\nname = "설치 확인"\nmatch = { ext = ["exe"] }\ndest = '${T}/설치 파일'\nconfirm = true\n\n` + cur,
+    // M8: no example rules are applied any more; the txt rule is explicit.
+    `[[rule]]\nname = "설치 확인"\nmatch = { ext = ["exe"] }\ndest = '${T}/설치 파일'\nconfirm = true\n\n` +
+      `[[rule]]\nname = "Tidy 테스트"\nmatch = { ext = ["txt"], name_regex = "^tidy-test" }\ndest = "~/Documents/Tidy/테스트 결과/{yyyy}/{mm}"\n\n` +
+      cur,
   );
   await sleep(800);
   const check = await main.locator(".settings .ok.small").innerText().catch(() => "");
@@ -137,7 +147,7 @@ let movedPath = null;
 
 // 7. quiet mode + queue bulk actions
 {
-  await main.getByRole("button", { name: "설정" }).click();
+  await main.getByRole("button", { name: "설정", exact: true }).click();
   await sleep(500);
   await main.locator("label.row", { hasText: "조용 모드" }).locator("input[type=checkbox]").check();
   await main.getByRole("button", { name: "저장", exact: true }).click();
@@ -196,16 +206,18 @@ let movedPath = null;
 
 // 11. comments preserved + bad hotkey
 {
-  await main.getByRole("button", { name: "설정" }).click();
+  await main.getByRole("button", { name: "설정", exact: true }).click();
   await sleep(500);
+  await openAdvanced(main);
   const ta = main.locator("textarea.rules");
   await ta.fill("# 내가 쓴 주석\n" + (await ta.inputValue()));
   await main.getByRole("button", { name: "저장", exact: true }).click();
   await sleep(2500);
   await main.reload();
   await main.waitForSelector(".topbar");
-  await main.getByRole("button", { name: "설정" }).click();
+  await main.getByRole("button", { name: "설정", exact: true }).click();
   await sleep(1000);
+  await openAdvanced(main);
   const after = await main.locator("textarea.rules").inputValue();
   ok(11, "주석 보존", after.startsWith("# 내가 쓴 주석"), after.split("\n")[0]);
   const cfg = fs.readFileSync(path.join(T, "config.toml"), "utf8");

@@ -45,7 +45,7 @@ await sleep(800);
 
 // A. watch the folder (no process-existing: files above stay put)
 {
-  await main.getByRole("button", { name: "설정" }).click();
+  await main.getByRole("button", { name: "설정", exact: true }).click();
   await sleep(500);
   process.env.PROMPT_ANSWER = DESK;
   await main.getByRole("button", { name: "폴더 추가…" }).click();

@@ -39,6 +39,11 @@ const ok = (step, what, pass, note = "") => {
   console.log(`${pass ? "PASS" : "FAIL"} [${step}] ${what} ${note}`);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// M8: the rules TOML editor sits in the collapsed "고급" section.
+const openAdvanced = async (page) => {
+  const d = page.locator("details.advanced");
+  if (!(await d.evaluate((e) => e.open))) await d.locator("summary").click();
+};
 const bridge = async (cmd, args = {}) =>
   (await (await fetch(`http://127.0.0.1:1421/invoke/${cmd}`, { method: "POST", body: JSON.stringify(args) })).json()).value;
 const waitFor = async (fn, ms, step = 1000) => {
@@ -83,6 +88,7 @@ await sleep(1000);
   process.env.PROMPT_ANSWER = DESK;
   await main.getByRole("button", { name: "폴더 추가…" }).click();
   await sleep(300);
+  await openAdvanced(main);
   await main.locator("textarea.rules").fill("# 규칙 없음 — 이 테스트는 파일을 옮기지 않는다\n");
   const auto = main.locator("label.row", { hasText: "로그인 시 자동 시작" });
   ok("A", "자동 시작 체크박스 (기본 켜짐)", await auto.locator("input[type=checkbox]").isChecked());
