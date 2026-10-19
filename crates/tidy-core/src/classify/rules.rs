@@ -65,6 +65,20 @@ struct RuleDef {
     ai_auto: bool,
     #[serde(default = "yes")]
     enabled: bool,
+    /// (M9) "never" (default) | "pii" | "always".
+    #[serde(default)]
+    encrypt: Encrypt,
+}
+
+/// (M9) When a rule locks the file into an encrypted zip (SPEC §14.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Encrypt {
+    #[default]
+    Never,
+    /// Only when the file is judged personal.
+    Pii,
+    Always,
 }
 
 fn yes() -> bool {
@@ -104,6 +118,7 @@ pub struct Rule {
     pub index: usize,
     pub confirm: bool,
     pub ai_auto: bool,
+    pub encrypt: Encrypt,
     ext: Option<Vec<String>>,
     name_regex: Option<Regex>,
     name_contains: Option<String>,
@@ -159,6 +174,7 @@ pub struct Classification {
     /// Folder the file should go into.
     pub dest_dir: PathBuf,
     pub confirm: bool,
+    pub encrypt: Encrypt,
 }
 
 impl FileFacts {
@@ -310,6 +326,7 @@ impl RuleSet {
                 rule_name: r.name.clone(),
                 dest_dir: r.render_dest_in(facts, anchor),
                 confirm: r.confirm,
+                encrypt: r.encrypt,
             })
     }
 }
@@ -354,6 +371,7 @@ impl Rule {
             index: 0,
             confirm: def.confirm,
             ai_auto: def.ai_auto,
+            encrypt: def.encrypt,
             ext: m.ext.map(|v| {
                 v.iter()
                     .map(|e| e.trim_start_matches('.').to_lowercase())

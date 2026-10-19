@@ -679,6 +679,7 @@ pub fn apply(
             rule_name: Some(label.clone()),
             ai_confidence: None,
             new_name: fm.new_name.clone(),
+            encrypt: false,
         };
         match mover.move_file(&req) {
             Ok(MoveOutcome::Moved { log_id, src, dst }) => {
@@ -693,6 +694,7 @@ pub fn apply(
                             log_id,
                             by: DecidedBy::Restructure,
                             confidence: None,
+                            encrypted: false,
                         },
                         opts,
                     );

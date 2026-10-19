@@ -57,6 +57,9 @@ pub struct IndexOptions {
     pub skip_hidden: bool,
     /// How many files per write transaction.
     pub batch_size: usize,
+    /// (M9) Judge personal information from the extracted text
+    /// (`[security.pii]`); `None` = no verdicts stored.
+    pub pii: Option<Arc<crate::pii::Detector>>,
 }
 
 impl Default for IndexOptions {
@@ -74,6 +77,7 @@ impl Default for IndexOptions {
             network_roots: Vec::new(),
             skip_hidden: true,
             batch_size: 500,
+            pii: None,
         }
     }
 }
@@ -94,6 +98,11 @@ impl IndexOptions {
                     canon: Arc::default(),
                 })
                 .collect(),
+            pii: cfg
+                .security
+                .pii
+                .enabled
+                .then(|| Arc::new(crate::pii::Detector::lenient(&cfg.security.pii))),
             ..Default::default()
         }
     }
@@ -357,6 +366,48 @@ impl<'a> Indexer<'a> {
         self.index_file(to, opts)
     }
 
+    /// (M9) Reflect an encryption: the row of `from` (indexed right before)
+    /// keeps its text, FTS entry and vector and now points at `zip`. If
+    /// there was no row, the zip is indexed by name only.
+    pub fn vaulted(
+        &self,
+        from: &Path,
+        zip: &Path,
+        opts: &IndexOptions,
+    ) -> Result<FileOutcome, IndexError> {
+        let zip = dunce::canonicalize(zip).unwrap_or_else(|_| zip.to_path_buf());
+        let opts = &*opts.for_file(&zip);
+        let meta = std::fs::metadata(&zip).map_err(|_| IndexError::NotAFile(zip.clone()))?;
+        let root_id = match self.store.root_for_path(&zip)? {
+            Some(id) => id,
+            None => {
+                let parent = zip.parent().unwrap_or_else(|| Path::new(""));
+                self.store
+                    .upsert_root(parent, opts.kind, false, opts.index_content)?
+            }
+        };
+        let hash = hash_file(&zip).ok();
+        let mtime = meta.modified().map(to_unix).unwrap_or(0);
+        let mut froms = vec![from.to_path_buf()];
+        if let (Ok(dir), Some(name)) = (
+            dunce::canonicalize(from.parent().unwrap_or(from)),
+            from.file_name(),
+        ) {
+            froms.push(dir.join(name));
+        }
+        for f in &froms {
+            if self
+                .store
+                .mark_vaulted(f, &zip, root_id, meta.len(), mtime, hash.as_deref())?
+            {
+                return Ok(FileOutcome::Updated(TextStatus::Ok));
+            }
+        }
+        let out = self.index_file_inner(&zip, root_id, opts, now())?;
+        self.store.set_vault_flag(&zip)?;
+        Ok(out)
+    }
+
     fn index_file_inner(
         &self,
         path: &Path,
@@ -377,10 +428,25 @@ impl<'a> Indexer<'a> {
         let existing = self.store.file_stamp(path)?;
         let too_big = size > opts.max_content_bytes;
         if let Some(stamp) = &existing {
+            // (M9) An encrypted vault zip keeps the text indexed before it
+            // was locked; reading the zip would only lose it.
+            if stamp.vault {
+                self.store.touch_file(stamp.id, seen_at)?;
+                return Ok(FileOutcome::Unchanged);
+            }
             // Unchanged — unless body text is wanted now and was never
             // extracted (a NAS folder entering its content window).
             let text_wanted = opts.index_content && stamp.text_none && !too_big;
             if stamp.size == size && stamp.mtime == mtime && !text_wanted {
+                if let (Some(d), true) = (&opts.pii, stamp.pii_unjudged) {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    let text = self.store.file_content(stamp.id)?;
+                    self.store
+                        .set_file_pii(stamp.id, &d.judge(&name, text.as_deref()))?;
+                }
                 self.store.touch_file(stamp.id, seen_at)?;
                 return Ok(FileOutcome::Unchanged);
             }
@@ -423,6 +489,10 @@ impl<'a> Indexer<'a> {
             .as_deref()
             .map(|c| c.chars().take(500).collect::<String>())
             .filter(|e| !e.is_empty());
+        let pii = opts
+            .pii
+            .as_ref()
+            .map(|d| d.judge(&name, content.as_deref()));
 
         self.store.upsert_file(
             &NewFile {
@@ -438,6 +508,7 @@ impl<'a> Indexer<'a> {
                 text_status,
                 excerpt,
                 content,
+                pii,
             },
             seen_at,
         )?;

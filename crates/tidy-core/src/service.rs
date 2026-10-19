@@ -52,6 +52,8 @@ pub struct WatchRunOptions {
     /// Live progress of long copy-verify moves (NAS). Called on the watch
     /// thread while the copy runs, so it must not block.
     pub progress: Option<ProgressFn>,
+    /// (M9) Vault passwords to use instead of the OS keychain (tests).
+    pub vault_keys: Option<crate::security::VaultKeys>,
 }
 
 impl std::fmt::Debug for WatchRunOptions {
@@ -130,6 +132,9 @@ pub fn run_watch(
     if let Some(p) = &opts.progress {
         mover = mover.with_progress(Arc::clone(p));
     }
+    if let Some(k) = &opts.vault_keys {
+        mover = mover.with_vault_keys(k.clone());
+    }
     let grace = opts.recovery_grace.unwrap_or(DEFAULT_RECOVERY_GRACE);
     let recover = |mover: &Mover, on_event: &mut dyn FnMut(WatchEvent<'_>)| match mover
         .recover_interrupted(grace)
@@ -142,7 +147,8 @@ pub fn run_watch(
     let filter = IgnoreFilter::new(&cfg.classify.ignore_globs)?;
     let mut engine = Engine::new(rules, mover, filter.clone())
         .dry_run(opts.dry_run)
-        .with_anchors(crate::classify::Anchors::from_config(cfg));
+        .with_anchors(crate::classify::Anchors::from_config(cfg))
+        .with_security(crate::security::SecurityPolicy::from_config(cfg));
     if opts.index {
         engine = engine.with_index(IndexOptions::from_config(cfg));
     }

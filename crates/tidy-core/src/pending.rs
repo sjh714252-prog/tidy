@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::engine::{reindex_for, Action};
+use crate::engine::{prepare_vault_index, reindex_for, Action};
 use crate::index::IndexOptions;
 use crate::mover::{MoveOutcome, MoveRequest, Mover, MoverError};
 use crate::paths::normalize_lexical;
@@ -119,6 +119,11 @@ pub fn resolve(
                 PendingSource::Rule => entry.reason.clone(),
                 PendingSource::Ai => None,
             };
+            if entry.encrypt {
+                if let Some(opts) = index {
+                    prepare_vault_index(store, &path, opts);
+                }
+            }
             let out = mover.move_file(&MoveRequest {
                 src: path.clone(),
                 dest_dir: dest_dir.clone(),
@@ -127,6 +132,7 @@ pub fn resolve(
                 rule_name: rule.clone(),
                 ai_confidence: entry.confidence,
                 new_name: new_name.clone(),
+                encrypt: entry.encrypt,
             })?;
             let label = rule.unwrap_or_else(|| "확인".into());
             let (resolution, action) = match out {
@@ -145,6 +151,7 @@ pub fn resolve(
                         log_id,
                         by: DecidedBy::User,
                         confidence: entry.confidence,
+                        encrypted: entry.encrypt,
                     },
                 ),
                 MoveOutcome::SkippedDuplicate { src, existing } => (

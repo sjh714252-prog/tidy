@@ -4,14 +4,23 @@
 //! Pipeline (SPEC §5.2): rules → (no rule) AI → (no AI, AI failure or low
 //! confidence) ask the user. Without AI the engine behaves exactly as in M1:
 //! files no rule matches are left alone.
+//!
+//! (M9, SPEC §14.2) Before the rules, mode A sends personal files to the
+//! vault folder; a rule with `encrypt = "pii" | "always"` locks its file
+//! into a zip at its destination (mode B). With `approval = "confirm"`
+//! (default) — or when no vault password is set yet — encryptions wait in
+//! the queue instead; a file is never moved unencrypted in their place.
 
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use crate::classify::{AiClassifier, Anchors, FileFacts, RuleSet};
+use crate::classify::{AiClassifier, Anchors, Encrypt, FileFacts, RuleSet};
+use crate::config::Approval;
 use crate::index::{IndexOptions, Indexer};
 use crate::mover::{hash_file, MoveOutcome, MoveRequest, Mover, MoverError};
+use crate::pii::PiiFinding;
+use crate::security::SecurityPolicy;
 use crate::store::{DecidedBy, NewPending, PendingSource, StoreError};
 use crate::watcher::IgnoreFilter;
 
@@ -53,6 +62,8 @@ pub enum Action {
         by: DecidedBy,
         /// AI confidence (AI moves only).
         confidence: Option<f64>,
+        /// (M9) `dst` is an encrypted zip of the file.
+        encrypted: bool,
     },
     /// Waiting for the user: a rule with `confirm = true`, or an AI
     /// suggestion that may not move on its own.
@@ -65,6 +76,10 @@ pub enum Action {
         confidence: Option<f64>,
         /// The AI's one-line reason.
         reason: Option<String>,
+        /// (M9) Approving encrypts the file.
+        encrypt: bool,
+        /// (M9) What the detector found.
+        pii: Option<PiiFinding>,
     },
     /// `--dry-run`: what would happen.
     WouldMove {
@@ -72,6 +87,8 @@ pub enum Action {
         rule: String,
         dest_dir: PathBuf,
         confirm: bool,
+        /// (M9) It would be locked into a zip.
+        encrypt: bool,
     },
     Duplicate {
         src: PathBuf,
@@ -107,7 +124,12 @@ pub struct Engine {
     ai: Option<AiClassifier>,
     /// Watch folder anchors for relative destinations / `{root}` (M8).
     anchors: Anchors,
+    /// (M9) Personal-information detection and vault settings.
+    security: SecurityPolicy,
 }
+
+/// Label of mode A moves (rule name in the log and the queue).
+pub const VAULT_RULE: &str = "개인정보 보관";
 
 pub fn new_batch_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()
@@ -123,7 +145,18 @@ impl Engine {
             index: None,
             ai: None,
             anchors: Anchors::default(),
+            security: SecurityPolicy::default(),
         }
+    }
+
+    /// (M9) Detection, vault folder and approval settings.
+    pub fn with_security(mut self, s: SecurityPolicy) -> Self {
+        self.security = s;
+        self
+    }
+
+    pub fn security(&self) -> &SecurityPolicy {
+        &self.security
     }
 
     /// Resolve relative rule destinations against the watch folders'
@@ -190,19 +223,64 @@ impl Engine {
             path: path.to_path_buf(),
             source,
         })?;
+
+        // (M9) Mode A: personal files go to the vault before any rule.
+        let mut finding: Option<PiiFinding> = None;
+        if let Some(vault) = self.security.vault_dir.clone() {
+            if path.starts_with(&vault) {
+                return skipped("in the vault folder; left in place");
+            }
+            if self.security.detector.enabled() {
+                let f = self.judge(&facts);
+                finding = Some(f);
+                if f.is_pii() {
+                    if self.dry_run {
+                        return Ok(Action::WouldMove {
+                            path: path.to_path_buf(),
+                            rule: VAULT_RULE.into(),
+                            dest_dir: vault,
+                            confirm: self.security.approval == Approval::Confirm,
+                            encrypt: true,
+                        });
+                    }
+                    if self.was_undone(path)? {
+                        return skipped("restored by undo; left in place");
+                    }
+                    return self.secure(path, vault, VAULT_RULE, Some(f), false, batch_id);
+                }
+            }
+        }
+
         let Some(c) = self.rules.classify_in(&facts, self.anchors.for_path(path)) else {
             return self.ai_step(&facts, batch_id);
+        };
+        let encrypt = match c.encrypt {
+            Encrypt::Never => false,
+            Encrypt::Always => true,
+            Encrypt::Pii => {
+                let f = match finding {
+                    Some(f) => f,
+                    None => self.judge(&facts),
+                };
+                finding = Some(f);
+                f.is_pii()
+            }
         };
         if self.dry_run {
             return Ok(Action::WouldMove {
                 path: path.to_path_buf(),
                 rule: c.rule_name,
                 dest_dir: c.dest_dir,
-                confirm: c.confirm,
+                confirm: c.confirm || (encrypt && self.security.approval == Approval::Confirm),
+                encrypt,
             });
         }
         if self.was_undone(path)? {
             return skipped("restored by undo; left in place");
+        }
+        if encrypt {
+            let shown = finding.filter(PiiFinding::is_pii);
+            return self.secure(path, c.dest_dir, &c.rule_name, shown, c.confirm, batch_id);
         }
 
         if c.confirm {
@@ -214,6 +292,8 @@ impl Engine {
                 source: PendingSource::Rule,
                 confidence: None,
                 reason: None,
+                encrypt: false,
+                pii: None,
             });
         }
         self.move_to(
@@ -224,6 +304,83 @@ impl Engine {
             DecidedBy::Rule,
             None,
         )
+    }
+
+    /// (M9) Personal-information verdict: the index row's when it is
+    /// current, otherwise read the text now. With `ai_check`, an AI that
+    /// answers "not personal" clears a regex hit; AI failures keep it.
+    pub fn judge(&self, facts: &FileFacts) -> PiiFinding {
+        let sec = &self.security;
+        let store = self.mover.store();
+        let mtime = facts
+            .modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let mut f = match store.fresh_pii(&facts.path, facts.size, mtime) {
+            Ok(Some(f)) if f.status != crate::pii::PiiStatus::Unknown => f,
+            _ => sec
+                .detector
+                .judge_path(&facts.path, sec.max_bytes, sec.max_chars),
+        };
+        if f.is_pii() && sec.ai_check {
+            if let Some(ai) = &self.ai {
+                match ai.confirm_pii(store, facts, &f) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        f.status = crate::pii::PiiStatus::Clean;
+                        f.flags = 0;
+                    }
+                    Err(e) => tracing::warn!("AI personal-information check failed: {e}"),
+                }
+            }
+        }
+        f
+    }
+
+    /// (M9) Encrypt `path` into `dest_dir`, or queue it when approval is
+    /// needed (`approval = confirm`, the rule asks, or no password yet).
+    fn secure(
+        &self,
+        path: &Path,
+        dest_dir: PathBuf,
+        rule: &str,
+        pii: Option<PiiFinding>,
+        rule_confirm: bool,
+        batch_id: &str,
+    ) -> Result<Action, EngineError> {
+        let store = self.mover.store();
+        let has_password = self
+            .mover
+            .vault_keys()
+            .map(|k| k.has_current())
+            .unwrap_or(false);
+        if rule_confirm || self.security.approval == Approval::Confirm || !has_password {
+            store.upsert_pending_entry(&NewPending {
+                path,
+                suggested_dest: Some(&dest_dir),
+                reason: Some(rule),
+                source: PendingSource::Rule,
+                confidence: None,
+                suggested_name: None,
+                encrypt: true,
+                pii: pii.as_ref(),
+            })?;
+            return Ok(Action::Pending {
+                path: path.to_path_buf(),
+                rule: rule.to_string(),
+                suggested: dest_dir,
+                source: PendingSource::Rule,
+                confidence: None,
+                reason: None,
+                encrypt: true,
+                pii,
+            });
+        }
+        if let Some(opts) = &self.index {
+            prepare_vault_index(store, path, opts);
+        }
+        self.move_with(path, dest_dir, batch_id, rule, DecidedBy::Rule, None, true)
     }
 
     /// A file the user brought back with `tidy undo` stays where it is
@@ -285,6 +442,7 @@ impl Engine {
                 rule: format!("AI {:.0}%", s.confidence * 100.0),
                 dest_dir: s.dest_dir,
                 confirm: !auto,
+                encrypt: false,
             });
         }
         if auto {
@@ -304,6 +462,8 @@ impl Engine {
             source: PendingSource::Ai,
             confidence: Some(s.confidence),
             suggested_name: s.suggested_rename.as_deref(),
+            encrypt: false,
+            pii: None,
         })?;
         Ok(Action::Pending {
             path: path.clone(),
@@ -312,6 +472,8 @@ impl Engine {
             source: PendingSource::Ai,
             confidence: Some(s.confidence),
             reason: Some(s.reason),
+            encrypt: false,
+            pii: None,
         })
     }
 
@@ -324,6 +486,20 @@ impl Engine {
         by: DecidedBy,
         confidence: Option<f64>,
     ) -> Result<Action, EngineError> {
+        self.move_with(path, dest_dir, batch_id, rule, by, confidence, false)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn move_with(
+        &self,
+        path: &Path,
+        dest_dir: PathBuf,
+        batch_id: &str,
+        rule: &str,
+        by: DecidedBy,
+        confidence: Option<f64>,
+        encrypt: bool,
+    ) -> Result<Action, EngineError> {
         let out = self.mover.move_file(&MoveRequest {
             src: path.to_path_buf(),
             dest_dir,
@@ -332,6 +508,7 @@ impl Engine {
             rule_name: (by == DecidedBy::Rule).then(|| rule.to_string()),
             ai_confidence: confidence,
             new_name: None,
+            encrypt,
         })?;
         Ok(match out {
             MoveOutcome::Moved { log_id, src, dst } => Action::Moved {
@@ -342,6 +519,7 @@ impl Engine {
                 log_id,
                 by,
                 confidence,
+                encrypted: encrypt,
             },
             MoveOutcome::SkippedDuplicate { src, existing } => Action::Duplicate {
                 src,
@@ -360,6 +538,12 @@ impl Engine {
 pub fn reindex_for(store: &crate::store::Store, action: &Action, opts: &IndexOptions) {
     let indexer = Indexer::new(store);
     let res = match action {
+        Action::Moved {
+            src,
+            dst,
+            encrypted: true,
+            ..
+        } => indexer.vaulted(src, dst, opts).map(drop),
         Action::Moved { src, dst, .. } => indexer.moved(src, dst, opts).map(drop),
         Action::Pending { path, .. }
         | Action::Duplicate { src: path, .. }
@@ -370,6 +554,14 @@ pub fn reindex_for(store: &crate::store::Store, action: &Action, opts: &IndexOpt
     };
     if let Err(e) = res {
         tracing::warn!("index update failed: {e}");
+    }
+}
+
+/// (M9) Index a file right before it is encrypted, so its text (search,
+/// 🔒 results) survives in the row that will point at the zip.
+pub fn prepare_vault_index(store: &crate::store::Store, path: &Path, opts: &IndexOptions) {
+    if let Err(e) = Indexer::new(store).index_file(path, opts) {
+        tracing::warn!("index before encrypt failed: {e}");
     }
 }
 

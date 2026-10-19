@@ -25,7 +25,7 @@ use serde::Serialize;
 
 use super::transfer::tmp_prefix;
 use super::{hash_file, InFlight, Mover, MoverError};
-use crate::store::MoveLogEntry;
+use crate::store::{MoveLogEntry, MoveOp};
 
 /// Rows younger than this are left alone (a long copy may be running in
 /// another Tidy process).
@@ -93,6 +93,15 @@ impl Mover {
                     report.rolled_back.push(src.clone());
                 } else {
                     report.unresolved += 1;
+                }
+            }
+            (true, true) if e.op == MoveOp::Encrypt => {
+                // The zip was verified but the original never removed:
+                // keep the original (SPEC §14.2), drop our zip.
+                report.tmp_removed += remove_stale_tmp(dst, grace);
+                match self.recover_encrypt_both(e)? {
+                    None => report.rolled_back.push(src.clone()),
+                    Some(msg) => report.attention.push(msg),
                 }
             }
             (true, true) => {
@@ -180,6 +189,7 @@ mod tests {
                 decided_by: DecidedBy::Rule,
                 rule_name: None,
                 ai_confidence: None,
+                op: crate::store::MoveOp::Move,
             })
             .unwrap()
     }
