@@ -179,3 +179,39 @@ details.advanced summary { cursor: pointer; color: var(--muted); }
 .custom-rule input { min-width: 120px; }
 .summary-folder { margin-bottom: 12px; }
 @media (max-width: 900px) { .rule-body { grid-template-columns: 1fr; } }
+
+/* M9 personal information / vault */
+.pii-badge {
+  display: inline-block;
+  margin: 4px 0;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #fff1e6;
+  color: #9a3d00;
+  font-size: 12px;
+  font-weight: 600;
+}
+.tag.lock {
+  background: #e8f0fe;
+  color: #1a4fb3;
+}
+.security h3 {
+  margin: 14px 0 6px;
+  font-size: 14px;
+}
+.security .pii-items td {
+  padding: 2px 8px;
+}
+.rule-card label.sub {
+  padding-left: 22px;
+}
+@media (prefers-color-scheme: dark) {
+  .pii-badge {
+    background: #4a2a12;
+    color: #ffc89a;
+  }
+  .tag.lock {
+    background: #1f2f4d;
+    color: #a9c4ff;
+  }
+}

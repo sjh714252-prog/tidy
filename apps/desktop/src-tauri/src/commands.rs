@@ -218,6 +218,10 @@ pub struct HitDto {
     pub exists: bool,
     /// Cosine similarity to the query (semantic search only).
     pub similarity: Option<f32>,
+    /// (M9) The path is an encrypted vault zip (🔒; "열기" decrypts a copy).
+    pub vault: bool,
+    /// (M9) "주민번호 2 · 이름+휴대전화 15" when judged personal.
+    pub pii: Option<String>,
 }
 
 fn hit_dto(h: SearchHit) -> HitDto {
@@ -241,6 +245,12 @@ fn hit_dto(h: SearchHit) -> HitDto {
         snippet: h.snippet,
         text_status: h.file.text_status.as_str(),
         similarity: h.similarity,
+        vault: h.file.vault,
+        pii: h
+            .file
+            .pii_flags
+            .filter(|f| *f != 0)
+            .map(|f| tidy_core::pii::summary(f, &h.file.pii_counts.unwrap_or_default())),
     }
 }
 
@@ -373,11 +383,26 @@ pub async fn semantic_status(app: AppHandle) -> CmdResult<SemanticStatusDto> {
     .await
 }
 
+/// Open a file with its app. A vault zip (M9) is decrypted to a temporary
+/// copy first; the copy's path is returned (it is removed after
+/// `security.open_ttl_minutes`).
 #[tauri::command]
-pub async fn open_path(app: AppHandle, path: String) -> CmdResult<()> {
+pub async fn open_path(app: AppHandle, path: String) -> CmdResult<Option<String>> {
+    let vault = blocking({
+        let app = app.clone();
+        let path = path.clone();
+        move || Ok(crate::security_cmds::is_vault_zip(&app, Path::new(&path)))
+    })
+    .await?;
+    if vault {
+        return crate::security_cmds::open_vault_file(app, path)
+            .await
+            .map(Some);
+    }
     app.opener()
         .open_path(path, None::<&str>)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(None)
 }
 
 #[tauri::command]
@@ -409,6 +434,10 @@ pub struct PendingDto {
     pub created_at: i64,
     pub exists: bool,
     pub size: Option<u64>,
+    /// (M9) Approving locks the file into an encrypted zip.
+    pub encrypt: bool,
+    /// (M9) "주민번호 2 · 이름+휴대전화 15" (badge "개인정보: …").
+    pub pii: Option<String>,
 }
 
 #[tauri::command]
@@ -441,6 +470,8 @@ pub async fn list_pending(app: AppHandle) -> CmdResult<Vec<PendingDto>> {
                     created_at: p.created_at,
                     exists: meta.as_ref().is_some_and(|m| m.is_file()),
                     size: meta.map(|m| m.len()),
+                    encrypt: p.encrypt,
+                    pii: p.pii.filter(|f| f.is_pii()).map(|f| f.summary()),
                 }
             })
             .collect())

@@ -264,10 +264,28 @@ export function RuleCards({
                   <input type="checkbox" checked={!c.enabled} onChange={(e) => set(i, { enabled: !e.target.checked })} />
                   <span>사용 안 함</span>
                 </label>
-                <label className="row muted" title="M9에서 제공 예정">
-                  <input type="checkbox" disabled checked={false} readOnly />
-                  <span>(M9) 개인정보면 암호화</span>
+                <label
+                  className="row"
+                  title="본문·파일 이름에 개인정보가 있으면 목적지에 암호화 zip(AES-256)으로 보관합니다 (설정 → 보안)"
+                >
+                  <input
+                    type="checkbox"
+                    data-testid="encrypt-toggle"
+                    checked={c.encrypt === "pii" || c.encrypt === "always"}
+                    onChange={(e) => set(i, { encrypt: e.target.checked ? "pii" : "" })}
+                  />
+                  <span>🔒 개인정보면 암호화</span>
                 </label>
+                {(c.encrypt === "pii" || c.encrypt === "always") && (
+                  <label className="row sub">
+                    <input
+                      type="checkbox"
+                      checked={c.encrypt === "always"}
+                      onChange={(e) => set(i, { encrypt: e.target.checked ? "always" : "pii" })}
+                    />
+                    <span>개인정보가 아니어도 항상 암호화</span>
+                  </label>
+                )}
                 {c.otherKeys.length > 0 && (
                   <p className="muted small">그 밖의 설정(그대로 유지, TOML에서 편집): {c.otherKeys.join(", ")}</p>
                 )}
