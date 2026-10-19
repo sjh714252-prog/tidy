@@ -29,6 +29,7 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dunce = "1"
+dirs = "6"
 # Dev-only test bridge (src/devbridge.rs, cfg(debug_assertions)).
 tiny_http = "0.12"
 

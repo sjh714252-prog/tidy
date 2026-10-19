@@ -22,6 +22,11 @@ const ok = (step, what, pass, note = "") => {
   console.log(`${pass ? "PASS" : "FAIL"} [${step}] ${what} ${note}`);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// M8: the rules TOML editor sits in the collapsed "고급" section.
+const openAdvanced = async (page) => {
+  const d = page.locator("details.advanced");
+  if (!(await d.evaluate((e) => e.open))) await d.locator("summary").click();
+};
 const bridge = async (cmd, args = {}) =>
   (await (await fetch(`http://127.0.0.1:1421/invoke/${cmd}`, { method: "POST", body: JSON.stringify(args) })).json()).value;
 const events = async (since) => (await (await fetch(`http://127.0.0.1:1421/events?since=${since}`)).json());
@@ -45,13 +50,13 @@ const evStart = (await events(1e9)).next;
 
 // A. settings: add folder, switch kind to 네트워크(NAS) → sub-row, poll 5 s, polling only
 {
-  await main.getByRole("button", { name: "설정" }).click();
+  await main.getByRole("button", { name: "설정", exact: true }).click();
   await sleep(500);
   process.env.PROMPT_ANSWER = NAS;
   await main.getByRole("button", { name: "폴더 추가…" }).click();
   await sleep(500);
   const row = main.locator(".settings tbody tr").first();
-  await row.locator("select").selectOption("network");
+  await row.locator("select").first().selectOption("network"); // kind (2nd select = M8 정리 방식)
   await sleep(300);
   const sub = main.locator(".settings tbody tr.subrow");
   ok("A", "네트워크 선택 → 폴링/시간대 하위 행 표시", (await sub.count()) === 1);
@@ -59,6 +64,7 @@ const evStart = (await events(1e9)).next;
   ok("A", "NAS는 본문 인덱싱 기본 꺼짐 (메타만)", idx === false);
   await sub.locator("input[type=number]").fill("5");
   await sub.locator("label", { hasText: "폴링만 사용" }).locator("input").check();
+  await openAdvanced(main);
   const ta = main.locator("textarea.rules");
   await ta.fill(
     `[[rule]]\nname = "NAS 문서"\nmatch = { ext = ["pdf"] }\ndest = '${LOCAL}'\n\n` + (await ta.inputValue()),

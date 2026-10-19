@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import * as ipc from "../ipc/commands";
 import type { AiProvider, AiSettings, SemanticStatus } from "../ipc/types";
 import { useAiSettings } from "../store/aiSettings";
-import { useStatus } from "../store/status";
 
 /**
  * AI (SPEC §5.8): provider / model of the active profile, key (stored only in
@@ -23,11 +22,9 @@ export function AiSettingsSection() {
     setApiKey,
     setEmbedProvider,
     setEmbedApiKey,
-    save,
     deleteKey,
     test,
   } = useAiSettings();
-  const refreshStatus = useStatus((s) => s.refresh);
   const [sem, setSem] = useState<SemanticStatus | null>(null);
   const refreshSem = () => void ipc.semanticStatus().then(setSem, () => setSem(null));
 
@@ -221,20 +218,7 @@ export function AiSettingsSection() {
       )}
       <p className="muted small">키 저장 위치: {draft.keyStore}</p>
       <div className="actions">
-        <button
-          className="primary"
-          disabled={busy}
-          onClick={() =>
-            void save().then((ok) => {
-              if (ok) {
-                void refreshStatus();
-                refreshSem();
-              }
-            })
-          }
-        >
-          AI 설정 저장
-        </button>
+        <span className="muted small">아래 "저장"을 누르면 AI 설정도 함께 저장됩니다.</span>
         <button disabled={busy || !draft.enabled || !draft.provider} onClick={() => void test()}>
           연결 테스트
         </button>

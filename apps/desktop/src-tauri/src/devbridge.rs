@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Listener};
 use tiny_http::{Header, Method, Request, Response, Server};
 
-use crate::{commands, report_cmds};
+use crate::{commands, onboarding, report_cmds};
 
 pub const PORT: u16 = 1421;
 
@@ -178,6 +178,31 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
             ok(commands::search_semantic(app, arg(&args, "query")?, arg(&args, "limit")?).await?)
         }
         "semantic_status" => ok(commands::semantic_status(app).await?),
+        // M8: wizard, rule editor, folder tree.
+        "wizard_info" => ok(onboarding::wizard_info(app).await?),
+        "preview_rules" => ok(onboarding::preview_rules(
+            app,
+            arg(&args, "watches")?,
+            arg(&args, "cards")?,
+            arg(&args, "exclusive")?,
+        )
+        .await?),
+        "finish_onboarding" => ok(onboarding::finish_onboarding(app, arg(&args, "args")?).await?),
+        "rules_editor" => {
+            ok(onboarding::rules_editor(app, arg(&args, "text")?, arg(&args, "preview")?).await?)
+        }
+        "rules_from_cards" => ok(onboarding::rules_from_cards(
+            app,
+            arg(&args, "text")?,
+            arg(&args, "cards")?,
+            arg(&args, "preview")?,
+        )
+        .await?),
+        "ai_rule_drafts" => ok(onboarding::ai_rule_drafts(app).await?),
+        "fs_roots" => ok(onboarding::fs_roots(app).await?),
+        "list_dirs" => ok(onboarding::list_dirs(arg(&args, "path")?).await?),
+        "make_dir" => ok(onboarding::make_dir(arg(&args, "parent")?, arg(&args, "name")?).await?),
+        "open_wizard" => ok(onboarding::open_wizard(app).await?),
         "open_path" => ok(commands::open_path(app, arg(&args, "path")?).await?),
         "reveal_path" => ok(commands::reveal_path(app, arg(&args, "path")?).await?),
         "list_pending" => ok(commands::list_pending(app).await?),

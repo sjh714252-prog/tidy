@@ -76,9 +76,13 @@ fn yes() -> bool {
 struct MatchDef {
     ext: Option<Vec<String>>,
     name_regex: Option<String>,
+    /// Case-insensitive substring of the file name (M8 "이름에 포함").
+    name_contains: Option<String>,
     min_size: Option<SizeDef>,
     max_size: Option<SizeDef>,
     older_than_days: Option<u32>,
+    /// Modified within the last N days (M8).
+    newer_than_days: Option<u32>,
     source_app: Option<Vec<String>>,
     from_dir: Option<PathBuf>,
 }
@@ -95,13 +99,18 @@ enum SizeDef {
 #[derive(Debug, Clone)]
 pub struct Rule {
     pub name: String,
+    /// Position of this rule's `[[rule]]` table in the file (disabled
+    /// rules count), so previews line up with rule cards.
+    pub index: usize,
     pub confirm: bool,
     pub ai_auto: bool,
     ext: Option<Vec<String>>,
     name_regex: Option<Regex>,
+    name_contains: Option<String>,
     min_size: Option<u64>,
     max_size: Option<u64>,
     older_than: Option<Duration>,
+    newer_than: Option<Duration>,
     source_app: Option<Vec<String>>,
     from_dir: Option<PathBuf>,
     dest: Vec<Segment>,
@@ -115,6 +124,9 @@ enum Var {
     Ext,
     Stem,
     SourceDirName,
+    /// The folder's anchor (M8): watch folder (`in_place`) or
+    /// `organize_root` (`collect`).
+    Root,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -219,8 +231,16 @@ impl RuleSet {
 
     fn compile(file: RulesFile) -> Result<Self, RuleError> {
         let mut rules = Vec::new();
-        for def in file.rules.into_iter().filter(|r| r.enabled) {
-            rules.push(Rule::compile(def)?);
+        for (i, def) in file.rules.into_iter().enumerate() {
+            if def.enabled {
+                let mut r = Rule::compile(def)?;
+                r.index = i;
+                rules.push(r);
+            } else {
+                // Still validated: a disabled rule with a typo is an error
+                // the editor should show.
+                Rule::compile(def)?;
+            }
         }
         Ok(Self { rules })
     }
@@ -237,10 +257,29 @@ impl RuleSet {
 
     /// Fixed destination folders of all rules (AI candidate tree roots).
     pub fn dest_roots(&self) -> Vec<PathBuf> {
+        self.dest_roots_for(&[])
+    }
+
+    /// [`RuleSet::dest_roots`] including relative / `{root}` destinations
+    /// resolved against each watch folder anchor (M8).
+    pub fn dest_roots_for(&self, anchors: &[PathBuf]) -> Vec<PathBuf> {
+        self.roots_where(|_| true, anchors)
+    }
+
+    /// [`RuleSet::ai_auto_roots`] with anchors (M8).
+    pub fn ai_auto_roots_for(&self, anchors: &[PathBuf]) -> Vec<PathBuf> {
+        self.roots_where(|r| r.ai_auto, anchors)
+    }
+
+    fn roots_where(&self, keep: impl Fn(&Rule) -> bool, anchors: &[PathBuf]) -> Vec<PathBuf> {
         let mut out: Vec<PathBuf> = Vec::new();
-        for p in self.rules.iter().filter_map(Rule::dest_root) {
-            if !out.contains(&p) {
-                out.push(p);
+        for r in self.rules.iter().filter(|r| keep(r)) {
+            let found = std::iter::once(r.dest_root())
+                .chain(anchors.iter().map(|a| r.dest_root_in(Some(a))));
+            for p in found.flatten() {
+                if !out.contains(&p) {
+                    out.push(p);
+                }
             }
         }
         out
@@ -254,14 +293,22 @@ impl RuleSet {
         self.rules.is_empty()
     }
 
-    /// First matching rule wins (file order = priority).
+    /// First matching rule wins (file order = priority). Relative
+    /// destinations and `{root}` resolve against the file's own folder;
+    /// use [`RuleSet::classify_in`] with the watch folder's anchor.
     pub fn classify(&self, facts: &FileFacts) -> Option<Classification> {
+        self.classify_in(facts, None)
+    }
+
+    /// Like [`RuleSet::classify`], with relative destinations and `{root}`
+    /// resolved against `anchor` (SPEC §14.1); `None` = the file's folder.
+    pub fn classify_in(&self, facts: &FileFacts, anchor: Option<&Path>) -> Option<Classification> {
         self.rules
             .iter()
             .find(|r| r.matches(facts))
             .map(|r| Classification {
                 rule_name: r.name.clone(),
-                dest_dir: r.render_dest(facts),
+                dest_dir: r.render_dest_in(facts, anchor),
                 confirm: r.confirm,
             })
     }
@@ -304,6 +351,7 @@ impl Rule {
         let from_dir = m.from_dir.map(|d| normalize_dir(&expand_home(&d)));
         Ok(Self {
             name,
+            index: 0,
             confirm: def.confirm,
             ai_auto: def.ai_auto,
             ext: m.ext.map(|v| {
@@ -317,6 +365,13 @@ impl Rule {
             older_than: m
                 .older_than_days
                 .map(|d| Duration::from_secs(u64::from(d) * 86_400)),
+            newer_than: m
+                .newer_than_days
+                .map(|d| Duration::from_secs(u64::from(d) * 86_400)),
+            name_contains: m
+                .name_contains
+                .map(|n| n.to_lowercase())
+                .filter(|n| !n.is_empty()),
             source_app: m.source_app,
             from_dir,
             dest,
@@ -337,6 +392,11 @@ impl Rule {
                 return false;
             }
         }
+        if let Some(part) = &self.name_contains {
+            if !f.name.to_lowercase().contains(part.as_str()) {
+                return false;
+            }
+        }
         if self.min_size.is_some_and(|min| f.size < min) {
             return false;
         }
@@ -348,6 +408,14 @@ impl Rule {
                 .duration_since(f.modified)
                 .unwrap_or_default();
             if elapsed < age {
+                return false;
+            }
+        }
+        if let Some(age) = self.newer_than {
+            let elapsed = SystemTime::now()
+                .duration_since(f.modified)
+                .unwrap_or_default();
+            if elapsed > age {
                 return false;
             }
         }
@@ -368,11 +436,21 @@ impl Rule {
     /// `None` for relative destinations. Used for the AI candidate tree and
     /// for `ai_auto` (which folders an AI suggestion may move into alone).
     pub fn dest_root(&self) -> Option<PathBuf> {
+        self.dest_root_in(None)
+    }
+
+    /// [`Rule::dest_root`] for a folder whose relative destinations and
+    /// `{root}` resolve against `anchor` (M8). `None` keeps relative
+    /// destinations out (they have no fixed folder without an anchor).
+    pub fn dest_root_in(&self, anchor: Option<&Path>) -> Option<PathBuf> {
         let mut lit = String::new();
         let mut cut = false;
-        for seg in &self.dest {
+        for (i, seg) in self.dest.iter().enumerate() {
             match seg {
                 Segment::Lit(s) => lit.push_str(s),
+                Segment::Var(Var::Root) if i == 0 && anchor.is_some() => {
+                    lit.push_str(&anchor.unwrap_or(Path::new("")).to_string_lossy())
+                }
                 Segment::Var(_) => {
                     cut = true;
                     break;
@@ -384,11 +462,23 @@ impl Rule {
             let i = lit.rfind(['/', '\\'])?;
             lit.truncate(i);
         }
-        let p = normalize_lexical(&expand_home(Path::new(lit.trim())));
+        let p = expand_home(Path::new(lit.trim()));
+        let p = match anchor {
+            Some(a) if p.is_relative() => a.join(p),
+            _ => p,
+        };
+        let p = normalize_lexical(&p);
         p.is_absolute().then_some(p)
     }
 
     pub fn render_dest(&self, f: &FileFacts) -> PathBuf {
+        self.render_dest_in(f, None)
+    }
+
+    /// `dest` for a file whose relative destinations / `{root}` resolve
+    /// against `anchor` (`None`: the file's folder).
+    pub fn render_dest_in(&self, f: &FileFacts, anchor: Option<&Path>) -> PathBuf {
+        let anchor = anchor.unwrap_or_else(|| f.parent());
         let date: DateTime<Local> = f.modified.into();
         let mut out = String::new();
         for seg in &self.dest {
@@ -405,15 +495,55 @@ impl Rule {
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_default(),
                 ),
+                Segment::Var(Var::Root) => out.push_str(&anchor.to_string_lossy()),
             }
         }
         let p = expand_home(Path::new(&out));
-        let p = if p.is_relative() {
-            f.parent().join(p)
-        } else {
-            p
-        };
+        let p = if p.is_relative() { anchor.join(p) } else { p };
         normalize_lexical(&p)
+    }
+}
+
+/// Which anchor (SPEC §14.1) a file's relative destinations and `{root}`
+/// use: that of the deepest watch folder containing it.
+#[derive(Debug, Clone, Default)]
+pub struct Anchors {
+    /// (watch folder, its canonical form if it resolved, anchor)
+    roots: Vec<(PathBuf, Option<PathBuf>, PathBuf)>,
+}
+
+impl Anchors {
+    pub fn from_watches(watches: &[crate::config::WatchRoot]) -> Self {
+        let roots = watches
+            .iter()
+            .map(|w| {
+                // Canonicalizing an offline share can block: local only.
+                let canon = (w.kind == crate::config::RootKind::Local)
+                    .then(|| dunce::canonicalize(&w.path).ok())
+                    .flatten();
+                (w.path.clone(), canon, w.anchor().to_path_buf())
+            })
+            .collect();
+        Self { roots }
+    }
+
+    pub fn from_config(cfg: &crate::config::Config) -> Self {
+        Self::from_watches(&cfg.watches)
+    }
+
+    /// Anchor for a file (or folder) at `p`; `None` outside every watch
+    /// folder (then the file's own folder is used).
+    pub fn for_path(&self, p: &Path) -> Option<&Path> {
+        self.roots
+            .iter()
+            .filter(|(w, c, _)| p.starts_with(w) || c.as_ref().is_some_and(|c| p.starts_with(c)))
+            .max_by_key(|(w, _, _)| w.components().count())
+            .map(|(_, _, a)| a.as_path())
+    }
+
+    /// All anchors (AI candidate tree, `dest_roots_for`).
+    pub fn all(&self) -> Vec<PathBuf> {
+        self.roots.iter().map(|(_, _, a)| a.clone()).collect()
     }
 }
 
@@ -438,9 +568,10 @@ fn parse_template(t: &str) -> Result<Vec<Segment>, String> {
             "ext" => Var::Ext,
             "stem" => Var::Stem,
             "source_dir_name" => Var::SourceDirName,
+            "root" => Var::Root,
             other => {
                 return Err(format!(
-                "unknown variable {{{other}}} (allowed: yyyy, mm, dd, ext, stem, source_dir_name)"
+                "unknown variable {{{other}}} (allowed: yyyy, mm, dd, ext, stem, source_dir_name, root)"
             ))
             }
         };
@@ -676,6 +807,113 @@ dest = "정리/큰 파일/{ext}"
     }
 
     /// Windows paths with a drive letter, Korean and spaces, and UNC shares.
+    #[test]
+    fn root_variable_and_anchor() {
+        let rs = RuleSet::from_toml(
+            r#"
+[[rule]]
+name = "문서"
+match = { ext = ["pdf"] }
+dest = "{root}/문서/{yyyy}"
+
+[[rule]]
+name = "압축"
+match = { ext = ["zip"] }
+dest = "압축 파일"
+"#,
+        )
+        .unwrap();
+        // Absolute on every OS (dest_roots only reports absolute folders).
+        let base = PathBuf::from(if cfg!(windows) { r"C:\" } else { "/" });
+        let desk_buf = base.join("home").join("홍").join("바탕 화면");
+        let desk = desk_buf.as_path();
+        let pdf = facts(&desk.join("하위").join("a.pdf"), 1);
+        let y = Local::now().format("%Y").to_string();
+        // Without an anchor: the file's own folder (M1 behaviour).
+        assert_eq!(
+            rs.classify(&pdf).unwrap().dest_dir,
+            desk.join("하위").join("문서").join(&y)
+        );
+        // in_place anchor = the watch folder; collect anchor = organize_root.
+        assert_eq!(
+            rs.classify_in(&pdf, Some(desk)).unwrap().dest_dir,
+            desk.join("문서").join(&y)
+        );
+        let root_buf = base.join("data").join("정리");
+        let root = root_buf.as_path();
+        let zip = facts(&desk.join("b.zip"), 1);
+        assert_eq!(
+            rs.classify_in(&zip, Some(root)).unwrap().dest_dir,
+            root.join("압축 파일")
+        );
+        assert_eq!(
+            rs.dest_roots_for(&[root.to_path_buf()]),
+            [root.join("문서"), root.join("압축 파일")]
+        );
+        assert!(rs.dest_roots().is_empty());
+    }
+
+    #[test]
+    fn anchors_pick_the_deepest_watch_folder() {
+        use crate::config::{OrganizeMode, WatchRoot};
+        let a = Anchors::from_watches(&[
+            WatchRoot {
+                path: PathBuf::from("/w"),
+                ..Default::default()
+            },
+            WatchRoot {
+                path: PathBuf::from("/w/내려받기"),
+                mode: OrganizeMode::Collect,
+                organize_root: Some(PathBuf::from("/정리")),
+                ..Default::default()
+            },
+            WatchRoot {
+                path: PathBuf::from("/x"),
+                mode: OrganizeMode::Collect,
+                ..Default::default()
+            },
+        ]);
+        assert_eq!(a.for_path(Path::new("/w/a.txt")), Some(Path::new("/w")));
+        assert_eq!(
+            a.for_path(Path::new("/w/내려받기/b.txt")),
+            Some(Path::new("/정리"))
+        );
+        // collect without organize_root falls back to the watch folder.
+        assert_eq!(a.for_path(Path::new("/x/c")), Some(Path::new("/x")));
+        assert_eq!(a.for_path(Path::new("/y/c")), None);
+    }
+
+    #[test]
+    fn name_contains_and_newer_than() {
+        let rs = RuleSet::from_toml(
+            r#"
+[[rule]]
+name = "보고서"
+match = { name_contains = "보고서", newer_than_days = 30 }
+dest = "/r"
+"#,
+        )
+        .unwrap();
+        assert!(rs
+            .classify(&facts(Path::new("/d/분기 보고서 v2.HWP"), 1))
+            .is_some());
+        assert!(rs.classify(&facts(Path::new("/d/메모.txt"), 1)).is_none());
+        let mut old = facts(Path::new("/d/옛 보고서.pdf"), 1);
+        old.modified = SystemTime::now() - Duration::from_secs(40 * 86_400);
+        assert!(rs.classify(&old).is_none());
+        // Disabled rules are validated too (the editor shows the error).
+        assert!(RuleSet::from_toml(
+            "[[rule]]\nname='x'\nmatch={name_regex='('}\ndest='/a'\nenabled=false\n"
+        )
+        .is_err());
+        // Indexes count disabled rules.
+        let rs = RuleSet::from_toml(
+            "[[rule]]\nname='a'\ndest='/a'\nenabled=false\n[[rule]]\nname='b'\ndest='/b'\n",
+        )
+        .unwrap();
+        assert_eq!(rs.rules()[0].index, 1);
+    }
+
     #[cfg(windows)]
     #[test]
     fn windows_templates() {

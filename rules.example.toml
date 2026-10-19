@@ -5,12 +5,17 @@
 #     ext             = ["png", "jpg"]     확장자(대소문자 무시, 점 없이)
 #     name_regex      = "^스크린샷"         파일 이름(확장자 포함) 정규식
 #     min_size / max_size = 1048576 또는 "10MB", "1.5GB"
+#     name_contains   = "보고서"            파일 이름에 이 낱말이 들어가면(대소문자 무시)
 #     older_than_days = 30                 수정한 지 N일 지난 파일
+#     newer_than_days = 7                  최근 N일 안에 수정한 파일
 #     from_dir        = "~/Downloads"      이 폴더 바로 안에 있는 파일만
 #     source_app                           아직 미지원(SPEC §13) — 쓰면 그 규칙은 매치되지 않음
 # - dest 변수: {yyyy} {mm} {dd}(파일 수정 날짜), {ext}, {stem}(확장자 뺀 이름),
-#   {source_dir_name}(원래 있던 폴더 이름). "~"는 홈 폴더.
-#   상대 경로를 쓰면 원래 파일이 있던 폴더 기준입니다.
+#   {source_dir_name}(원래 있던 폴더 이름), {root}(기준 폴더). "~"는 홈 폴더.
+#   상대 경로("문서/{yyyy}-{mm}")와 {root}는 감시 폴더의 정리 방식을 따릅니다:
+#   mode = "in_place"(기본)면 그 감시 폴더 안, mode = "collect"면 organize_root 아래.
+#   감시 폴더 밖의 파일(tidy classify 등)은 원래 있던 폴더 기준입니다.
+#   앱의 첫 실행 마법사와 규칙 카드는 상대 경로 규칙을 만듭니다(아래 예시는 절대 경로).
 # - confirm = true  → 옮기지 않고 확인 대기열에 넣습니다(`tidy pending`으로 확인).
 # - enabled = false → 규칙을 끕니다.
 # - ai_auto = true  → (AI 사용 시) AI가 확신할 때 이 규칙의 목적지 폴더 안으로는 묻지 않고 옮겨도 됨.

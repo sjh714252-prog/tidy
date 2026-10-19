@@ -14,8 +14,12 @@ export const onActivity = (cb: (a: Activity) => void): Promise<UnlistenFn> =>
 /** Pending queue changed (payload: new count, or null from the popup trigger). */
 export const onPending = (cb: () => void): Promise<UnlistenFn> => listen(EV_PENDING, () => cb());
 export const onStatus = (cb: () => void): Promise<UnlistenFn> => listen(EV_STATUS, () => cb());
-export const onNavigate = (cb: (tab: MainTab) => void): Promise<UnlistenFn> =>
-  listen<MainTab>(EV_NAVIGATE, (e) => cb(e.payload));
+/** Payload: a tab, optionally with a query ("report?plan=rules&path=…", M8). */
+export const onNavigate = (cb: (tab: MainTab, query: URLSearchParams) => void): Promise<UnlistenFn> =>
+  listen<string>(EV_NAVIGATE, (e) => {
+    const [tab, q] = e.payload.split("?");
+    cb(tab as MainTab, new URLSearchParams(q ?? ""));
+  });
 export const onFocusSearch = (cb: () => void): Promise<UnlistenFn> =>
   listen(EV_FOCUS_SEARCH, () => cb());
 export const onProgress = (cb: (p: TransferProgress) => void): Promise<UnlistenFn> =>

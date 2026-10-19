@@ -169,7 +169,9 @@ confirm = true
   - 크기는 바이트 정수 또는 `"10MB"`/`"1.5GB"`(1024 단위) 문자열.
   - `source_app`은 SPEC §13 결정 전까지 미지원: 지정한 규칙은 경고 후 매치되지 않음.
   - 규칙 파일의 오타(알 수 없는 키·변수, 잘못된 정규식)는 로드 시 오류로 거부.
-- `dest` 템플릿 변수: `{yyyy}` `{mm}` `{dd}` `{ext}` `{stem}` `{source_dir_name}`
+- `dest` 템플릿 변수: `{yyyy}` `{mm}` `{dd}` `{ext}` `{stem}` `{source_dir_name}` `{root}`(M8)
+  - (M8) 상대 경로와 `{root}`는 감시 폴더의 정리 방식이 정하는 기준 폴더를 따른다: `in_place`면 감시 폴더, `collect`면 `organize_root`(§14.1). 아래의 "원래 파일이 있던 폴더 기준"은 감시 폴더 밖의 파일에만 해당한다.
+  - (M8) 매치 조건 추가: `name_contains`(대소문자 무시 부분 일치), `newer_than_days`. 꺼진 규칙(`enabled = false`)도 로드 때 검사한다.
   - 날짜는 파일 수정시각(로컬 시간대). `~`는 홈으로 확장. 상대 경로는 원래 파일이 있던 폴더 기준이며, `..`/`.`는 lexical 정규화해 move_log와 출력에 깔끔한 절대경로만 남긴다(`받은 파일/../정리 결과` → `정리 결과`).
 - `confirm = false`인 규칙은 묻지 않고 이동(로그는 남김). `confirm = true`면 이동하지 않고 `pending`에 넣는다(M3 확인 UI 전까지 `tidy pending`으로 조회).
 - `enabled = false`로 규칙을 끌 수 있다. `ai_auto`는 M4에서 사용.
@@ -541,6 +543,7 @@ language = "ko"
 hotkey = "CmdOrCtrl+Shift+Space"
 quiet_mode = false
 start_on_login = true          # (M7) 로그인 시 트레이로 자동 시작 (릴리스 빌드)
+onboarded = true               # (M8) 첫 실행 마법사 완료. 없으면: [[watch]]가 있으면 완료로 봄 (§14.1)
 
 [[watch]]
 path = "~/Desktop"
@@ -553,6 +556,8 @@ path = "~/Downloads"
 kind = "local"
 recursive = false
 index_content = true
+mode = "collect"               # (M8) in_place(기본) | collect
+organize_root = "D:/정리"      # (M8) collect: 상대 경로 규칙·{root}가 가리키는 기준 폴더
 
 [[watch]]
 path = "Z:/공유/업무"           # 또는 "/Volumes/nas/업무"
@@ -681,6 +686,10 @@ send_content = false
     - 정리 제안: "규칙으로 정리 미리보기" / "AI 재구성 제안" / 지난 제안을 연다. 이동 체크박스를 바꾸면 before/after 트리가 바로 갱신된다. "선택한 N개 적용"은 확인 대화상자를 거치고, 적용 뒤에는 "이 재구성 되돌리기"가 있다.
   - **이동 기록 탭**(§9.6): 배치 단위 타임라인(시각, 규칙/AI/확인/재구성, 개수, 되돌림 상태)을 보여 준다. 파일 목록을 펼쳐 볼 수 있고 배치별로 되돌릴 수 있다. CLI는 `tidy log --batches`, `tidy undo --batch ID`다.
   - 리포트·재구성 객체는 코어 JSON(snake_case)을 그대로 IPC로 보낸다(`src/ipc/types.ts`에 같은 모양으로 정의).
+- **M8 추가** (§14.1)
+  - 창 4개: `wizard`(첫 실행 마법사, `#/wizard`)가 추가됐다. 첫 실행은 `onboarded`로 판정하고, 트레이 좌클릭·두 번째 실행도 설정이 끝나기 전에는 마법사를 연다. 감시는 마법사를 마친 뒤에만 돈다(상태줄 "설정 마법사를 마치면 감시를 시작합니다" + "마법사 열기").
+  - 설정 탭: 감시 폴더(정리 방식 열 추가) → 규칙 카드 → 접힌 "고급: rules.toml 직접 편집" → AI → DB → 기타("마법사 다시 실행"). rules.toml이 없을 때 에디터는 설명 주석만 보여 준다(예시 규칙을 자동으로 넣지 않는다).
+  - 리포트 탭은 `main:report?plan=rules&path=…`로 열리면 그 폴더의 규칙 정리 미리보기를 바로 만든다(마법사의 "기존 파일 미리보기").
 - **M7 추가**
   - 검색창 의미검색(§5.6 M7), 상태줄 "의미검색 켜짐 / 일시 중단", AI 설정의 "의미검색(임베딩 모델)" 칸(제공자·모델·주소·키 이름·API 키, 키 저장 위치 표시).
   - **자동 시작**: 설정 "로그인 시 자동 시작"(`general.start_on_login`, 기본 켜짐). `tauri-plugin-autostart`로 Windows `HKCU\…\Run`, macOS LaunchAgent, Linux `~/.config/autostart/Tidy.desktop`에 등록한다. 앱이 시작될 때와 설정을 저장할 때 OS 상태를 설정값에 맞춘다. 등록 명령에는 `--autostart`가 붙고, 이렇게 시작하면 창 없이 트레이에만 있는다. 개발 빌드는 `target/debug` 경로가 등록되지 않게 막는다(테스트는 `TIDY_DEV_AUTOSTART=1`).
@@ -761,6 +770,20 @@ send_content = false
 - **AI로 규칙 만들기**(AI 켠 경우): 감시 폴더 파일 목록(이름·확장자·크기·날짜만, 본문은 `send_content` 설정에 따름)을 보내 폴더 구조 + 규칙 초안을 받아 카드로 띄운다. 저장 전까지 아무것도 쓰지 않는다. 기존 재구성 엔진(§5.7)과 프롬프트를 공유한다.
 
 **설정 탭 재구성**: 상단 "감시 폴더"(폴더별 정리 방식 포함) → "규칙"(카드) → 접힌 "고급: rules.toml 직접 편집" → AI → 데이터베이스 → 기타. "마법사 다시 실행" 버튼.
+
+**M8 구현 확정 (구현 중 정한 세부)**
+- **상대 경로·`{root}`의 기준(앵커)**: `in_place` 폴더는 감시 폴더, `collect` 폴더는 `organize_root`다. 그래서 같은 규칙(`문서/{yyyy}-{mm}`)이 두 방식 모두에서 그대로 쓰인다 — `{root}/문서/…`와 `문서/…`는 같은 뜻이다. `collect`인데 `organize_root`가 없으면 감시 폴더를 앵커로 쓰고 경고한다(`Config::warnings`). 어느 감시 폴더에도 속하지 않는 파일(`tidy classify`, 감시 밖 폴더의 재구성)은 M1처럼 파일이 있던 폴더가 앵커다. 하위 폴더까지 감시(`recursive`)하면 하위 폴더 파일도 감시 폴더(가장 깊은 것)를 앵커로 쓴다.
+- 절대 경로 `dest`는 사용자가 쓴 그대로 따른다(M1~M7 규칙 호환). 카드 편집기는 앵커 밖으로 나가는 목적지에 "이 폴더 밖으로 옮깁니다" 경고를 붙인다. 마법사가 만드는 규칙은 모두 상대 경로라 밖으로 나가지 않는다.
+- **`onboarded` 판정과 이전 버전**: `[general] onboarded`가 `true`면 끝난 것이다. 키가 아예 없으면 `[[watch]]`가 하나 이상 있는 설정(M1~M7에서 이미 쓰던 설치)만 끝난 것으로 보고, 감시 폴더가 없는 설정(설치 과정·다른 기능이 만든 파일)은 마법사를 띄운다. `onboarded = false`면 언제나 마법사다.
+- **무이동 보장**: 감시 루프는 onboarded일 때만 돈다(상태줄 "설정 마법사를 마치면 감시를 시작합니다"). 마법사 단계의 선택은 화면에만 있고, "감시 시작"을 눌러야 `config.toml`(감시 폴더·정리 방식·`onboarded = true`)과 `rules.toml`(체크한 규칙만)을 쓴다. 3단계 AI 설정은 그 자리에서 저장되지만 감시가 멈춰 있으므로 아무것도 옮기지 않는다. 설정 탭에서 직접 감시 폴더를 저장하는 것도 명시적 설정이므로 `onboarded = true`가 된다. CLI `tidy watch`는 사용자가 직접 실행하는 명령이라 이 판정과 상관없이 돈다.
+- **마법사 창**: 별도 창(`wizard`, `#/wizard`). 첫 실행, 트레이 좌클릭(아직 안 끝났을 때), 설정의 "마법사 다시 실행"에서 연다. 다시 실행할 때 기존 규칙은 그대로 두고 새로 체크한 시작 규칙 중 같은 이름이 없는 것만 뒤에 덧붙인다.
+- **시작 규칙**(모두 상대 경로): 스크린샷 → `캡처/{yyyy}-{mm}` (png·jpg·jpeg + 이름 `^(스크린샷|Screenshot|Screen Shot|화면 캡처)`), 설치파일 → `설치파일`(확인 후), 문서 → `문서/{yyyy}-{mm}` (pdf·hwp·hwpx·doc·docx·xls·xlsx·ppt·pptx), 압축 → `압축 파일`, 사진·영상 → `사진·영상/{yyyy}-{mm}`, 기타 직접 추가(이름·확장자·폴더). "지금 N개 해당"은 항목마다 따로 센다(순서 무관). 카드 편집기의 매치 수는 실제 동작대로 "처음 맞는 규칙" 기준이다.
+- **새 매치 키**: `name_contains`(대소문자 무시 부분 일치, 카드의 "이름에 포함"), `newer_than_days`(최근 N일 안에 수정). 카드의 "수정일"은 `older_than_days`/`newer_than_days`다.
+- **라운드트립**: 카드는 `rules.toml`의 `[[rule]]` 표 하나에 대응하고 원래 위치(`origin`)를 기억한다. 저장하면 카드 순서대로 표를 다시 배열하되, 남은 표는 원래 표를 가져와 카드가 다루는 키(`name` `match.ext/name_regex/name_contains/min_size/max_size/older_than_days/newer_than_days/from_dir` `dest` `confirm` `enabled`)만 바꾼다. 주석, 키 순서, 카드가 모르는 키(`ai_auto`, `source_app`, 앞으로 생길 키)는 그대로 남는다. 파일 맨 앞 설명 주석은 첫 규칙이 바뀌어도 맨 앞에 남는다.
+- **매치 미리보기**: 감시 폴더의 기존 파일(감시 설정의 하위 폴더 여부·무시 패턴 그대로, 최대 20,000개, 네트워크 폴더는 건너뛰고 표시)을 대상으로 규칙별 `count`·예시 3개·예시 목적지를 낸다. 앱은 `check_rules`, CLI는 `tidy rules check [rules.toml]`.
+- **폴더 트리**: `list_dirs`(하위 폴더만, 숨김 제외, 펼칠 때만 읽음, 5초 넘으면 "응답 없음"), 시작점은 `fs_roots`(드라이브/`/`, 홈·바탕 화면·문서·다운로드, 감시 폴더, 기준 폴더). "새 폴더"는 `mover::create_dir`(파일시스템 변경은 mover만, CLAUDE.md 규칙 1)로 만든다.
+- **AI로 규칙 만들기**: 재구성(§5.7)의 트리 요약(`summarize_tree`)을 감시 폴더마다 만들어 보내고 `{rules:[{name, ext[], name_contains, dest(상대), confirm, reason}]}`를 받는다. 목적지는 상대 경로만 받고(절대 경로·`..`는 거부), 받은 초안은 "AI 제안" 표시가 붙은 카드로 편집기에 들어갈 뿐 저장 전까지 아무것도 쓰지 않는다. `ai_log` 목적은 `rules`.
+- (M9) 규칙 카드 옵션의 "개인정보면 암호화"는 자리만 있고 꺼져 있다.
 
 ### 14.2 M9 — 개인정보 탐지 + 암호화 보관
 

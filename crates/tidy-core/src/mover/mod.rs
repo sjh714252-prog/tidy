@@ -37,6 +37,37 @@ use crate::config::DuplicatePolicy;
 use crate::paths::normalize_lexical;
 use crate::store::{DecidedBy, NewMove, Store, StoreError};
 
+/// Create an empty folder (and missing parents) for a rule destination
+/// picked in the folder tree ("새 폴더", SPEC §14.1). Kept here because
+/// every filesystem change goes through the mover (CLAUDE.md rule 1). It
+/// moves no file, so there is nothing to log; an existing folder is fine.
+/// The name must be a single plain component (no separators, `..`).
+pub fn create_dir(parent: &Path, name: &str) -> io::Result<PathBuf> {
+    let name = name.trim();
+    let bad = name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains(['/', '\\'])
+        || name
+            .chars()
+            .any(|c| matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*') || c.is_control());
+    if bad {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("폴더 이름으로 쓸 수 없습니다: {name}"),
+        ));
+    }
+    if !parent.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("상위 폴더가 없습니다: {}", parent.display()),
+        ));
+    }
+    let dir = parent.join(name);
+    fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
 /// Marker in the names of temporary copies; the watcher ignores them.
 pub const TMP_MARKER: &str = ".tidy-tmp.";
 
@@ -380,6 +411,22 @@ fn normalize_file_path(p: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn create_dir_makes_one_plain_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = create_dir(tmp.path(), " 새 폴더 ").unwrap();
+        assert_eq!(d, tmp.path().join("새 폴더"));
+        assert!(d.is_dir());
+        assert!(
+            create_dir(tmp.path(), "새 폴더").is_ok(),
+            "existing is fine"
+        );
+        for bad in ["", "..", "a/b", "a\\b", "x:y"] {
+            assert!(create_dir(tmp.path(), bad).is_err(), "{bad}");
+        }
+        assert!(create_dir(&tmp.path().join("없음"), "x").is_err());
+    }
 
     fn mover() -> Mover {
         Mover::new(Store::open_in_memory().unwrap(), DuplicatePolicy::Skip)
