@@ -1,0 +1,6 @@
+# Cross-building the Windows NSIS installer from Linux (docs/packaging.md):
+#   rustup target add x86_64-pc-windows-gnu; apt install mingw-w64 nsis
+#   cd apps/desktop && npx tauri build --runner cargo --target x86_64-pc-windows-gnu --bundles nsis
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+ar = "x86_64-w64-mingw32-ar"
