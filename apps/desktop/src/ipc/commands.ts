@@ -11,6 +11,15 @@ import type {
   Report,
   StoredPlan,
   Decision,
+  DirEntry,
+  EditorState,
+  FinishResult,
+  FsRoot,
+  PreviewReport,
+  RuleCard,
+  RuleDrafts,
+  WatchFolder,
+  WizardInfo,
   LearnSuggestion,
   PendingItem,
   Resolution,
@@ -85,3 +94,20 @@ export const openPlan = (id: number) => invoke<PlanResult>("open_plan", { id });
 export const listBatches = (limit = 100) => invoke<BatchSummary[]>("list_batches", { limit });
 export const batchMoves = (batchId: string) => invoke<MoveLogEntry[]>("batch_moves", { batchId });
 export const undoBatch = (batchId: string) => invoke<UndoResult>("undo_batch", { batchId });
+
+// M8: wizard, rule editor, folder tree.
+export const wizardInfo = () => invoke<WizardInfo>("wizard_info");
+/** watches null = the configured folders. exclusive = first-match counts. */
+export const previewRules = (watches: WatchFolder[] | null, cards: RuleCard[], exclusive: boolean) =>
+  invoke<PreviewReport>("preview_rules", { watches, cards, exclusive });
+/** Writes config.toml + rules.toml and starts watching ("감시 시작"). */
+export const finishOnboarding = (args: { watches: WatchFolder[]; starters: string[]; custom: RuleCard[] }) =>
+  invoke<FinishResult>("finish_onboarding", { args });
+export const rulesEditor = (text: string, preview: boolean) => invoke<EditorState>("rules_editor", { text, preview });
+export const rulesFromCards = (text: string, cards: RuleCard[], preview: boolean) =>
+  invoke<EditorState>("rules_from_cards", { text, cards, preview });
+export const aiRuleDrafts = () => invoke<RuleDrafts>("ai_rule_drafts");
+export const fsRoots = () => invoke<FsRoot[]>("fs_roots");
+export const listDirs = (path: string) => invoke<DirEntry[]>("list_dirs", { path });
+export const makeDir = (parent: string, name: string) => invoke<string>("make_dir", { parent, name });
+export const openWizard = () => invoke<void>("open_wizard");

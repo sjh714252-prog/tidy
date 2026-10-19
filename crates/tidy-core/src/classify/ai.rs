@@ -123,7 +123,12 @@ impl AiClassifier {
         cfg: &Config,
         rules: &RuleSet,
     ) -> Result<Self, AiError> {
-        let mut tree_roots = rules.dest_roots();
+        let anchors: Vec<PathBuf> = cfg
+            .watches
+            .iter()
+            .map(|w| w.anchor().to_path_buf())
+            .collect();
+        let mut tree_roots = rules.dest_roots_for(&anchors);
         for p in cfg
             .index_only
             .iter()
@@ -150,7 +155,7 @@ impl AiClassifier {
                 tree_depth: cfg.ai.tree_depth,
                 history_k: cfg.ai.history_k,
                 tree_roots,
-                ai_auto_roots: rules.ai_auto_roots(),
+                ai_auto_roots: rules.ai_auto_roots_for(&anchors),
             },
             extractors: Extractors::default_set(),
             health: AiHealth::new(cfg.ai.unavailable_after),

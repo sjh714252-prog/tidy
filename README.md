@@ -133,3 +133,19 @@ cargo run -p tidy-cli -- report ~/Desktop --scan-depth 2        # 큰 폴더는 
 ```
 
 설치 파일(Windows `.msi`/`.exe`, macOS `.dmg`, Linux `.deb`/`.AppImage`)은 `v*` 태그를 푸시하면 GitHub Actions가 만듭니다. 로컬 빌드, 자동 시작(로그인 시 트레이), 제거 방법은 [`docs/packaging.md`](docs/packaging.md)를 보세요. Linux에서 API 키는 Secret Service(GNOME 키링/KWallet)에 저장됩니다.
+
+## 첫 실행 마법사와 규칙 카드 (M8)
+
+처음 켜면 마법사가 열립니다(설정 파일이 있어도 `[general] onboarded`가 없으면). **마법사를 끝내기 전에는 아무 파일도 옮기지 않습니다.**
+
+1. **감시 폴더**: 바탕 화면·다운로드 등을 고르고, 폴더마다 정리 방식을 정합니다 — *이 폴더 안에서 정리*(`문서/2026-10`처럼 하위 폴더) 또는 *지정 위치로 모으기*(`D:\정리` 아래로).
+2. **시작 규칙**: 스크린샷·설치파일·문서·압축·사진·영상 중 체크한 것만 규칙이 됩니다. 항목마다 "지금 N개 해당"이 보입니다.
+3. **AI(선택)**: 건너뛰면 규칙만.
+4. **감시 시작** → 기존 파일 중 규칙에 걸리는 것을 리포트 탭 미리보기로 볼 수 있습니다(승인 전 무이동).
+
+설정 탭의 규칙은 카드로 편집합니다(확장자 칩, 이름 포함, 크기·날짜, 폴더 트리, `{yyyy}` 같은 변수 칩, 드래그로 순서, 카드마다 "지금 N개"). `rules.toml`은 "고급"에서 직접 고칠 수 있고, 주석·순서·카드가 모르는 키는 그대로 남습니다.
+
+```
+cargo run -p tidy-cli -- rules check                      # 규칙별로 지금 걸리는 파일 수·예시 (이동 없음)
+cargo run -p tidy-cli -- rules starters --toml documents  # 시작 규칙을 TOML로
+```

@@ -10,8 +10,8 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 use tidy_core::classify::{learner, AiClassifier, RuleSet};
 use tidy_core::config::{
-    write_ai_settings, write_settings, AiPatch, ProviderConfig, ProviderKind, RootKind,
-    SettingsPatch, TimeWindow, WatchRoot,
+    write_ai_settings, write_settings, AiPatch, OrganizeMode, ProviderConfig, ProviderKind,
+    RootKind, SettingsPatch, TimeWindow, WatchRoot,
 };
 use tidy_core::engine::{new_batch_id, reindex_undo};
 use tidy_core::index::IndexOptions;
@@ -24,14 +24,14 @@ use tidy_core::store::PendingSource;
 use crate::state::AppState;
 use crate::{autostart, semantic, tray, watch, windows};
 
-type CmdResult<T> = Result<T, String>;
+pub type CmdResult<T> = Result<T, String>;
 
 /// Highlight markers (Unicode private use area): the frontend splits on
 /// them and renders <mark> without ever using innerHTML.
 const MARK_START: &str = "\u{E000}";
 const MARK_END: &str = "\u{E001}";
 
-async fn blocking<T: Send + 'static>(
+pub async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> CmdResult<T> + Send + 'static,
 ) -> CmdResult<T> {
     tauri::async_runtime::spawn_blocking(f)
@@ -75,13 +75,15 @@ pub struct StatusDto {
     pub ai_detail: Option<String>,
     /// Network watch folders that are unreachable right now (paused).
     pub offline: Vec<String>,
+    /// First-run wizard finished; watching (and moving) waits for it.
+    pub onboarded: bool,
     /// Semantic search: "off" | "ready" | "unavailable" (repeated failures).
     pub semantic_state: &'static str,
     /// Model when on, why not otherwise.
     pub semantic_detail: Option<String>,
 }
 
-fn status(app: &AppHandle) -> StatusDto {
+pub fn status(app: &AppHandle) -> StatusDto {
     let state = app.state::<AppState>();
     let (semantic_state, semantic_detail) = {
         let slot = state.semantic.lock().unwrap_or_else(|e| e.into_inner());
@@ -157,6 +159,7 @@ fn status(app: &AppHandle) -> StatusDto {
         } else {
             Vec::new()
         },
+        onboarded: inner.cfg.onboarded(),
         semantic_state,
         semantic_detail,
     }
@@ -190,6 +193,7 @@ pub async fn show_window(app: AppHandle, which: String) -> CmdResult<()> {
         _ if which == "main" => windows::show_main(&app, "activity"),
         _ if which == "search" => windows::show_search(&app),
         _ if which == "confirm" => windows::show_confirm(&app),
+        _ if which == "wizard" => windows::show_wizard(&app),
         _ => return Err(format!("unknown window {which}")),
     }
     Ok(())
@@ -646,6 +650,87 @@ pub struct WatchDto {
     /// "HH:MM-HH:MM": background body-text indexing only in this window.
     #[serde(default)]
     pub content_index_window: Option<String>,
+    /// "in_place" | "collect" (M8).
+    #[serde(default = "in_place")]
+    pub mode: String,
+    /// `collect`: folder the category folders go under.
+    #[serde(default)]
+    pub organize_root: Option<String>,
+}
+
+fn in_place() -> String {
+    "in_place".into()
+}
+
+impl From<&WatchRoot> for WatchDto {
+    fn from(w: &WatchRoot) -> Self {
+        WatchDto {
+            path: s(&w.path),
+            kind: match w.kind {
+                RootKind::Local => "local".into(),
+                RootKind::Network => "network".into(),
+            },
+            recursive: w.recursive,
+            index_content: w.index_content,
+            poll_interval_s: w.poll_interval_s,
+            poll_only: w.poll_only,
+            content_index_window: w.content_index_window.clone(),
+            mode: w.mode.as_str().into(),
+            organize_root: w.organize_root.as_deref().map(s),
+        }
+    }
+}
+
+/// Validate the settings screen's / wizard's folder rows.
+pub fn watches_from_dtos(rows: &[WatchDto]) -> CmdResult<Vec<WatchRoot>> {
+    let mut watches = Vec::new();
+    for w in rows {
+        let path = w.path.trim();
+        if path.is_empty() {
+            continue;
+        }
+        let network = w.kind == "network";
+        let window = w
+            .content_index_window
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        if let Some(win) = &window {
+            TimeWindow::parse(win).map_err(|e| format!("{path}: 본문 인덱싱 시간대 — {e}"))?;
+        }
+        let mode = match w.mode.as_str() {
+            "collect" => OrganizeMode::Collect,
+            _ => OrganizeMode::InPlace,
+        };
+        let organize_root = w
+            .organize_root
+            .as_deref()
+            .map(str::trim)
+            .filter(|r| !r.is_empty())
+            .map(|r| tidy_core::config::expand_home(Path::new(r)));
+        if mode == OrganizeMode::Collect && organize_root.is_none() {
+            return Err(format!(
+                "{path}: '지정 위치로 모으기'는 기준 폴더를 골라야 합니다"
+            ));
+        }
+        watches.push(WatchRoot {
+            path: tidy_core::config::expand_home(Path::new(path)),
+            kind: if network {
+                RootKind::Network
+            } else {
+                RootKind::Local
+            },
+            recursive: w.recursive,
+            index_content: w.index_content,
+            poll_interval_s: w.poll_interval_s.filter(|s| *s > 0),
+            content_index_window: window.filter(|_| network),
+            poll_only: network && w.poll_only,
+            mode,
+            organize_root: organize_root.filter(|_| mode == OrganizeMode::Collect),
+        });
+    }
+    Ok(watches)
 }
 
 #[derive(Debug, Serialize)]
@@ -665,9 +750,15 @@ pub struct SettingsDto {
     pub autostart: autostart::AutostartDto,
 }
 
-/// Shown in the rules editor when there is no rules.toml yet (not saved
-/// until the user presses Save).
-const RULES_TEMPLATE: &str = include_str!("../../../../rules.example.toml");
+/// Shown when there is no rules.toml yet: explanations only, no rules
+/// (SPEC §14.1 — example rules are never applied without being picked).
+pub const RULES_HEADER: &str = "\
+# Tidy 규칙 (위에서부터 검사하고 처음 맞는 규칙 하나만 적용)
+# 목적지(dest)가 상대 경로이거나 {root}로 시작하면 감시 폴더의 정리 방식을 따릅니다:
+# 이 폴더 안에서 정리(in_place) / 지정 위치로 모으기(collect, organize_root 아래).
+# 예시와 모든 키: rules.example.toml
+
+";
 
 #[tauri::command]
 pub async fn get_settings(app: AppHandle) -> CmdResult<SettingsDto> {
@@ -678,26 +769,11 @@ pub async fn get_settings(app: AppHandle) -> CmdResult<SettingsDto> {
         let rules_text = if rules_exists {
             std::fs::read_to_string(&cfg.classify.rules).map_err(|e| e.to_string())?
         } else {
-            RULES_TEMPLATE.to_string()
+            RULES_HEADER.to_string()
         };
         Ok(SettingsDto {
             config_path: s(&state.config_path),
-            watches: cfg
-                .watches
-                .iter()
-                .map(|w| WatchDto {
-                    path: s(&w.path),
-                    kind: match w.kind {
-                        RootKind::Local => "local".into(),
-                        RootKind::Network => "network".into(),
-                    },
-                    recursive: w.recursive,
-                    index_content: w.index_content,
-                    poll_interval_s: w.poll_interval_s,
-                    poll_only: w.poll_only,
-                    content_index_window: w.content_index_window.clone(),
-                })
-                .collect(),
+            watches: cfg.watches.iter().map(WatchDto::from).collect(),
             rules_path: s(&cfg.classify.rules),
             rules_text,
             rules_exists,
@@ -758,36 +834,7 @@ fn default_true() -> bool {
 pub async fn save_settings(app: AppHandle, args: SaveSettingsArgs) -> CmdResult<StatusDto> {
     blocking(move || {
         RuleSet::from_toml(&args.rules_text).map_err(|e| format!("규칙 오류: {e}"))?;
-        let mut watches = Vec::new();
-        for w in &args.watches {
-            let path = w.path.trim();
-            if path.is_empty() {
-                continue;
-            }
-            let network = w.kind == "network";
-            let window = w
-                .content_index_window
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string);
-            if let Some(win) = &window {
-                TimeWindow::parse(win).map_err(|e| format!("{path}: 본문 인덱싱 시간대 — {e}"))?;
-            }
-            watches.push(WatchRoot {
-                path: PathBuf::from(path),
-                kind: if network {
-                    RootKind::Network
-                } else {
-                    RootKind::Local
-                },
-                recursive: w.recursive,
-                index_content: w.index_content,
-                poll_interval_s: w.poll_interval_s.filter(|s| *s > 0),
-                content_index_window: window.filter(|_| network),
-                poll_only: network && w.poll_only,
-            });
-        }
+        let watches = watches_from_dtos(&args.watches)?;
         let hotkey = if args.hotkey.trim().is_empty() {
             tidy_core::config::General::default().hotkey
         } else {
@@ -805,6 +852,8 @@ pub async fn save_settings(app: AppHandle, args: SaveSettingsArgs) -> CmdResult<
             quiet_mode: args.quiet_mode,
             hotkey: hotkey.clone(),
             start_on_login: args.start_on_login,
+            // Configuring folders here by hand is an explicit setup (SPEC §14.1).
+            onboarded: (!args.watches.is_empty()).then_some(true),
         };
         write_settings(&state.config_path, &patch).map_err(|e| e.to_string())?;
         // Rules path comes from the (re)loaded config.

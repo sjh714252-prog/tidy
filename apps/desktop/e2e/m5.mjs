@@ -45,10 +45,17 @@ await sleep(800);
 
 // A. watch the folder (no process-existing: files above stay put)
 {
-  await main.getByRole("button", { name: "설정" }).click();
+  await main.getByRole("button", { name: "설정", exact: true }).click();
   await sleep(500);
   process.env.PROMPT_ANSWER = DESK;
   await main.getByRole("button", { name: "폴더 추가…" }).click();
+  // M8: example rules are never applied implicitly any more — use them on purpose.
+  const d = main.locator("details.advanced");
+  if (!(await d.evaluate((e) => e.open))) await d.locator("summary").click();
+  await main
+    .locator("textarea.rules")
+    .fill(fs.readFileSync(new URL("../../../rules.example.toml", import.meta.url), "utf8"));
+  await sleep(800);
   await main.getByRole("button", { name: "저장", exact: true }).click();
   await sleep(3000);
   const untouched = ["report-a.pdf", "archive.zip", "notes.txt"].every((f) => fs.existsSync(path.join(DESK, f)));

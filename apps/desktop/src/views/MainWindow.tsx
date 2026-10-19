@@ -7,6 +7,9 @@ import type { MainTab } from "../ipc/types";
 import { useActivity } from "../store/activity";
 import { usePending } from "../store/pending";
 import { useStatus } from "../store/status";
+import { useSettings } from "../store/settings";
+import { useAiSettings } from "../store/aiSettings";
+import { useReport } from "../store/report";
 import { ActivityView } from "./ActivityView";
 import { HistoryView } from "./HistoryView";
 import { PendingView } from "./PendingView";
@@ -24,6 +27,15 @@ const TABS: { id: MainTab; label: string }[] = [
 /** Main window: status bar + tabs (활동 / 대기열 / 설정). Hidden to tray on close. */
 export function MainWindow() {
   const [tab, setTab] = useState<MainTab>("activity");
+  const settingsDirty = useSettings((s) => s.dirty);
+  const aiDirty = useAiSettings((s) => s.dirty);
+  // Leaving the settings tab with unsaved edits asks first (issue #8).
+  const switchTab = (next: MainTab) => {
+    if (tab === "settings" && next !== "settings" && (settingsDirty() || aiDirty())) {
+      if (!window.confirm("설정에 저장하지 않은 변경이 있습니다. 저장하지 않고 이동할까요?")) return;
+    }
+    setTab(next);
+  };
   const { status, refresh, setPaused } = useStatus();
   const refreshPending = usePending((s) => s.refresh);
   const push = useActivity((s) => s.push);
@@ -33,7 +45,18 @@ export function MainWindow() {
     void refresh();
     void refreshPending();
     const subs = [
-      onNavigate(setTab),
+      onNavigate((t, q) => {
+        // The event reaches every window; only main-window tabs apply here.
+        if (!TABS.some((x) => x.id === t)) return;
+        setTab(t);
+        // Wizard "기존 파일 미리보기": rules plan of a watch folder (nothing
+        // moves until the user applies selected items).
+        if (t === "report" && q.get("plan") === "rules" && q.get("path")) {
+          const r = useReport.getState();
+          r.setPath(q.get("path") ?? "");
+          void r.makePlan("rules");
+        }
+      }),
       onStatus(() => void refresh()),
       onProgress(updateProgress),
       onPending(() => {
@@ -59,7 +82,7 @@ export function MainWindow() {
         <div className="brand">Tidy</div>
         <nav>
           {TABS.map((t) => (
-            <button key={t.id} className={tab === t.id ? "tab on" : "tab"} onClick={() => setTab(t.id)}>
+            <button key={t.id} className={tab === t.id ? "tab on" : "tab"} onClick={() => switchTab(t.id)}>
               {t.label}
               {t.id === "pending" && status?.pendingCount ? <span className="badge">{status.pendingCount}</span> : null}
             </button>
@@ -98,7 +121,9 @@ function StatusBar() {
   const status = useStatus((s) => s.status);
   const progress = useProgress((s) => s.current);
   if (!status) return null;
-  const state = status.paused
+  const state = !status.onboarded
+    ? "설정 마법사를 마치면 감시를 시작합니다"
+    : status.paused
     ? "일시정지됨"
     : status.watching.length
       ? `감시 중: ${status.watching.join(" · ")}`
@@ -106,6 +131,11 @@ function StatusBar() {
   return (
     <div className="statusbar">
       <span>{state}</span>
+      {!status.onboarded && (
+        <button className="link" onClick={() => void ipc.openWizard()}>
+          마법사 열기
+        </button>
+      )}
       <span className="muted">
         인덱스 {status.filesIndexed.toLocaleString()}개{status.indexing ? " (인덱싱 중…)" : ""}
       </span>

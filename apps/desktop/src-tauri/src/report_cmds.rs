@@ -137,12 +137,16 @@ pub async fn plan_rules(
         let cfg = app.state::<AppState>().config();
         let rules = RuleSet::load(&cfg.classify.rules).map_err(err)?;
         let store = Store::open(&cfg.store.db_path()).map_err(err)?;
-        let plan = restructure::plan_from_rules(
-            &expand(&path),
+        let root = expand(&path);
+        let canon = dunce::canonicalize(&root).unwrap_or_else(|_| root.clone());
+        let anchors = tidy_core::classify::Anchors::from_config(&cfg);
+        let plan = restructure::plan_from_rules_in(
+            &root,
             &rules,
             recursive,
             &cfg.classify.ignore_globs,
             &protected(&cfg, &protect),
+            Some(anchors.for_path(&canon).unwrap_or(&canon)),
         )
         .map_err(err)?;
         let plan = restructure::save(&store, plan).map_err(err)?;

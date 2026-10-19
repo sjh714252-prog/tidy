@@ -47,6 +47,17 @@
         "skipTaskbar": true,
         "resizable": false,
         "focus": false
+      },
+      {
+        "label": "wizard",
+        "title": "Tidy 시작하기",
+        "url": "index.html#/wizard",
+        "width": 820,
+        "height": 680,
+        "minWidth": 640,
+        "minHeight": 520,
+        "visible": false,
+        "center": true
       }
     ],
     "security": {

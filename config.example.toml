@@ -13,6 +13,7 @@
 
 [general]
 language = "ko"
+# onboarded = true       # 첫 실행 마법사를 마쳤는지(M8). 앱이 씁니다.
 start_on_login = true    # 로그인 시 트레이로 자동 시작 (설치판). 앱 설정에서도 바꿀 수 있습니다.
 
 [[watch]]
@@ -24,6 +25,10 @@ recursive = false        # 하위 폴더까지 감시하려면 true
 path = "~/Downloads"
 kind = "local"
 recursive = false
+# 정리 방식(M8): "in_place"(기본) = 이 폴더 안에 하위 폴더를 만들어 정리,
+# "collect" = organize_root 아래로 모으기. 규칙의 상대 경로 목적지와 {root}가 이 기준을 따릅니다.
+# mode = "collect"
+# organize_root = 'D:\정리' 
 
 # NAS·공유 폴더(M6). kind = "network"이면:
 #   - OS 변경 알림에 더해 poll_interval_s(기본 120초, 최소 5초)마다 폴더 목록을 비교합니다.
