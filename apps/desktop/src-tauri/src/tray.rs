@@ -60,7 +60,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
                 ..
             } = event
             {
-                windows::show_main(tray.app_handle(), "activity");
+                windows::show_start(tray.app_handle());
             }
         });
     if let Some(icon) = app.default_window_icon() {

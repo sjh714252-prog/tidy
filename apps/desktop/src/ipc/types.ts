@@ -21,6 +21,8 @@ export interface Status {
   aiDetail: string | null;
   /** Network watch folders unreachable right now (paused, retried every 60 s). */
   offline: string[];
+  /** First-run wizard finished; nothing is watched or moved before that (M8). */
+  onboarded: boolean;
   /** Semantic search: off | ready | unavailable (repeated failures, words only). */
   semanticState: "off" | "ready" | "unavailable";
   /** Embedding model when on, the reason otherwise. */
@@ -136,7 +138,13 @@ export interface WatchFolder {
   pollOnly: boolean;
   /** Network only: "HH:MM-HH:MM" window for background body-text indexing. */
   contentIndexWindow: string | null;
+  /** M8: in_place = sub-folders inside this folder; collect = under organizeRoot. */
+  mode: OrganizeMode;
+  /** collect: folder the category folders go under. */
+  organizeRoot: string | null;
 }
+
+export type OrganizeMode = "in_place" | "collect";
 
 export interface Settings {
   configPath: string;
@@ -188,6 +196,119 @@ export interface Activity {
 }
 
 export type MainTab = "activity" | "pending" | "report" | "history" | "settings";
+
+// ── M8: rule cards, wizard, folder tree ─────────────────────────────────
+
+/** One [[rule]] of rules.toml as the card editor shows it ("" / null = not set). */
+export interface RuleCard {
+  /** Index of the [[rule]] table it came from; null = new. */
+  origin: number | null;
+  name: string;
+  enabled: boolean;
+  confirm: boolean;
+  ext: string[];
+  nameContains: string;
+  nameRegex: string;
+  /** Bytes ("1048576") or "10MB". */
+  minSize: string;
+  maxSize: string;
+  olderThanDays: number | null;
+  newerThanDays: number | null;
+  fromDir: string;
+  dest: string;
+  /** Keys the card does not edit (kept as they are, e.g. ai_auto). */
+  otherKeys: string[];
+}
+
+/** Core JSON (snake_case). */
+export interface RulePreview {
+  index: number;
+  name: string;
+  count: number;
+  examples: string[];
+  sample_dest: string | null;
+}
+
+export interface PreviewReport {
+  rules: RulePreview[];
+  scanned: number;
+  unmatched: number;
+  truncated: boolean;
+  skipped: string[];
+  missing: string[];
+}
+
+export interface EditorState {
+  text: string;
+  ok: boolean;
+  error: string | null;
+  cards: RuleCard[] | null;
+  preview: PreviewReport | null;
+}
+
+export interface Starter {
+  id: string;
+  title: string;
+  summary: string;
+  card: RuleCard;
+}
+
+export interface SuggestedFolder {
+  label: string;
+  path: string;
+  exists: boolean;
+  checked: boolean;
+}
+
+export interface WizardInfo {
+  onboarded: boolean;
+  watches: WatchFolder[];
+  suggested: SuggestedFolder[];
+  starters: Starter[];
+  existingRules: string[];
+}
+
+export interface FinishResult {
+  status: Status;
+  existingFiles: number;
+  matchingFiles: number;
+  folders: string[];
+}
+
+export interface FsRoot {
+  label: string;
+  path: string;
+  kind: "drive" | "home" | "favorite" | "watch" | "anchor";
+}
+
+export interface DirEntry {
+  name: string;
+  path: string;
+}
+
+/** Core JSON (snake_case). */
+export interface RuleDrafts {
+  summary: string;
+  drafts: { card: RuleCard; reason: string }[];
+  rejected: { name: string; dest: string; reason: string }[];
+}
+
+export const emptyCard = (): RuleCard => ({
+  origin: null,
+  name: "",
+  enabled: true,
+  confirm: false,
+  ext: [],
+  nameContains: "",
+  nameRegex: "",
+  minSize: "",
+  maxSize: "",
+  olderThanDays: null,
+  newerThanDays: null,
+  fromDir: "",
+  dest: "",
+  otherKeys: [],
+});
 
 export type AiProvider = "anthropic" | "openai" | "ollama" | "";
 

@@ -147,7 +147,8 @@ fn start(app: &AppHandle) {
     // registration in save_settings) is not wiped by the Started event.
     state.clear_error();
     let cfg = state.config();
-    if cfg.watches.is_empty() {
+    // SPEC §14.1: nothing moves before the first-run wizard is finished.
+    if cfg.watches.is_empty() || !cfg.onboarded() {
         let _ = app.emit(EV_STATUS, ());
         return;
     }

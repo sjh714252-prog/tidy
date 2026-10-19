@@ -41,40 +41,31 @@ pub struct PreviewReport {
     pub missing: Vec<PathBuf>,
 }
 
-/// Count matches of every enabled rule over the files now in `watches`.
-/// `exclusive`: a file counts only for the first rule it matches (what
-/// would really happen); otherwise for every rule it matches (wizard
-/// checklist, where rules are picked independently).
-pub fn preview(
-    rules: &RuleSet,
-    watches: &[WatchRoot],
-    ignore_globs: &[String],
-    exclusive: bool,
-) -> PreviewReport {
+/// Files now in the watch folders, with the anchor their relative rule
+/// destinations use. Collect once, match many times ([`match_files`]).
+#[derive(Debug, Clone, Default)]
+pub struct FileSample {
+    pub files: Vec<(FileFacts, PathBuf)>,
+    pub truncated: bool,
+    pub skipped: Vec<PathBuf>,
+    pub missing: Vec<PathBuf>,
+}
+
+/// List the files of `watches` as the watcher would see them (recursion
+/// and ignore globs as configured), at most [`MAX_FILES`]. Network folders
+/// are skipped (slow); missing folders are reported.
+pub fn collect_files(watches: &[WatchRoot], ignore_globs: &[String]) -> FileSample {
     let filter =
         IgnoreFilter::new(ignore_globs).unwrap_or_else(|_| IgnoreFilter::new(&[]).unwrap());
     let anchors = Anchors::from_watches(watches);
-    let mut report = PreviewReport {
-        rules: rules
-            .rules()
-            .iter()
-            .map(|r| RulePreview {
-                index: r.index,
-                name: r.name.clone(),
-                count: 0,
-                examples: Vec::new(),
-                sample_dest: None,
-            })
-            .collect(),
-        ..Default::default()
-    };
+    let mut out = FileSample::default();
     'roots: for w in watches {
         if w.kind == RootKind::Network {
-            report.skipped.push(w.path.clone());
+            out.skipped.push(w.path.clone());
             continue;
         }
         if !w.path.is_dir() {
-            report.missing.push(w.path.clone());
+            out.missing.push(w.path.clone());
             continue;
         }
         let depth = if w.recursive { usize::MAX } else { 1 };
@@ -88,38 +79,79 @@ pub fn preview(
             if !e.file_type().is_file() || filter.is_ignored(e.path()) {
                 continue;
             }
-            if report.scanned >= MAX_FILES {
-                report.truncated = true;
+            if out.files.len() >= MAX_FILES {
+                out.truncated = true;
                 break 'roots;
             }
-            report.scanned += 1;
             let Ok(facts) = FileFacts::from_path(e.path()) else {
                 continue;
             };
-            let anchor = anchors.for_path(e.path()).or(Some(w.anchor()));
-            let mut hit = false;
-            for (r, p) in rules.rules().iter().zip(report.rules.iter_mut()) {
-                if !r.matches(&facts) {
-                    continue;
-                }
-                hit = true;
-                p.count += 1;
-                if p.examples.len() < EXAMPLES {
-                    p.examples.push(facts.name.clone());
-                }
-                if p.sample_dest.is_none() {
-                    p.sample_dest = Some(r.render_dest_in(&facts, anchor));
-                }
-                if exclusive {
-                    break;
-                }
+            let anchor = anchors
+                .for_path(e.path())
+                .unwrap_or(w.anchor())
+                .to_path_buf();
+            out.files.push((facts, anchor));
+        }
+    }
+    out
+}
+
+/// Count matches of every enabled rule over `sample`. `exclusive`: a file
+/// counts only for the first rule it matches (what would really happen);
+/// otherwise for every rule it matches (wizard checklist, where rules are
+/// picked independently).
+pub fn match_files(rules: &RuleSet, sample: &FileSample, exclusive: bool) -> PreviewReport {
+    let mut report = PreviewReport {
+        rules: rules
+            .rules()
+            .iter()
+            .map(|r| RulePreview {
+                index: r.index,
+                name: r.name.clone(),
+                count: 0,
+                examples: Vec::new(),
+                sample_dest: None,
+            })
+            .collect(),
+        scanned: sample.files.len(),
+        truncated: sample.truncated,
+        skipped: sample.skipped.clone(),
+        missing: sample.missing.clone(),
+        ..Default::default()
+    };
+    for (facts, anchor) in &sample.files {
+        let mut hit = false;
+        for (r, p) in rules.rules().iter().zip(report.rules.iter_mut()) {
+            if !r.matches(facts) {
+                continue;
             }
-            if !hit {
-                report.unmatched += 1;
+            hit = true;
+            p.count += 1;
+            if p.examples.len() < EXAMPLES {
+                p.examples.push(facts.name.clone());
             }
+            if p.sample_dest.is_none() {
+                p.sample_dest = Some(r.render_dest_in(facts, Some(anchor)));
+            }
+            if exclusive {
+                break;
+            }
+        }
+        if !hit {
+            report.unmatched += 1;
         }
     }
     report
+}
+
+/// [`collect_files`] + [`match_files`].
+pub fn preview(
+    rules: &RuleSet,
+    watches: &[WatchRoot],
+    ignore_globs: &[String],
+    exclusive: bool,
+) -> PreviewReport {
+    match_files(rules, &collect_files(watches, ignore_globs), exclusive)
 }
 
 #[cfg(test)]
