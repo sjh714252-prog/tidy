@@ -51,6 +51,25 @@ impl SecurityPolicy {
 
 pub const VAULT_KEY_REF: &str = "tidy/vault";
 pub const VAULT_PREVIOUS_REF: &str = "tidy/vault-previous";
+
+/// Keychain entries actually used: `tidy/vault` and `tidy/vault-previous`,
+/// unless `TIDY_VAULT_KEYCHAIN` names another service (the headless GUI
+/// tests use a throw-away one so they never touch a real vault password).
+pub fn vault_key_ref() -> String {
+    format!("{}/vault", keychain_service())
+}
+
+fn previous_key_ref() -> String {
+    format!("{}/vault-previous", keychain_service())
+}
+
+fn keychain_service() -> String {
+    std::env::var("TIDY_VAULT_KEYCHAIN")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && !s.contains('/'))
+        .unwrap_or_else(|| "tidy".into())
+}
 /// Older passwords kept (newest first).
 const MAX_PREVIOUS: usize = 20;
 pub const MIN_PASSWORD_CHARS: usize = 8;
@@ -128,10 +147,10 @@ impl VaultKeys {
     /// Read both entries from the keychain. A missing password is not an
     /// error here (`current()` reports it when one is needed).
     pub fn from_keychain() -> Result<Self, SecurityError> {
-        let current = crate::ai::keys::get_key(VAULT_KEY_REF)
+        let current = crate::ai::keys::get_key(&vault_key_ref())
             .map_err(|e| SecurityError::Keychain(e.to_string()))?
             .map(Zeroizing::new);
-        let previous = crate::ai::keys::get_key(VAULT_PREVIOUS_REF)
+        let previous = crate::ai::keys::get_key(&previous_key_ref())
             .map_err(|e| SecurityError::Keychain(e.to_string()))?
             .and_then(|j| serde_json::from_str::<Vec<String>>(&j).ok())
             .unwrap_or_default()
@@ -160,9 +179,9 @@ pub fn set_vault_password(new: &str) -> Result<(), SecurityError> {
         );
         prev.truncate(MAX_PREVIOUS);
         let json = Zeroizing::new(serde_json::to_string(&prev).unwrap_or_default());
-        crate::ai::keys::set_key(VAULT_PREVIOUS_REF, &json).map_err(kc)?;
+        crate::ai::keys::set_key(&previous_key_ref(), &json).map_err(kc)?;
     }
-    crate::ai::keys::set_key(VAULT_KEY_REF, new).map_err(kc)
+    crate::ai::keys::set_key(&vault_key_ref(), new).map_err(kc)
 }
 
 /// What the settings screen shows (never the password itself).

@@ -2001,7 +2001,7 @@ fn cmd_vault(config: Option<PathBuf>, cmd: VaultCmd) -> Result<()> {
             println!(
                 "stored in {}: {} (이전 비밀번호 {}개 보관)",
                 st.store,
-                security::VAULT_KEY_REF,
+                security::vault_key_ref(),
                 st.previous
             );
             Ok(())

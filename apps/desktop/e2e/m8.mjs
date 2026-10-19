@@ -12,6 +12,7 @@
 //   F. rule cards: add card, extension chip, folder tree pick + "새 폴더",
 //      reorder (drag + ↑), TOML synced both ways (header comments kept),
 //      live match count, invalid TOML → cards read-only, save → new rule moves
+//      (the card's "개인정보면 암호화" option is M9's, see e2e/m9.mjs)
 //   G. "마법사 다시 실행" reopens the wizard with the current folders/rules
 //
 // Run: S=/tmp/tidy-e2e bash e2e/run-headless.sh m8
@@ -234,6 +235,9 @@ await sleep(1000);
   // Reorder by dragging the handle (all cards on screen: tall viewport),
   // then with the ↑/↓ buttons.
   await main.setViewportSize({ width: 1100, height: 2400 });
+  // The settings page is long (M9 security section): start with the first
+  // card at the top so both ends of the drag are on screen.
+  await cards.nth(0).evaluate((e) => e.scrollIntoView({ block: "start" }));
   await sleep(300);
   await card.locator(".handle").dragTo(cards.nth(0).locator("header"));
   await sleep(1200);
@@ -278,7 +282,8 @@ await sleep(1000);
   await ta.fill(toml);
   await sleep(1200);
   ok("F", "고치면 카드 다시 편집 가능", !(await main.locator("[data-testid=rule-card] input.rule-name").first().isDisabled()));
-  ok("F", "(M9) 암호화 토글은 비활성", await main.locator("label", { hasText: "(M9) 개인정보면 암호화" }).first().locator("input").isDisabled());
+  // M8 left a disabled placeholder here; M9 made it the real option (e2e/m9.mjs).
+  ok("F", "카드 옵션: 개인정보면 암호화 (M9, 꺼진 채 시작)", !(await main.locator("[data-testid=encrypt-toggle]").first().isChecked()));
   await main.screenshot({ path: `${SHOT}/m8-F-editor.png`, fullPage: true });
   await main.getByRole("button", { name: "저장", exact: true }).click();
   await sleep(3000);
