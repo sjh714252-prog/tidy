@@ -4,6 +4,8 @@ import type { AiProvider, AiSettings } from "../ipc/types";
 
 interface AiSettingsState {
   draft: AiSettings | null;
+  /** Last saved values (what the backend has); `dirty()` compares against it. */
+  loaded: AiSettings | null;
   /** Typed into the key field; sent once on save, then cleared. Never loaded back. */
   apiKey: string;
   /** Key for the embedding model (OpenAI-compatible); same rules as apiKey. */
@@ -11,7 +13,10 @@ interface AiSettingsState {
   busy: boolean;
   message: string | null;
   error: string | null;
-  load: () => Promise<void>;
+  /** Reload from the backend. Unsaved edits are kept unless `force` (#8). */
+  load: (force?: boolean) => Promise<void>;
+  /** True when the draft or a typed key differs from what is saved. */
+  dirty: () => boolean;
   patch: (p: Partial<AiSettings>) => void;
   setProvider: (p: AiProvider) => void;
   setApiKey: (k: string) => void;
@@ -37,17 +42,30 @@ const EMBED_DEFAULTS: Record<"openai" | "ollama", Partial<AiSettings>> = {
 
 export const useAiSettings = create<AiSettingsState>((set, get) => ({
   draft: null,
+  loaded: null,
   apiKey: "",
   embedApiKey: "",
   busy: false,
   message: null,
   error: null,
-  load: async () => {
+  load: async (force = false) => {
     try {
-      set({ draft: await ipc.getAiSettings(), error: null });
+      const fresh = await ipc.getAiSettings();
+      // Don't wipe what the user typed but hasn't saved yet (issue #8); the
+      // settings tab remounts this section on every visit.
+      if (force || !get().dirty()) {
+        set({ draft: fresh, loaded: fresh, apiKey: "", embedApiKey: "", error: null });
+      } else {
+        set({ loaded: fresh });
+      }
     } catch (e) {
       set({ error: String(e) });
     }
+  },
+  dirty: () => {
+    const { loaded, draft, apiKey, embedApiKey } = get();
+    if (apiKey.trim() || embedApiKey.trim()) return true;
+    return !!loaded && !!draft && JSON.stringify(loaded) !== JSON.stringify(draft);
   },
   patch: (p) => {
     const d = get().draft;
@@ -75,6 +93,7 @@ export const useAiSettings = create<AiSettingsState>((set, get) => ({
       const saved = await ipc.saveAiSettings(d, get().apiKey.trim() || null, get().embedApiKey.trim() || null);
       set({
         draft: saved,
+        loaded: saved,
         apiKey: "",
         embedApiKey: "",
         message: "AI 설정을 저장했습니다. 감시를 다시 시작하고, 의미검색 모델이 있으면 임베딩을 시작합니다.",
@@ -93,8 +112,11 @@ export const useAiSettings = create<AiSettingsState>((set, get) => ({
     if (!d || !ref) return;
     try {
       const s = await ipc.deleteApiKey(ref);
+      const next = { ...d, keyStored: s.keyStored, embedKeyStored: s.embedKeyStored };
+      const loaded = get().loaded;
       set({
-        draft: { ...d, keyStored: s.keyStored, embedKeyStored: s.embedKeyStored },
+        draft: next,
+        loaded: loaded ? { ...loaded, keyStored: s.keyStored, embedKeyStored: s.embedKeyStored } : loaded,
         message: "키체인에서 키를 지웠습니다.",
       });
     } catch (e) {

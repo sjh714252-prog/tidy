@@ -59,17 +59,35 @@ await sleep(1000);
   const ai = main.locator("section").filter({ has: main.locator("h2", { hasText: "AI 분류" }) }).last();
   ok("B", "AI 설정 섹션 표시", (await ai.count()) === 1, `sections=${await main.locator("section").count()}`);
   await ai.locator("label.row", { hasText: "AI 분류 사용" }).locator("input[type=checkbox]").check();
+  // Issue #8: unsaved AI edits survive a tab round-trip (dialog: stay / leave) …
+  // (the page-level dialog handler accepts the "leave without saving?" confirm)
+  await main.getByRole("button", { name: "활동" }).click();
+  await sleep(300);
+  await main.getByRole("button", { name: "설정", exact: true }).click();
+  await sleep(800);
+  const kept = await ai.locator("label.row", { hasText: "AI 분류 사용" }).locator("input[type=checkbox]").isChecked();
+  ok("B", "#8 저장 전 탭 이동해도 AI 입력 유지", kept);
+  const hint = await main.locator(".savebar").innerText();
+  ok("B", "#8 저장바에 '저장하지 않은 변경' 표시", hint.includes("저장하지 않은"), hint);
   await ai.locator("select").first().selectOption("ollama");
   await sleep(300);
   const base = ai.locator("label.row", { hasText: "주소" }).locator("input");
   if (await base.count()) await base.fill("http://127.0.0.1:9");
-  await ai.getByRole("button", { name: "AI 설정 저장" }).click();
+  // Issue #8: the single bottom "저장" saves the AI section too.
+  await main.getByRole("button", { name: "저장", exact: true }).click();
   await sleep(2500);
   const msg = await ai.locator("p.ok").innerText().catch(() => "");
   const err = await ai.locator("p.error").innerText().catch(() => "");
   ok("B", "AI 설정 저장 메시지", msg.length > 0 && !err, `msg=${msg} err=${err}`);
   const cfg = fs.readFileSync(path.join(T, "config.toml"), "utf8");
   ok("B", "config.toml [ai] 기록, 키 문자열 없음", /\[ai/.test(cfg) && !/sk-|api_key *= *"[^"]+"/.test(cfg), cfg.match(/\[ai[^\n]*/)?.[0] ?? "");
+  await main.reload();
+  await main.waitForSelector(".topbar");
+  await main.getByRole("button", { name: "설정", exact: true }).click();
+  await sleep(1000);
+  const persisted = await main.locator("label.row", { hasText: "AI 분류 사용" }).locator("input[type=checkbox]").isChecked();
+  const prov = await main.locator("section").filter({ has: main.locator("h2", { hasText: "AI 분류" }) }).last().locator("select").first().inputValue();
+  ok("B", "#8 하단 저장 → 재진입 후 AI 설정 유지", persisted && prov === "ollama", `enabled=${persisted} provider=${prov}`);
   await ai.getByRole("button", { name: "연결 테스트" }).click();
   await sleep(6000);
   const err2 = await ai.locator("p.error").innerText().catch(() => "");

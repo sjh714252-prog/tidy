@@ -119,7 +119,7 @@ await sleep(1000);
   await rows.filter({ hasText: "주소" }).last().locator("input").fill(`${FAKE}/v1`);
   await rows.filter({ hasText: "키 이름" }).last().locator("input").fill("");
   ok("B", "키 저장 위치 표시", (await ai.innerText()).includes("키 저장 위치"), (await ai.locator("p", { hasText: "키 저장 위치" }).innerText()).trim());
-  await ai.getByRole("button", { name: "AI 설정 저장" }).click();
+  await main.getByRole("button", { name: "저장", exact: true }).click(); // #8: unified save
   await sleep(2000);
   const err = await ai.locator(".error").count();
   ok("B", "임베딩 모델 저장 (오류 없음)", err === 0, err ? await ai.locator(".error").innerText() : "");
@@ -197,7 +197,7 @@ const query = async (q, wait = 2500) => {
   await rows.filter({ hasText: "모델" }).first().locator("input").fill("fake-chat");
   await rows.filter({ hasText: "주소" }).first().locator("input").fill(`${FAKE}/v1`);
   await rows.filter({ hasText: "키 이름" }).first().locator("input").fill("");
-  await ai.getByRole("button", { name: "AI 설정 저장" }).click();
+  await main.getByRole("button", { name: "저장", exact: true }).click(); // #8: unified save
   await sleep(3000);
   await main.getByRole("button", { name: "활동", exact: true }).click();
   const ready = await waitFor(async () => (await bridge("get_status")).aiState === "ready", 15000);
