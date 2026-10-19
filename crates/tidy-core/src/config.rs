@@ -45,6 +45,10 @@ pub struct SettingsPatch {
     pub hotkey: String,
     /// Start (tray only) when the user logs in.
     pub start_on_login: bool,
+    /// `Some(true)` when this save completes setup (wizard finish, or an
+    /// explicit save in the settings tab); `None` leaves the key alone.
+    #[serde(default)]
+    pub onboarded: Option<bool>,
 }
 
 /// Apply `patch` to the config file at `path` (created if missing), keeping
@@ -76,6 +80,9 @@ pub fn write_settings(path: &Path, patch: &SettingsPatch) -> Result<(), ConfigEr
     general.insert("quiet_mode", value(patch.quiet_mode));
     general.insert("hotkey", value(patch.hotkey.clone()));
     general.insert("start_on_login", value(patch.start_on_login));
+    if let Some(o) = patch.onboarded {
+        general.insert("onboarded", value(o));
+    }
 
     let mut watches = ArrayOfTables::new();
     for w in &patch.watches {
@@ -98,6 +105,16 @@ pub fn write_settings(path: &Path, patch: &SettingsPatch) -> Result<(), ConfigEr
         }
         if w.poll_only {
             t.insert("poll_only", value(true));
+        }
+        if w.mode != OrganizeMode::InPlace {
+            t.insert("mode", value(w.mode.as_str()));
+        }
+        if let Some(r) = w
+            .organize_root
+            .as_ref()
+            .filter(|r| !r.as_os_str().is_empty())
+        {
+            t.insert("organize_root", value(r.to_string_lossy().into_owned()));
         }
         watches.push(t);
     }
@@ -420,6 +437,10 @@ pub struct General {
     pub hotkey: String,
     pub quiet_mode: bool,
     pub start_on_login: bool,
+    /// First-run wizard finished (SPEC §14.1). Absent in configs from
+    /// before M8: see [`Config::onboarded`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub onboarded: Option<bool>,
 }
 
 impl Default for General {
@@ -429,6 +450,7 @@ impl Default for General {
             hotkey: "CmdOrCtrl+Shift+Space".into(),
             quiet_mode: false,
             start_on_login: true,
+            onboarded: None,
         }
     }
 }
@@ -460,6 +482,31 @@ pub struct WatchRoot {
     /// Network folders: skip OS change events and rely on polling only
     /// (some SMB/NFS servers send none, or bogus ones).
     pub poll_only: bool,
+    /// How files of this folder are organized (SPEC §14.1, M8).
+    pub mode: OrganizeMode,
+    /// `collect` mode: the folder the category folders are made under
+    /// (`{root}` and relative rule destinations).
+    pub organize_root: Option<PathBuf>,
+}
+
+/// Where a watch folder's files go (SPEC §14.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OrganizeMode {
+    /// Sub-folders inside this folder; relative destinations stay inside.
+    #[default]
+    InPlace,
+    /// Category folders under `organize_root`.
+    Collect,
+}
+
+impl OrganizeMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OrganizeMode::InPlace => "in_place",
+            OrganizeMode::Collect => "collect",
+        }
+    }
 }
 
 /// `[[watch]]` as written in the file: `index_content` defaults by `kind`.
@@ -473,6 +520,8 @@ struct RawWatchRoot {
     poll_interval_s: Option<u64>,
     content_index_window: Option<String>,
     poll_only: bool,
+    mode: OrganizeMode,
+    organize_root: Option<PathBuf>,
 }
 
 impl Default for RawWatchRoot {
@@ -486,6 +535,8 @@ impl Default for RawWatchRoot {
             poll_interval_s: None,
             content_index_window: None,
             poll_only: false,
+            mode: OrganizeMode::InPlace,
+            organize_root: None,
         }
     }
 }
@@ -500,6 +551,8 @@ impl From<RawWatchRoot> for WatchRoot {
             poll_interval_s: r.poll_interval_s,
             content_index_window: r.content_index_window,
             poll_only: r.poll_only,
+            mode: r.mode,
+            organize_root: r.organize_root,
         }
     }
 }
@@ -514,6 +567,8 @@ impl Default for WatchRoot {
             poll_interval_s: None,
             content_index_window: None,
             poll_only: false,
+            mode: OrganizeMode::InPlace,
+            organize_root: None,
         }
     }
 }
@@ -524,6 +579,16 @@ pub const DEFAULT_POLL_SECS: u64 = 120;
 pub const MIN_POLL_SECS: u64 = 5;
 
 impl WatchRoot {
+    /// Folder that relative rule destinations and `{root}` resolve against
+    /// (SPEC §14.1): the watch folder itself (`in_place`), or
+    /// `organize_root` (`collect`; the watch folder if it is missing).
+    pub fn anchor(&self) -> &Path {
+        match (self.mode, &self.organize_root) {
+            (OrganizeMode::Collect, Some(r)) if !r.as_os_str().is_empty() => r,
+            _ => &self.path,
+        }
+    }
+
     /// How often this folder is polled, if at all: network folders always
     /// (default 120 s), local folders only with `poll_interval_s`.
     pub fn poll_interval(&self) -> Option<Duration> {
@@ -730,6 +795,9 @@ impl Config {
         let mut cfg: Config = toml::from_str(text)?;
         for w in &mut cfg.watches {
             w.path = expand_home(&w.path);
+            if let Some(r) = &w.organize_root {
+                w.organize_root = Some(expand_home(r));
+            }
         }
         for r in &mut cfg.index_only {
             r.path = expand_home(&r.path);
@@ -750,6 +818,15 @@ impl Config {
     /// Problems worth telling the user at startup (SPEC §5.9, §6): the DB
     /// on a network share (SQLite needs local file locks), network-looking
     /// folders marked `local`, invalid content windows. Never fatal.
+    /// Has the first-run wizard been completed (SPEC §14.1)? An explicit
+    /// `[general] onboarded` wins; without the key (configs from before
+    /// M8) a config that already watches folders counts as set up, one
+    /// without folders (made by the installer or another feature) does not.
+    /// Nothing is moved until this is true.
+    pub fn onboarded(&self) -> bool {
+        self.general.onboarded.unwrap_or(!self.watches.is_empty())
+    }
+
     pub fn warnings(&self) -> Vec<String> {
         let mut out = Vec::new();
         let db = self.store.db_path();
@@ -769,6 +846,16 @@ impl Config {
             if w.kind == RootKind::Local && crate::paths::looks_like_network(&w.path) {
                 out.push(format!(
                     "감시 폴더가 네트워크 위치로 보입니다: {} — kind = \"network\"로 두면 폴링·복사-검증 이동을 씁니다.",
+                    w.path.display()
+                ));
+            }
+            if w.mode == OrganizeMode::Collect
+                && w.organize_root
+                    .as_ref()
+                    .is_none_or(|r| r.as_os_str().is_empty())
+            {
+                out.push(format!(
+                    "{}: 정리 방식이 '지정 위치로 모으기'인데 기준 폴더(organize_root)가 없습니다 — 이 폴더 안에서 정리합니다.",
                     w.path.display()
                 ));
             }
@@ -963,6 +1050,7 @@ path = "~/Desktop"
             quiet_mode: true,
             hotkey: "CmdOrCtrl+Alt+K".into(),
             start_on_login: false,
+            onboarded: Some(true),
         };
         write_settings(&path, &patch).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
@@ -981,6 +1069,7 @@ path = "~/Desktop"
         assert!(c.general.quiet_mode);
         assert_eq!(c.general.hotkey, "CmdOrCtrl+Alt+K");
         assert!(!c.general.start_on_login);
+        assert_eq!(c.general.onboarded, Some(true));
         assert_eq!(c.store.path, None);
 
         // Missing file: created from scratch.
@@ -1077,6 +1166,82 @@ send_content = false
         let embed = c.ai.active().unwrap().embed.as_ref().unwrap();
         assert_eq!(embed.model, "nomic-embed-text");
         assert_eq!(c.ai.profiles["work"].send_content, Some(false));
+    }
+
+    #[test]
+    fn onboarded_flag_and_legacy_configs() {
+        // No file / no key, no folders: wizard.
+        assert!(!Config::default().onboarded());
+        assert!(!Config::from_toml("[general]\nhotkey = \"Ctrl+K\"\n")
+            .unwrap()
+            .onboarded());
+        // Pre-M8 config that already watches folders: set up.
+        assert!(Config::from_toml("[[watch]]\npath = \"/d\"\n")
+            .unwrap()
+            .onboarded());
+        // Explicit flag wins either way.
+        assert!(
+            !Config::from_toml("[general]\nonboarded = false\n[[watch]]\npath = \"/d\"\n")
+                .unwrap()
+                .onboarded()
+        );
+        assert!(Config::from_toml("[general]\nonboarded = true\n")
+            .unwrap()
+            .onboarded());
+    }
+
+    #[test]
+    fn organize_mode_round_trip_and_warning() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let patch = SettingsPatch {
+            watches: vec![
+                WatchRoot {
+                    path: PathBuf::from("/home/홍/바탕 화면"),
+                    ..Default::default()
+                },
+                WatchRoot {
+                    path: PathBuf::from("/home/홍/다운로드"),
+                    mode: OrganizeMode::Collect,
+                    organize_root: Some(PathBuf::from("/data/정리 보관함")),
+                    ..Default::default()
+                },
+                WatchRoot {
+                    path: PathBuf::from("/x"),
+                    mode: OrganizeMode::Collect,
+                    ..Default::default()
+                },
+            ],
+            store_path: None,
+            quiet_mode: false,
+            hotkey: "CmdOrCtrl+Shift+Space".into(),
+            start_on_login: true,
+            onboarded: Some(true),
+        };
+        write_settings(&path, &patch).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !text.contains("in_place"),
+            "default mode is not written: {text}"
+        );
+        let c = Config::load(&path).unwrap();
+        assert!(c.onboarded());
+        assert_eq!(c.watches[0].mode, OrganizeMode::InPlace);
+        assert_eq!(c.watches[0].anchor(), Path::new("/home/홍/바탕 화면"));
+        assert_eq!(c.watches[1].mode, OrganizeMode::Collect);
+        assert_eq!(c.watches[1].anchor(), Path::new("/data/정리 보관함"));
+        assert_eq!(c.watches[2].anchor(), Path::new("/x"));
+        assert!(c.warnings().iter().any(|w| w.contains("organize_root")));
+        // A later save without `onboarded` leaves the flag alone.
+        write_settings(
+            &path,
+            &SettingsPatch {
+                onboarded: None,
+                ..patch
+            },
+        )
+        .unwrap();
+        assert!(Config::load(&path).unwrap().general.onboarded == Some(true));
     }
 
     #[test]

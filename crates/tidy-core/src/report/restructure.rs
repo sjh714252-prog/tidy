@@ -161,6 +161,20 @@ pub fn plan_from_rules(
     ignore_globs: &[String],
     protected: &[PathBuf],
 ) -> Result<Plan, PlanError> {
+    plan_from_rules_in(root, rules, recursive, ignore_globs, protected, None)
+}
+
+/// [`plan_from_rules`] with relative rule destinations and `{root}`
+/// resolved against `anchor` (the watch folder's anchor, SPEC §14.1);
+/// `None` = each file's own folder.
+pub fn plan_from_rules_in(
+    root: &Path,
+    rules: &RuleSet,
+    recursive: bool,
+    ignore_globs: &[String],
+    protected: &[PathBuf],
+    anchor: Option<&Path>,
+) -> Result<Plan, PlanError> {
     let root =
         dunce::canonicalize(root).map_err(|_| ScanError::NotADirectory(root.to_path_buf()))?;
     let filter =
@@ -183,7 +197,7 @@ pub fn plan_from_rules(
         let Ok(facts) = FileFacts::from_path(path) else {
             continue;
         };
-        let Some(c) = rules.classify(&facts) else {
+        let Some(c) = rules.classify_in(&facts, anchor) else {
             continue;
         };
         if path.parent() == Some(c.dest_dir.as_path()) {
