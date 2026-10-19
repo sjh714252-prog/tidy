@@ -66,6 +66,10 @@ enum Cmd {
     /// AI status, API keys (OS keychain), test call, call log.
     #[command(subcommand)]
     Ai(AiCmd),
+    /// Rules: how many files in the watch folders each rule takes now;
+    /// the wizard's starter rules.
+    #[command(subcommand)]
+    Rules(RulesCmd),
     /// Rule suggestions learned from your decisions (--accept / --dismiss).
     Learn(LearnArgs),
     /// Folder report: tree, statistics, duplicates, long-unused files.
@@ -131,6 +135,26 @@ struct RestructureArgs {
     /// List saved plans.
     #[arg(long)]
     list: bool,
+}
+
+#[derive(Subcommand)]
+enum RulesCmd {
+    /// Per rule: files in the watch folders it would take now (moves nothing).
+    Check {
+        /// Rules file (default: classify.rules from the config).
+        rules: Option<PathBuf>,
+        /// Count every rule a file matches, not only the first.
+        #[arg(long)]
+        each: bool,
+        #[arg(short, long, value_enum, default_value_t = Format::Text)]
+        format: Format,
+    },
+    /// List the wizard's starter rules (or print them as TOML with --toml).
+    Starters {
+        /// Print these starters (comma-separated ids) as rules.toml text.
+        #[arg(long, value_delimiter = ',')]
+        toml: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -362,6 +386,7 @@ fn main() -> Result<()> {
         Cmd::Search(args) => cmd_search(cli.config, args),
         Cmd::Embed(args) => cmd_embed(cli.config, args),
         Cmd::Ai(cmd) => cmd_ai(cli.config, cmd),
+        Cmd::Rules(cmd) => cmd_rules(cli.config, cmd),
         Cmd::Learn(args) => cmd_learn(cli.config, args),
         Cmd::Report(args) => cmd_report(cli.config, args),
         Cmd::Restructure(args) => cmd_restructure(cli.config, args),
@@ -980,13 +1005,15 @@ fn cmd_pending(config: Option<PathBuf>, args: PendingArgs) -> Result<()> {
 fn cmd_classify(config: Option<PathBuf>, args: ClassifyArgs) -> Result<()> {
     let cfg = load_config(config)?;
     let rules = load_rules(&cfg, args.rules)?;
+    let anchors = tidy_core::classify::Anchors::from_config(&cfg);
     for p in &args.paths {
         let p = tidy_core::config::expand_home(p);
         if !p.is_file() {
             continue;
         }
+        let p = dunce::canonicalize(&p).unwrap_or(p);
         let facts = FileFacts::from_path(&p).with_context(|| format!("reading {}", p.display()))?;
-        match rules.classify(&facts) {
+        match rules.classify_in(&facts, anchors.for_path(&p)) {
             Some(c) => println!(
                 "{} -> {}  [{}]{}",
                 p.display(),
@@ -1316,6 +1343,73 @@ fn cmd_config(path: Option<PathBuf>) -> Result<()> {
     }
     println!("{}", toml::to_string_pretty(&cfg)?);
     Ok(())
+}
+
+fn cmd_rules(config: Option<PathBuf>, cmd: RulesCmd) -> Result<()> {
+    use tidy_core::classify::{preview, starter};
+    match cmd {
+        RulesCmd::Check {
+            rules,
+            each,
+            format,
+        } => {
+            let cfg = load_config(config)?;
+            let rules = load_rules(&cfg, rules)?;
+            if cfg.watches.is_empty() {
+                bail!("no [[watch]] folders configured");
+            }
+            let r = preview::preview(&rules, &cfg.watches, &cfg.classify.ignore_globs, !each);
+            match format {
+                Format::Json => println!("{}", serde_json::to_string_pretty(&r)?),
+                Format::Text => {
+                    for p in &r.rules {
+                        println!(
+                            "{:>5}  {}{}",
+                            p.count,
+                            p.name,
+                            p.sample_dest
+                                .as_ref()
+                                .map(|d| format!("  → {}", d.display()))
+                                .unwrap_or_default()
+                        );
+                        if !p.examples.is_empty() {
+                            println!("       예: {}", p.examples.join(", "));
+                        }
+                    }
+                    println!(
+                        "files: {}{}   no rule: {}",
+                        r.scanned,
+                        if r.truncated { "+ (stopped)" } else { "" },
+                        if each {
+                            "-".to_string()
+                        } else {
+                            r.unmatched.to_string()
+                        }
+                    );
+                    for p in &r.skipped {
+                        println!("skipped (network folder): {}", p.display());
+                    }
+                    for p in &r.missing {
+                        println!("missing: {}", p.display());
+                    }
+                }
+            }
+            Ok(())
+        }
+        RulesCmd::Starters { toml } => {
+            if toml.is_empty() {
+                for s in starter::starters() {
+                    println!("{:<12} {:<8} {}", s.id, s.title, s.summary);
+                }
+            } else {
+                print!(
+                    "{}",
+                    tidy_core::classify::apply_cards("", &starter::starter_cards(&toml))?
+                );
+            }
+            Ok(())
+        }
+    }
 }
 
 fn cmd_ai(config: Option<PathBuf>, cmd: AiCmd) -> Result<()> {
@@ -1720,12 +1814,15 @@ fn cmd_restructure(config: Option<PathBuf>, args: RestructureArgs) -> Result<()>
         )?
     } else if args.rules {
         let rules = load_rules(&cfg, None)?;
-        restructure::plan_from_rules(
+        let anchors = tidy_core::classify::Anchors::from_config(&cfg);
+        let canon = dunce::canonicalize(&root).unwrap_or_else(|_| root.clone());
+        restructure::plan_from_rules_in(
             &root,
             &rules,
             args.recursive,
             &cfg.classify.ignore_globs,
             &protected,
+            Some(anchors.for_path(&canon).unwrap_or(&canon)),
         )?
     } else {
         bail!("choose --rules or --ai (or --list / --show / --apply)");

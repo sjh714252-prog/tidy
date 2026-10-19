@@ -140,7 +140,9 @@ pub fn run_watch(
     };
     recover(&mover, &mut on_event);
     let filter = IgnoreFilter::new(&cfg.classify.ignore_globs)?;
-    let mut engine = Engine::new(rules, mover, filter.clone()).dry_run(opts.dry_run);
+    let mut engine = Engine::new(rules, mover, filter.clone())
+        .dry_run(opts.dry_run)
+        .with_anchors(crate::classify::Anchors::from_config(cfg));
     if opts.index {
         engine = engine.with_index(IndexOptions::from_config(cfg));
     }

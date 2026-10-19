@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use crate::classify::{AiClassifier, FileFacts, RuleSet};
+use crate::classify::{AiClassifier, Anchors, FileFacts, RuleSet};
 use crate::index::{IndexOptions, Indexer};
 use crate::mover::{hash_file, MoveOutcome, MoveRequest, Mover, MoverError};
 use crate::store::{DecidedBy, NewPending, PendingSource, StoreError};
@@ -105,6 +105,8 @@ pub struct Engine {
     index: Option<IndexOptions>,
     /// AI step for files no rule matches (None = rules-only mode).
     ai: Option<AiClassifier>,
+    /// Watch folder anchors for relative destinations / `{root}` (M8).
+    anchors: Anchors,
 }
 
 pub fn new_batch_id() -> String {
@@ -120,7 +122,15 @@ impl Engine {
             dry_run: false,
             index: None,
             ai: None,
+            anchors: Anchors::default(),
         }
+    }
+
+    /// Resolve relative rule destinations against the watch folders'
+    /// anchors (SPEC §14.1) instead of each file's own folder.
+    pub fn with_anchors(mut self, anchors: Anchors) -> Self {
+        self.anchors = anchors;
+        self
     }
 
     pub fn dry_run(mut self, on: bool) -> Self {
@@ -180,7 +190,7 @@ impl Engine {
             path: path.to_path_buf(),
             source,
         })?;
-        let Some(c) = self.rules.classify(&facts) else {
+        let Some(c) = self.rules.classify_in(&facts, self.anchors.for_path(path)) else {
             return self.ai_step(&facts, batch_id);
         };
         if self.dry_run {
