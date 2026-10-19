@@ -64,6 +64,10 @@ pub struct ReportDto {
     /// Core `Stats` JSON (snake_case).
     pub stats: Stats,
     pub duplicates: Vec<DupGroup>,
+    /// (M9) "개인정보 의심 파일 N개(미암호화 M개)" from the index.
+    pub pii: Option<String>,
+    pub pii_suspected: u64,
+    pub pii_unencrypted: u64,
     pub errors: Vec<String>,
 }
 
@@ -96,6 +100,9 @@ pub async fn build_report(app: AppHandle, path: String, duplicates: bool) -> Cmd
             ),
             stats: r.stats,
             duplicates: r.duplicates,
+            pii: r.pii.map(|p| p.label()),
+            pii_suspected: r.pii.map(|p| p.suspected).unwrap_or(0),
+            pii_unencrypted: r.pii.map(|p| p.unencrypted).unwrap_or(0),
             errors: r.errors,
         })
     })

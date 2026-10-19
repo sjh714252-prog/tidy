@@ -9,6 +9,7 @@ import { usePending } from "../store/pending";
 import { useStatus } from "../store/status";
 import { useSettings } from "../store/settings";
 import { useAiSettings } from "../store/aiSettings";
+import { useSecurity } from "../store/security";
 import { useReport } from "../store/report";
 import { ActivityView } from "./ActivityView";
 import { HistoryView } from "./HistoryView";
@@ -29,9 +30,10 @@ export function MainWindow() {
   const [tab, setTab] = useState<MainTab>("activity");
   const settingsDirty = useSettings((s) => s.dirty);
   const aiDirty = useAiSettings((s) => s.dirty);
+  const securityDirty = useSecurity((s) => s.dirty);
   // Leaving the settings tab with unsaved edits asks first (issue #8).
   const switchTab = (next: MainTab) => {
-    if (tab === "settings" && next !== "settings" && (settingsDirty() || aiDirty())) {
+    if (tab === "settings" && next !== "settings" && (settingsDirty() || aiDirty() || securityDirty())) {
       if (!window.confirm("설정에 저장하지 않은 변경이 있습니다. 저장하지 않고 이동할까요?")) return;
     }
     setTab(next);

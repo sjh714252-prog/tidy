@@ -77,9 +77,15 @@ export function PendingView() {
                   <div className="muted small">
                     {p.dir} {p.size != null && `· ${formatSize(p.size)}`} {!p.exists && "· 파일 없음"}
                   </div>
+                  {p.pii && (
+                    <div className="pii-badge" data-testid="pii-badge">
+                      개인정보: {p.pii}
+                    </div>
+                  )}
                 </td>
                 <td className="path" title={p.suggestedDest ?? ""}>
                   {p.suggestedDest ?? "—"}
+                  {p.encrypt && <div className="tag lock">🔒 암호화해서 보관</div>}
                 </td>
                 <td className="nowrap" title={p.reason ?? ""}>
                   {p.source === "ai" ? (

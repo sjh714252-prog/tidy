@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Listener};
 use tiny_http::{Header, Method, Request, Response, Server};
 
-use crate::{commands, onboarding, report_cmds};
+use crate::{commands, onboarding, report_cmds, security_cmds};
 
 pub const PORT: u16 = 1421;
 
@@ -237,6 +237,15 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         .await?),
         "delete_api_key" => ok(commands::delete_api_key(app, arg(&args, "keyRef")?).await?),
         "test_ai" => ok(commands::test_ai(app).await?),
+        "get_security_settings" => ok(security_cmds::get_security_settings(app).await?),
+        "save_security_settings" => ok(security_cmds::save_security_settings(
+            app,
+            arg(&args, "settings")?,
+            arg(&args, "password")?,
+        )
+        .await?),
+        "open_vault_file" => ok(security_cmds::open_vault_file(app, arg(&args, "path")?).await?),
+        "vault_copy" => ok(security_cmds::vault_copy(arg(&args, "path")?).await?),
         "list_learn" => ok(commands::list_learn(app).await?),
         "accept_learn" => ok(commands::accept_learn(app, arg(&args, "key")?).await?),
         "dismiss_learn" => ok(commands::dismiss_learn(app, arg(&args, "key")?).await?),
