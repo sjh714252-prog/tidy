@@ -115,3 +115,21 @@ cargo run -p tidy-cli -- undo --batch <id>                      # 재구성 통�
 cargo run -p tidy-cli -- watch --config config.toml   # "# offline: …" / "# online: …" / 복사 진행률
 cargo run -p tidy-cli -- recover                      # 중단된 이동 정리(기본: 15분 지난 것만)
 ```
+
+## 의미검색과 설치 패키지 (M7)
+
+활성 AI 프로필에 `embed` 모델(Ollama 또는 OpenAI 호환 — Anthropic에는 임베딩 API가 없음)이 있으면, 검색창에서 "작년에 받은 통신 요금 고지서"처럼 **자연어로** 찾을 수 있습니다. 파일명과 본문 앞부분을 벡터로 저장해 두고 단어 검색(FTS) 결과와 합칩니다.
+
+- 임베딩 모델이 없거나, 느리거나, 실패하면 그 검색은 **단어 결과만** 보여 주고 이유를 표시합니다.
+- 옮기거나 복사한 파일은 저장된 벡터를 재사용하므로 API를 다시 부르지 않습니다.
+- AI가 연속 3번 실패하면 "AI 사용 불가 — 규칙만"으로 바뀌고, 다시 응답하면 자동으로 돌아옵니다.
+
+```
+cargo run -p tidy-cli -- index                                  # 인덱싱 뒤 임베딩까지 (--no-embed로 끔)
+cargo run -p tidy-cli -- embed --status                         # 임베딩된 파일 수
+cargo run -p tidy-cli -- search 작년 통신 요금 고지서 어디 있지     # 단어 + 의미 ([meaning 83%] 표시)
+cargo run -p tidy-cli -- search 회의록 --fts                      # 단어만
+cargo run -p tidy-cli -- report ~/Desktop --scan-depth 2        # 큰 폴더는 깊이 제한
+```
+
+설치 파일(Windows `.msi`/`.exe`, macOS `.dmg`, Linux `.deb`/`.AppImage`)은 `v*` 태그를 푸시하면 GitHub Actions가 만듭니다. 로컬 빌드, 자동 시작(로그인 시 트레이), 제거 방법은 [`docs/packaging.md`](docs/packaging.md)를 보세요. Linux에서 API 키는 Secret Service(GNOME 키링/KWallet)에 저장됩니다.

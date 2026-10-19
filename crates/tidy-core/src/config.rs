@@ -43,6 +43,8 @@ pub struct SettingsPatch {
     pub store_path: Option<PathBuf>,
     pub quiet_mode: bool,
     pub hotkey: String,
+    /// Start (tray only) when the user logs in.
+    pub start_on_login: bool,
 }
 
 /// Apply `patch` to the config file at `path` (created if missing), keeping
@@ -73,6 +75,7 @@ pub fn write_settings(path: &Path, patch: &SettingsPatch) -> Result<(), ConfigEr
         .expect("[general] is a table");
     general.insert("quiet_mode", value(patch.quiet_mode));
     general.insert("hotkey", value(patch.hotkey.clone()));
+    general.insert("start_on_login", value(patch.start_on_login));
 
     let mut watches = ArrayOfTables::new();
     for w in &patch.watches {
@@ -137,6 +140,10 @@ pub struct AiPatch {
     pub auto_threshold: f64,
     pub send_content: bool,
     pub classify: Option<ProviderConfig>,
+    /// Embedding model of the active profile (semantic search); `None`
+    /// removes it (search stays FTS-only).
+    #[serde(default)]
+    pub embed: Option<ProviderConfig>,
 }
 
 /// Apply `patch` to `[ai]` / `[ai.profiles.<active>]` of the config at
@@ -181,24 +188,26 @@ pub fn write_ai_settings(path: &Path, patch: &AiPatch) -> Result<(), ConfigError
         .or_insert(Item::Table(Table::new()))
         .as_table_like_mut()
         .expect("profile is a table");
-    match &patch.classify {
-        Some(pc) => {
-            let mut t = InlineTable::new();
-            t.insert("provider", pc.provider.as_str().into());
-            t.insert("model", pc.model.as_str().into());
-            if let Some(k) = pc.key_ref.as_deref().filter(|k| !k.is_empty()) {
-                t.insert("key_ref", k.into());
+    for (key, pc) in [("classify", &patch.classify), ("embed", &patch.embed)] {
+        match pc {
+            Some(pc) => {
+                let mut t = InlineTable::new();
+                t.insert("provider", pc.provider.as_str().into());
+                t.insert("model", pc.model.as_str().into());
+                if let Some(k) = pc.key_ref.as_deref().filter(|k| !k.is_empty()) {
+                    t.insert("key_ref", k.into());
+                }
+                if let Some(u) = pc.base_url.as_deref().filter(|u| !u.is_empty()) {
+                    t.insert("base_url", u.into());
+                }
+                if let Some(e) = pc.effort.as_deref().filter(|e| !e.is_empty()) {
+                    t.insert("effort", e.into());
+                }
+                profile.insert(key, value(t));
             }
-            if let Some(u) = pc.base_url.as_deref().filter(|u| !u.is_empty()) {
-                t.insert("base_url", u.into());
+            None => {
+                profile.remove(key);
             }
-            if let Some(e) = pc.effort.as_deref().filter(|e| !e.is_empty()) {
-                t.insert("effort", e.into());
-            }
-            profile.insert("classify", value(t));
-        }
-        None => {
-            profile.remove("classify");
         }
     }
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -227,6 +236,40 @@ pub struct Config {
     pub store: Store,
     pub ai: Ai,
     pub report: ReportCfg,
+    pub search: SearchCfg,
+}
+
+/// `[search]` (SPEC §5.6): semantic search on top of FTS.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SearchCfg {
+    /// Use the active profile's `embed` model (when there is one) to rank
+    /// by meaning as well. Off, or without a model: FTS only.
+    pub semantic: bool,
+    /// Budget for embedding the query; on timeout the search is FTS-only.
+    pub query_timeout_ms: u64,
+    /// Vector candidates merged with the FTS results.
+    pub vector_k: usize,
+    /// Cosine similarity below which a vector-only hit is dropped.
+    pub min_similarity: f32,
+    /// Texts per embedding request while indexing.
+    pub embed_batch: usize,
+    /// Characters of body text embedded per file (after the name). With
+    /// `send_content = false` only the name is embedded.
+    pub embed_chars: usize,
+}
+
+impl Default for SearchCfg {
+    fn default() -> Self {
+        Self {
+            semantic: true,
+            query_timeout_ms: 1500,
+            vector_k: 50,
+            min_similarity: 0.3,
+            embed_batch: 32,
+            embed_chars: 1000,
+        }
+    }
 }
 
 /// `[report]` (SPEC §5.7).
@@ -240,6 +283,10 @@ pub struct ReportCfg {
     pub top_n: usize,
     /// Upper bound of moves accepted from one AI restructure answer.
     pub max_moves: usize,
+    /// Scan only this many folder levels below the root (0 = its direct
+    /// children). Unset: everything — slow on a huge desktop or share;
+    /// `tidy report --scan-depth N` overrides it per run.
+    pub scan_depth: Option<usize>,
 }
 
 impl Default for ReportCfg {
@@ -249,6 +296,7 @@ impl Default for ReportCfg {
             stale_days: 90,
             top_n: 10,
             max_moves: 500,
+            scan_depth: None,
         }
     }
 }
@@ -277,6 +325,9 @@ pub struct Ai {
     pub tree_depth: usize,
     /// How many past user decisions to include as examples.
     pub history_k: usize,
+    /// Consecutive failed calls after which the AI counts as unavailable
+    /// (status bar; files skip the AI until a probe succeeds).
+    pub unavailable_after: u32,
     /// Extra top folders for the candidate tree (rule destinations and
     /// `[[index_only]]` folders are always included).
     pub candidate_roots: Vec<PathBuf>,
@@ -296,6 +347,7 @@ impl Default for Ai {
             restructure_timeout_secs: 180,
             tree_depth: 2,
             history_k: 5,
+            unavailable_after: 3,
             candidate_roots: Vec::new(),
             profiles: Default::default(),
         }
@@ -320,7 +372,8 @@ impl Ai {
 pub struct AiProfile {
     /// Model used to classify files.
     pub classify: Option<ProviderConfig>,
-    /// Embedding model (semantic search, M7).
+    /// Embedding model (semantic search, M7): openai(-compatible) or
+    /// ollama; Anthropic has no embeddings API.
     pub embed: Option<ProviderConfig>,
     pub send_content: Option<bool>,
 }
@@ -909,6 +962,7 @@ path = "~/Desktop"
             store_path: None,
             quiet_mode: true,
             hotkey: "CmdOrCtrl+Alt+K".into(),
+            start_on_login: false,
         };
         write_settings(&path, &patch).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
@@ -926,6 +980,7 @@ path = "~/Desktop"
         assert_eq!(c.mover.duplicate_policy, DuplicatePolicy::Rename);
         assert!(c.general.quiet_mode);
         assert_eq!(c.general.hotkey, "CmdOrCtrl+Alt+K");
+        assert!(!c.general.start_on_login);
         assert_eq!(c.store.path, None);
 
         // Missing file: created from scratch.
@@ -1000,6 +1055,13 @@ send_content = false
                     base_url: None,
                     effort: Some("low".into()),
                 }),
+                embed: Some(ProviderConfig {
+                    provider: ProviderKind::Ollama,
+                    model: "nomic-embed-text".into(),
+                    key_ref: None,
+                    base_url: Some("http://localhost:11434".into()),
+                    effort: None,
+                }),
             },
         )
         .unwrap();
@@ -1012,6 +1074,8 @@ send_content = false
         let home = c.ai.active().unwrap().classify.as_ref().unwrap();
         assert_eq!(home.model, "claude-haiku-5-5");
         assert_eq!(home.effort.as_deref(), Some("low"));
+        let embed = c.ai.active().unwrap().embed.as_ref().unwrap();
+        assert_eq!(embed.model, "nomic-embed-text");
         assert_eq!(c.ai.profiles["work"].send_content, Some(false));
     }
 

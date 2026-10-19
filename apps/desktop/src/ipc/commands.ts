@@ -17,6 +17,8 @@ import type {
   RulesCheck,
   SaveSettingsArgs,
   SearchHit,
+  SearchResult,
+  SemanticStatus,
   Settings,
   Status,
   UndoResult,
@@ -30,6 +32,10 @@ export const showWindow = (which: string) => invoke<void>("show_window", { which
 
 export const search = (query: string, limit = 50) =>
   invoke<SearchHit[]>("search", { query, limit });
+/** Words + meaning; falls back to words only (with a note) without a model. */
+export const searchSemantic = (query: string, limit = 50) =>
+  invoke<SearchResult>("search_semantic", { query, limit });
+export const semanticStatus = () => invoke<SemanticStatus>("semantic_status");
 export const openPath = (path: string) => invoke<void>("open_path", { path });
 export const revealPath = (path: string) => invoke<void>("reveal_path", { path });
 
@@ -53,9 +59,9 @@ export const checkRules = (text: string) => invoke<RulesCheck>("check_rules", { 
 export const saveSettings = (args: SaveSettingsArgs) => invoke<Status>("save_settings", { args });
 
 export const getAiSettings = () => invoke<AiSettings>("get_ai_settings");
-/** apiKey (optional) is written to the OS keychain only. */
-export const saveAiSettings = (settings: AiSettings, apiKey: string | null) =>
-  invoke<AiSettings>("save_ai_settings", { settings, apiKey });
+/** apiKey / embedApiKey (optional) are written to the OS keychain only. */
+export const saveAiSettings = (settings: AiSettings, apiKey: string | null, embedApiKey: string | null = null) =>
+  invoke<AiSettings>("save_ai_settings", { settings, apiKey, embedApiKey });
 export const deleteApiKey = (keyRef: string) => invoke<AiSettings>("delete_api_key", { keyRef });
 export const testAi = () => invoke<string>("test_ai");
 

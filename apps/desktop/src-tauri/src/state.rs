@@ -29,6 +29,11 @@ pub struct AppState {
     /// Watch folders currently unreachable (network shares), as reported
     /// by the watch loop.
     pub offline: Mutex<Vec<PathBuf>>,
+    /// "provider / model" of the running classifier, to show again when
+    /// the AI recovers after being unavailable.
+    pub ai_desc: Mutex<Option<String>>,
+    /// Semantic search for the current config (M7).
+    pub semantic: Mutex<crate::semantic::Slot>,
 }
 
 pub struct Inner {
@@ -62,6 +67,8 @@ impl AppState {
             hotkey_error: Mutex::new(None),
             ai_state: Mutex::new(None),
             offline: Mutex::new(Vec::new()),
+            ai_desc: Mutex::new(None),
+            semantic: Mutex::new(Default::default()),
         };
         state.reload();
         state
@@ -90,8 +97,17 @@ impl AppState {
         if let Ok(c) = &cfg {
             tidy_core::netio::network_io().set_limit(usize::from(c.mover.nas_concurrency));
         }
+        let cfg = cfg.unwrap_or_else(|_| default_config(&self.config_path));
+        // Built outside the `inner` lock: reading the API key may talk to
+        // the keychain over D-Bus.
+        let (handle, off) = crate::semantic::build(&cfg);
+        {
+            let mut slot = self.semantic.lock().unwrap_or_else(|e| e.into_inner());
+            slot.handle = handle;
+            slot.off = off;
+        }
         let mut inner = self.lock_inner();
-        inner.cfg = cfg.unwrap_or_else(|_| default_config(&self.config_path));
+        inner.cfg = cfg;
         inner.mover = mover;
     }
 
