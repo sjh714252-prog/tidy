@@ -9,9 +9,13 @@ use serde_json::Value;
 
 use super::provider::{AiError, LlmProvider, LlmResponse, Usage};
 
+type Responder = Box<dyn Fn(&str, &str) -> Value + Send + Sync>;
+
 pub struct MockProvider {
     answers: Mutex<Vec<Result<Value, String>>>,
     prompts: Mutex<Vec<(String, String)>>,
+    /// Computes the answer from `(system, user)` instead of the queue.
+    responder: Option<Responder>,
 }
 
 impl MockProvider {
@@ -25,6 +29,17 @@ impl MockProvider {
         Self {
             answers: Mutex::new(answers.into_iter().rev().collect()),
             prompts: Mutex::new(Vec::new()),
+            responder: None,
+        }
+    }
+
+    /// Answer every call with `f(system, user)` (deterministic answers that
+    /// depend on what was asked, e.g. per-file batches).
+    pub fn responder(f: impl Fn(&str, &str) -> Value + Send + Sync + 'static) -> Self {
+        Self {
+            answers: Mutex::new(Vec::new()),
+            prompts: Mutex::new(Vec::new()),
+            responder: Some(Box::new(f)),
         }
     }
 
@@ -47,6 +62,16 @@ impl LlmProvider for MockProvider {
             .lock()
             .unwrap()
             .push((system.to_string(), user.to_string()));
+        if let Some(f) = &self.responder {
+            return Ok(LlmResponse {
+                value: f(system, user),
+                usage: Usage {
+                    input_tokens: Some(100),
+                    output_tokens: Some(20),
+                },
+                model: "mock".into(),
+            });
+        }
         let mut answers = self.answers.lock().unwrap();
         let next = if answers.len() > 1 {
             answers.pop()

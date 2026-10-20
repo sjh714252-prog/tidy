@@ -10,6 +10,12 @@
 //! into a zip at its destination (mode B). With `approval = "confirm"`
 //! (default) — or when no vault password is set yet — encryptions wait in
 //! the queue instead; a file is never moved unencrypted in their place.
+//!
+//! (M10, SPEC §14.3) With `[curate] enabled`, files no rule takes (or, with
+//! `prefer`, every file before the rules) are placed by work context —
+//! `{entity}/{yyyymmdd}_{issue}/{doc_kind}` — instead of the classic AI
+//! step. Only a confident answer into a folder that already exists moves on
+//! its own; a new customer, issue or topic is asked in the confirm popup.
 
 use std::path::{Path, PathBuf};
 
@@ -126,7 +132,12 @@ pub struct Engine {
     anchors: Anchors,
     /// (M9) Personal-information detection and vault settings.
     security: SecurityPolicy,
+    /// (M10) Work-context placement (needs `ai`).
+    curator: Option<std::sync::Arc<crate::curate::Curator>>,
 }
+
+/// Rule label of work-context moves (log, activity, queue).
+pub const CONTEXT_RULE: &str = "업무 맥락";
 
 /// Label of mode A moves (rule name in the log and the queue).
 pub const VAULT_RULE: &str = "개인정보 보관";
@@ -146,7 +157,14 @@ impl Engine {
             ai: None,
             anchors: Anchors::default(),
             security: SecurityPolicy::default(),
+            curator: None,
         }
+    }
+
+    /// (M10) Place files by work context (used only together with an AI).
+    pub fn with_curator(mut self, c: std::sync::Arc<crate::curate::Curator>) -> Self {
+        self.curator = Some(c);
+        self
     }
 
     /// (M9) Detection, vault folder and approval settings.
@@ -251,7 +269,21 @@ impl Engine {
             }
         }
 
+        let prefer = self.curator.as_ref().is_some_and(|c| c.cfg().prefer);
+        if prefer {
+            if let Some(a) = self.curate_step(&facts, batch_id)? {
+                return Ok(a);
+            }
+        }
         let Some(c) = self.rules.classify_in(&facts, self.anchors.for_path(path)) else {
+            if self.curator.is_some() && self.ai.is_some() {
+                if prefer {
+                    return Ok(Action::NoRule(path.to_path_buf()));
+                }
+                return Ok(self
+                    .curate_step(&facts, batch_id)?
+                    .unwrap_or_else(|| Action::NoRule(path.to_path_buf())));
+            }
             return self.ai_step(&facts, batch_id);
         };
         let encrypt = match c.encrypt {
@@ -399,6 +431,122 @@ impl Engine {
             return Ok(false);
         };
         Ok(hash_file(path)? == placed)
+    }
+
+    /// (M10) Work-context placement of one file. `Ok(None)`: no confident
+    /// answer (the caller falls back to rules / leaves the file).
+    fn curate_step(
+        &self,
+        facts: &FileFacts,
+        batch_id: &str,
+    ) -> Result<Option<Action>, EngineError> {
+        let (Some(cur), Some(ai)) = (&self.curator, &self.ai) else {
+            return Ok(None);
+        };
+        let path = &facts.path;
+        let store = self.mover.store();
+        if let Some(p) = store.get_pending_by_path(path)? {
+            if p.source == PendingSource::Ai {
+                return Ok(Some(Action::Skipped {
+                    path: path.clone(),
+                    reason: "already waiting for confirmation",
+                }));
+            }
+        }
+        if !self.dry_run && self.was_undone(path)? {
+            return Ok(Some(Action::Skipped {
+                path: path.clone(),
+                reason: "restored by undo; left in place",
+            }));
+        }
+        let input = cur
+            .input(path, Some(store))
+            .map_err(|source| EngineError::Io {
+                path: path.clone(),
+                source,
+            })?;
+        let parent = path.parent().unwrap_or_else(|| Path::new(""));
+        let anchor = self.anchors.for_path(path).unwrap_or(parent);
+        let placed = match cur.place(ai, store, &input, anchor) {
+            Ok(Some(p)) if cur.is_classified(&p.curation) => p,
+            Ok(_) => return Ok(None),
+            Err(e) => {
+                tracing::warn!(path = %path.display(), "work-context analysis failed: {e}");
+                return Ok(Some(Action::AiFailed {
+                    path: path.clone(),
+                    error: e.to_string(),
+                }));
+            }
+        };
+        let c = &placed.curation;
+        let auto = placed.known_folder && c.confidence >= ai.auto_threshold();
+        if self.dry_run {
+            return Ok(Some(Action::WouldMove {
+                path: path.clone(),
+                rule: CONTEXT_RULE.into(),
+                dest_dir: placed.dest_dir,
+                confirm: !auto,
+                encrypt: false,
+            }));
+        }
+        let ymd = placed.date.format("%Y%m%d");
+        if auto {
+            let a = self.move_with(
+                path,
+                placed.dest_dir.clone(),
+                batch_id,
+                CONTEXT_RULE,
+                DecidedBy::Ai,
+                Some(c.confidence),
+                false,
+            )?;
+            if let Action::Moved { dst, .. } = &a {
+                let mut kept = c.clone();
+                kept.date = Some(placed.date);
+                if let Err(e) = store.put_curation(&input.key, dst, &kept, None) {
+                    tracing::warn!("curation cache update failed: {e}");
+                }
+            }
+            return Ok(Some(a));
+        }
+        let question = match (
+            c.entity.as_deref(),
+            placed.known_entity,
+            placed.known_folder,
+        ) {
+            (Some(e), false, _) => {
+                format!("새 고객사 '{e}'의 '{}'({ymd}) 폴더를 만들까요?", c.issue)
+            }
+            (Some(e), true, false) => {
+                format!("{e}의 새 이슈 '{}'({ymd})으로 폴더를 만들까요?", c.issue)
+            }
+            (None, _, false) => format!(
+                "새 주제 '{}' 폴더를 만들까요?",
+                c.topic.as_deref().unwrap_or("미분류")
+            ),
+            _ => format!("확신도 {:.0}%", c.confidence * 100.0),
+        };
+        let reason = format!("{question} — {}", c.reason);
+        store.upsert_pending_entry(&NewPending {
+            path,
+            suggested_dest: Some(&placed.dest_dir),
+            reason: Some(&reason),
+            source: PendingSource::Ai,
+            confidence: Some(c.confidence),
+            suggested_name: None,
+            encrypt: false,
+            pii: None,
+        })?;
+        Ok(Some(Action::Pending {
+            path: path.clone(),
+            rule: CONTEXT_RULE.into(),
+            suggested: placed.dest_dir,
+            source: PendingSource::Ai,
+            confidence: Some(c.confidence),
+            reason: Some(reason),
+            encrypt: false,
+            pii: None,
+        }))
     }
 
     /// No rule matched: ask the AI (if any). Failures fall back to leaving
