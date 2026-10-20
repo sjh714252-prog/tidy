@@ -163,6 +163,11 @@ impl AiClassifier {
         })
     }
 
+    /// Confidence needed to move without asking (`ai.auto_threshold`).
+    pub fn auto_threshold(&self) -> f64 {
+        self.settings.auto_threshold
+    }
+
     pub fn provider_name(&self) -> &str {
         self.provider.name()
     }

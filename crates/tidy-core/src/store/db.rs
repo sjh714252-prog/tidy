@@ -263,6 +263,27 @@ ALTER TABLE move_log ADD COLUMN dst_hash TEXT;
 ALTER TABLE pending ADD COLUMN encrypt INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE pending ADD COLUMN pii TEXT;
 "#,
+    // v8 (M10): work-context analysis cache. `key` is "<blake3>|<name>"
+    // (or "meta:<path>|<size>|<mtime>" for files too big to hash), so a
+    // file is analysed again only when its content changes; `source = user`
+    // rows are the user's corrections and win over the AI's.
+    r#"
+CREATE TABLE curation (
+  key TEXT PRIMARY KEY,
+  path TEXT NOT NULL,
+  entity TEXT,
+  issue TEXT NOT NULL,
+  issue_date TEXT,
+  doc_kind TEXT NOT NULL,
+  topic TEXT,
+  confidence REAL NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL,
+  model TEXT,
+  analyzed_at INTEGER NOT NULL
+);
+CREATE INDEX idx_curation_group ON curation(entity, issue);
+"#,
 ];
 
 pub struct Store {
