@@ -24,6 +24,10 @@ const bridge = async (cmd, args = {}) =>
 
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 960, height: 680 } });
+// M10: settings sections are foldable; these older tests expect everything open.
+await ctx.addInitScript(() =>
+  localStorage.setItem("tidy.settings.sections", JSON.stringify({ watch: true, rules: true, context: true, ai: true, security: true, advanced: true })),
+);
 const main = await ctx.newPage();
 main.on("dialog", (d) => d.accept(process.env.PROMPT_ANSWER ?? ""));
 await main.goto("http://localhost:1420/#/main");

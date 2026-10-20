@@ -104,6 +104,7 @@ function Row({
     void r.editMove(m.id, c.entity ? { ...base, issue: v } : { ...base, topic: v });
   };
   const pct = Math.round(c.confidence * 100);
+  const merged = !!c.date && !!c.own_date && c.own_date !== c.date;
 
   return (
     <tr className={stays ? "stays" : undefined} data-testid="context-row" data-name={m.from.split(/[\\/]/).pop()}>
@@ -148,9 +149,9 @@ function Row({
           onKeyDown={(e) => e.key === "Enter" && commitIssue()}
         />
       </td>
-      <td className="small" title={c.own_date !== c.date ? `파일 날짜 ${c.own_date} → 14일 안의 같은 이슈로 묶음` : ""}>
-        {c.date.replaceAll("-", "")}
-        {c.own_date !== c.date && <span className="muted"> (묶음)</span>}
+      <td className="small" title={merged ? `파일 날짜 ${c.own_date} → 가까운 날짜의 같은 이슈로 묶음` : ""}>
+        {(c.date || c.own_date).replaceAll("-", "")}
+        {merged && <span className="muted"> (묶음)</span>}
       </td>
       <td>
         <select

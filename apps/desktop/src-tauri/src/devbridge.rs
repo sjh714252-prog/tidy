@@ -254,12 +254,12 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "save_curate_settings" => {
             ok(context_cmds::save_curate_settings(app, arg(&args, "settings")?).await?)
         }
-        "curate_estimate" => ok(context_cmds::curate_estimate(
-            app,
-            arg(&args, "path")?,
-            arg(&args, "recursive")?,
-        )
-        .await?),
+        "curate_estimate" => {
+            ok(
+                context_cmds::curate_estimate(app, arg(&args, "path")?, arg(&args, "recursive")?)
+                    .await?,
+            )
+        }
         "plan_context" => ok(context_cmds::plan_context(
             app,
             arg(&args, "path")?,
@@ -275,11 +275,9 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
             arg(&args, "selected")?,
         )
         .await?),
-        "apply_context_suggestions" => ok(context_cmds::apply_context_suggestions(
-            app,
-            arg(&args, "suggestions")?,
-        )
-        .await?),
+        "apply_context_suggestions" => {
+            ok(context_cmds::apply_context_suggestions(app, arg(&args, "suggestions")?).await?)
+        }
         "extract_context" => ok(context_cmds::extract_context(app).await?),
         "context_groups" => ok(context_cmds::context_groups(app).await?),
         "report_roots" => ok(report_cmds::report_roots(app).await?),
