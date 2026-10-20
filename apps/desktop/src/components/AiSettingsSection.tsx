@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import * as ipc from "../ipc/commands";
 import type { AiProvider, AiSettings, SemanticStatus } from "../ipc/types";
 import { useAiSettings } from "../store/aiSettings";
+import { Help } from "./Help";
 
 /**
  * AI (SPEC §5.8): provider / model of the active profile, key (stored only in
@@ -37,18 +38,17 @@ export function AiSettingsSection() {
   const needsKey = draft.provider === "anthropic" || (draft.provider === "openai" && !!draft.keyRef);
 
   return (
-    <section>
-      <h2>AI 분류 (선택)</h2>
+    <div className="ai-section" data-testid="ai-section">
       <p className="muted small">
-        규칙에 맞지 않는 파일만 AI에 물어봅니다. 확신도가 기준 이상이고 <code>ai_auto = true</code> 규칙의 폴더일 때만
-        바로 옮기고, 나머지는 확인 팝업으로 묻습니다. AI가 없거나 실패해도 규칙과 검색은 그대로 동작합니다.
+        규칙에 맞지 않는 파일만 AI에 물어봅니다. 확신도가 기준 이상이고 AI 자동 이동을 허용한 규칙의 폴더일 때만
+        바로 옮기고, 나머지는 확인 팝업으로 묻습니다. 업무 맥락 정리와 "AI로 규칙 만들기"도 이 연결을 씁니다. AI가 없거나 실패해도 규칙과 검색은 그대로 동작합니다.
       </p>
       <label className="row">
         <input type="checkbox" checked={draft.enabled} onChange={(e) => patch({ enabled: e.target.checked })} />
-        <span>AI 분류 사용</span>
+        <span>AI 사용 (분류·업무 맥락 정리·규칙 초안)</span>
       </label>
       <label className="row">
-        <span>프로필</span>
+        <span title="회사용·집용처럼 AI 설정을 여러 벌 두고 고를 수 있습니다">프로필</span>
         <input
           list="ai-profiles"
           value={draft.activeProfile}
@@ -84,7 +84,9 @@ export function AiSettingsSection() {
           {draft.provider !== "ollama" && (
             <>
               <label className="row">
-                <span>키 이름</span>
+                <span>
+                  키 이름 <Help id="keychain" />
+                </span>
                 <input
                   value={draft.keyRef}
                   placeholder="tidy/anthropic"
@@ -114,19 +116,21 @@ export function AiSettingsSection() {
           )}
           {draft.provider === "anthropic" && (
             <label className="row">
-              <span>effort</span>
+              <span>생각 깊이</span>
               <select value={draft.effort} onChange={(e) => patch({ effort: e.target.value })}>
                 <option value="">(모델 기본값)</option>
-                <option value="low">low — 분류에 충분, 빠르고 저렴</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
+                <option value="low">낮음 — 분류에 충분, 빠르고 저렴</option>
+                <option value="medium">보통</option>
+                <option value="high">높음</option>
               </select>
             </label>
           )}
         </>
       )}
       <label className="row">
-        <span>자동 이동 기준</span>
+        <span>
+          자동 이동 기준 <Help id="confidence" />
+        </span>
         <input
           type="number"
           min={0.5}
@@ -140,8 +144,11 @@ export function AiSettingsSection() {
       <label className="row">
         <input type="checkbox" checked={draft.sendContent} onChange={(e) => patch({ sendContent: e.target.checked })} />
         <span>본문 앞부분(기본 1,500자)도 보내기 — 끄면 파일명·크기·날짜·폴더만 보냅니다</span>
+        <Help id="sendContent" />
       </label>
-      <h3>의미검색 (임베딩 모델)</h3>
+      <h3>
+        의미검색 모델 <Help id="embedding" />
+      </h3>
       <p className="muted small">
         검색창에서 "작년에 받은 통신 요금 고지서"처럼 자연어로 찾을 수 있게 파일 이름과 본문 앞부분을 벡터로 바꿔
         둡니다. Anthropic에는 임베딩 API가 없어 OpenAI 호환 또는 Ollama(로컬)를 씁니다. 모델이 없거나 실패하면 단어
@@ -226,6 +233,6 @@ export function AiSettingsSection() {
       </div>
       {message && <p className="ok small">{message}</p>}
       {error && <p className="error small">{error}</p>}
-    </section>
+    </div>
   );
 }

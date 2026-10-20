@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Listener};
 use tiny_http::{Header, Method, Request, Response, Server};
 
-use crate::{commands, onboarding, report_cmds, security_cmds};
+use crate::{commands, context_cmds, onboarding, report_cmds, security_cmds};
 
 pub const PORT: u16 = 1421;
 
@@ -250,6 +250,38 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "accept_learn" => ok(commands::accept_learn(app, arg(&args, "key")?).await?),
         "dismiss_learn" => ok(commands::dismiss_learn(app, arg(&args, "key")?).await?),
         // M5: report, restructure plans, move history.
+        "get_curate_settings" => ok(context_cmds::get_curate_settings(app).await?),
+        "save_curate_settings" => {
+            ok(context_cmds::save_curate_settings(app, arg(&args, "settings")?).await?)
+        }
+        "curate_estimate" => ok(context_cmds::curate_estimate(
+            app,
+            arg(&args, "path")?,
+            arg(&args, "recursive")?,
+        )
+        .await?),
+        "plan_context" => ok(context_cmds::plan_context(
+            app,
+            arg(&args, "path")?,
+            arg(&args, "recursive")?,
+            arg(&args, "protect")?,
+        )
+        .await?),
+        "edit_context_move" => ok(context_cmds::edit_context_move(
+            app,
+            arg(&args, "id")?,
+            arg(&args, "moveId")?,
+            arg(&args, "edit")?,
+            arg(&args, "selected")?,
+        )
+        .await?),
+        "apply_context_suggestions" => ok(context_cmds::apply_context_suggestions(
+            app,
+            arg(&args, "suggestions")?,
+        )
+        .await?),
+        "extract_context" => ok(context_cmds::extract_context(app).await?),
+        "context_groups" => ok(context_cmds::context_groups(app).await?),
         "report_roots" => ok(report_cmds::report_roots(app).await?),
         "build_report" => {
             ok(

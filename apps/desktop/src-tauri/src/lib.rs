@@ -4,6 +4,7 @@
 
 mod autostart;
 mod commands;
+mod context_cmds;
 #[cfg(debug_assertions)]
 mod devbridge;
 mod onboarding;
@@ -144,6 +145,14 @@ pub fn run() {
             commands::list_learn,
             commands::accept_learn,
             commands::dismiss_learn,
+            context_cmds::get_curate_settings,
+            context_cmds::save_curate_settings,
+            context_cmds::curate_estimate,
+            context_cmds::plan_context,
+            context_cmds::edit_context_move,
+            context_cmds::apply_context_suggestions,
+            context_cmds::extract_context,
+            context_cmds::context_groups,
             report_cmds::report_roots,
             report_cmds::build_report,
             report_cmds::plan_rules,

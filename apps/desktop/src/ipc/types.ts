@@ -405,11 +405,32 @@ export interface PlannedMove {
   bytes: number;
   reason: string;
   warnings: string[];
+  /** (M10) The AI's work-context judgement (source "context"). */
+  context?: ContextNote | null;
+  /** (M10) Locked into an encrypted zip (personal file, vault mode). */
+  encrypt?: boolean;
+}
+/** (M10) Core JSON (snake_case). */
+export interface ContextNote {
+  entity: string | null;
+  issue: string;
+  /** Folder date after merging, YYYY-MM-DD. */
+  date: string;
+  own_date: string;
+  doc_kind: string;
+  topic: string | null;
+  confidence: number;
+  reason: string;
+  ai_entity: string | null;
+  ai_issue: string;
+  unclassified: boolean;
+  edited: boolean;
+  key: string;
 }
 export interface Plan {
   id: number;
   root: string;
-  source: "rules" | "ai";
+  source: "rules" | "ai" | "context";
   created_at: number;
   summary: string;
   folders: { path: string; reason: string }[];
@@ -500,4 +521,67 @@ export interface SecuritySettings {
   suspected: number;
   unencrypted: number;
   locked: number;
+}
+
+/** (M10) context.toml (core JSON field names). */
+export interface ContextDict {
+  entity: { name: string; aliases: string[]; notes?: string }[];
+  issue_type: { name: string }[];
+  doc_kind: { name: string; ext: string[] }[];
+}
+
+/** (M10) [curate] fields the settings edit. */
+export interface CuratePatch {
+  enabled: boolean;
+  prefer: boolean;
+  template: string;
+  other_template: string;
+  min_confidence: number;
+}
+
+export interface CurateSettings {
+  settings: CuratePatch;
+  dict: ContextDict;
+  contextPath: string;
+  contextExists: boolean;
+  analysed: number;
+}
+
+/** (M10) "파일 N개, 예상 토큰/비용". */
+export interface CurateEstimate {
+  files: number;
+  cached: number;
+  to_analyze: number;
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number | null;
+  provider: string;
+  model: string;
+}
+
+export type ContextSuggestion =
+  | { kind: "add_entity"; name: string }
+  | { kind: "add_alias"; entity: string; alias: string }
+  | { kind: "add_issue_type"; name: string };
+
+export interface ContextEdit {
+  plan: Plan;
+  preview: Preview;
+  suggestions: { suggestion: ContextSuggestion; label: string }[];
+}
+
+export interface MoveEdit {
+  entity: string | null;
+  issue?: string | null;
+  docKind?: string | null;
+  topic?: string | null;
+}
+
+/** (M10) "바탕화면에서 뽑기" candidates. */
+export interface ContextCandidates {
+  entities: { name: string; aliases: string[]; files: number; reason: string; known: boolean }[];
+  issue_types: { name: string; known: boolean }[];
+  doc_kinds: { name: string; ext: string[]; known: boolean }[];
+  files: number;
 }

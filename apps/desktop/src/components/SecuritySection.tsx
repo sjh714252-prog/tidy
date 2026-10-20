@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import * as ipc from "../ipc/commands";
 import type { PiiSettings } from "../ipc/types";
 import { MIN_PASSWORD, useSecurity } from "../store/security";
+import { Help } from "./Help";
 
 const ITEMS: { key: "rrn" | "account" | "namePhone" | "nameEmail"; min: keyof PiiSettings; label: string; tip: string }[] = [
   { key: "rrn", min: "minRrn", label: "주민등록번호", tip: "앞 6자리-뒤 7자리, 날짜·검증 자릿수까지 맞을 때" },
@@ -31,8 +32,7 @@ export function SecuritySection() {
   };
 
   return (
-    <section className="security" data-testid="security-section">
-      <h2>보안(개인정보)</h2>
+    <div className="security" data-testid="security-section">
       <p className="muted small">
         본문과 파일 이름에서 개인정보를 찾아(인터넷 없이) 암호화 zip(AES-256)으로 보관합니다. 암호화한 파일도 검색에
         🔒로 나오고, 되돌리기로 원래 자리에 풀 수 있습니다. 지금 인덱스에서 개인정보 의심 {draft.suspected}개 중{" "}
@@ -82,7 +82,7 @@ export function SecuritySection() {
         </tbody>
       </table>
       <label className="row">
-        <span>제외 패턴</span>
+        <span title="이 모양과 맞는 값은 개인정보로 세지 않습니다">제외할 값</span>
         <input
           className="wide"
           placeholder="^010-?0000-?0000$, 회사 대표 계좌…"
@@ -98,7 +98,7 @@ export function SecuritySection() {
           }
         />
       </label>
-      <p className="muted small">정규식, 쉼표로 구분. 찾은 값(그대로 또는 숫자만)이 맞으면 세지 않습니다.</p>
+      <p className="muted small">쉼표로 구분(정규식 패턴). 찾은 값(그대로 또는 숫자만)이 맞으면 세지 않습니다. 예: 회사 대표 번호·계좌.</p>
       <label className="row">
         <input
           type="checkbox"
@@ -109,7 +109,9 @@ export function SecuritySection() {
         <span>AI가 켜져 있으면 한 번 더 확인 (숫자·메일 아이디는 가려서 보냄, 실패하면 정규식 판단 유지)</span>
       </label>
 
-      <h3>어떻게 보관할까</h3>
+      <h3>
+        어떻게 보관할까 <Help id="vaultMode" />
+      </h3>
       <label className="row">
         <input
           type="radio"
@@ -139,14 +141,18 @@ export function SecuritySection() {
         <button onClick={() => void pickVault()}>폴더 선택…</button>
       </label>
       <label className="row">
-        <span>승인 방식</span>
+        <span>
+          승인 방식 <Help id="approval" />
+        </span>
         <select value={draft.approval} onChange={(e) => patch({ approval: e.target.value as "confirm" | "auto" })}>
           <option value="confirm">확인 후 암호화 (기본) — 팝업에 파일명·탐지 항목·건수</option>
           <option value="auto">자동 — 묻지 않고 암호화</option>
         </select>
       </label>
 
-      <h3>보관 비밀번호</h3>
+      <h3>
+        보관 비밀번호 <Help id="keychain" />
+      </h3>
       <p className="small" data-testid="vault-key-state">
         {draft.hasPassword ? (
           <span className="ok">
@@ -183,6 +189,6 @@ export function SecuritySection() {
       {bad && (password || password2 || draft.mode === "vault") && <p className="warn small">{bad}</p>}
       {error && <p className="error small">{error}</p>}
       {message && !error && <p className="ok small">{message}</p>}
-    </section>
+    </div>
   );
 }

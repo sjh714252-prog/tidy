@@ -33,6 +33,11 @@ export function ConfirmPopup() {
 
   if (!item) return <div className="confirm muted">대기 중인 파일이 없습니다.</div>;
 
+  // (M10) Work-context items carry their question first: "…폴더를 만들까요? — 근거".
+  const q = item.reason?.match(/^(.*?까요\?)\s+—\s+(.*)$/s);
+  const question = q?.[1] ?? null;
+  const reason = q ? q[2] : item.reason;
+
   const elsewhere = async () => {
     const dir = await ipc.pickFolder(item.suggestedDest ?? item.dir);
     if (dir) await resolve(item.id, { kind: "move", destDir: dir });
@@ -41,7 +46,7 @@ export function ConfirmPopup() {
   return (
     <div className="confirm">
       <header>
-        <strong>정리할까요?</strong>
+        <strong data-testid="confirm-question">{question ?? "정리할까요?"}</strong>
         {items.length > 1 && <span className="muted"> · 대기 {items.length}건</span>}
       </header>
       <div className="c-file" title={item.path}>
@@ -68,7 +73,7 @@ export function ConfirmPopup() {
             AI {item.confidence != null ? `${Math.round(item.confidence * 100)}%` : ""}
           </span>
         )}
-        {item.reason && <div className="muted small">이유: {item.reason}</div>}
+        {reason && <div className="muted small">이유: {reason}</div>}
         {item.suggestedName && <div className="muted small">새 이름 제안: {item.suggestedName}</div>}
       </div>
       {renaming && (

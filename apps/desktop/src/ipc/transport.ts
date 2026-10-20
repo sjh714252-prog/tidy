@@ -87,3 +87,9 @@ export async function hideCurrentWindow(): Promise<void> {
   const { getCurrentWindow } = await import("@tauri-apps/api/window");
   await getCurrentWindow().hide();
 }
+
+/** This page is the main window (not search / confirm / wizard). */
+export function inMainWindow(): boolean {
+  const h = typeof window === "undefined" ? "" : window.location.hash;
+  return !h || h === "#/" || h.startsWith("#/main");
+}
