@@ -312,6 +312,8 @@ const DEST = {
   await main.getByRole("button", { name: "리포트" }).click();
   await sleep(800);
   const panel = main.locator(".restructure");
+  if (await panel.getByRole("button", { name: "닫기" }).count()) await panel.getByRole("button", { name: "닫기" }).click();
+  await panel.locator("h3").scrollIntoViewIfNeeded();
   ok("H", "리포트: 업무 맥락으로 정리 비활성", await panel.locator("[data-testid=curate-plan]").isDisabled());
   const badge = panel.locator("[data-testid=ai-needed]");
   ok("H", "리포트: 'AI 필요' + 'AI 연결에서 켜기'", (await badge.count()) === 1 && (await badge.innerText()).includes("AI 연결에서 켜기"));

@@ -8,6 +8,8 @@ import { HELP, type HelpId } from "./helpTexts";
  */
 export function Help({ id }: { id: HelpId }) {
   const [open, setOpen] = useState(false);
+  // Open toward the left when there is no room on the right.
+  const [flip, setFlip] = useState(false);
   const h = HELP[id];
   return (
     <span className="help" data-help={id}>
@@ -19,13 +21,15 @@ export function Help({ id }: { id: HelpId }) {
         title={h.line}
         onClick={(e) => {
           e.preventDefault();
+          const r = e.currentTarget.getBoundingClientRect();
+          setFlip(r.left + 340 > window.innerWidth);
           setOpen((o) => !o);
         }}
       >
         ⓘ
       </button>
       {open && (
-        <span className="help-pop" role="note">
+        <span className={flip ? "help-pop flip" : "help-pop"} role="note">
           <span className="help-line">{h.line}</span>
           {h.example && (
             <details>
