@@ -225,8 +225,9 @@ details.advanced summary { cursor: pointer; color: var(--muted); }
 .fold-body { padding: 4px 12px 12px; }
 .help { position: relative; display: inline-block; }
 .help-i { background: none; border: none; color: var(--accent); padding: 0 2px; font-size: 13px; line-height: 1; cursor: help; }
-.help-pop { position: absolute; z-index: 20; left: 0; top: 100%; margin-top: 4px; width: 320px; padding: 8px 10px; font-size: 12px; font-weight: normal;
+.help-pop { position: absolute; z-index: 20; left: 0; top: 100%; margin-top: 4px; width: 320px; max-width: 80vw; padding: 8px 10px; font-size: 12px; font-weight: normal;
   color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.15); white-space: normal; text-align: left; }
+.help-pop.flip { left: auto; right: 0; }
 .help-line { display: block; }
 .help-pop details { margin-top: 4px; }
 .help-ex { display: block; color: var(--muted); word-break: break-all; }
