@@ -69,7 +69,7 @@ export function ConfirmPopup() {
         )}
         {item.rule && <span className="tag">규칙: {item.rule}</span>}
         {item.source === "ai" && (
-          <span className="tag ai" title="AI 제안 — 확신도가 자동 이동 기준보다 낮거나 자동 이동이 허용되지 않은 폴더">
+          <span className="tag ai" title="AI 제안 — 자동으로 옮길 조건(확신도 기준, 허용된·이미 있는 폴더)에 맞지 않아 묻습니다">
             AI {item.confidence != null ? `${Math.round(item.confidence * 100)}%` : ""}
           </span>
         )}

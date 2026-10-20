@@ -149,3 +149,17 @@ name_email = true        # 같은 줄/행에 이름 + 이메일
 # min_name_phone = 3     # 항목별 "이 건수 이상이면 개인정보" (기본 1)
 exclude = ["^010-?0000-?0000$"]   # 세지 않을 값(정규식): 테스트 번호, 회사 대표 계좌 …
 ai_check = false         # AI가 켜져 있으면 정규식 양성을 한 번 더 확인 (숫자·메일 아이디는 가려서 보냄)
+
+# (M10) 업무 맥락 정리 — 고객사/날짜_이슈/종류로 묶기. AI(분류용 프로필) 필요.
+# 리포트의 "업무 맥락으로 정리"(tidy curate scan)는 enabled와 상관없이 쓸 수 있고,
+# enabled는 감시 중 새 파일에도 적용할지 정한다.
+[curate]
+enabled = false
+prefer = false                 # true: 규칙보다 먼저 맥락으로 정리
+context = "context.toml"       # 맥락 사전 (이 설정 파일 기준 상대 경로) — tidy context list
+template = "{entity}/{yyyymmdd}_{issue}/{doc_kind}"   # 가람정보/20261020_과금이슈/로그
+other_template = "기타/{topic}"                       # 기타/정책/문자 정책
+min_confidence = 0.6           # 미만은 미분류(그대로 둠)
+merge_days = 14                # 같은 고객사·이슈는 14일 안이면 가장 이른 날짜 폴더로
+# batch_size = 30              # 한 번에 AI에 묻는 파일 수
+# excerpt_chars = 400          # 파일당 본문 앞부분 (ai.send_content = true일 때만 보냄)

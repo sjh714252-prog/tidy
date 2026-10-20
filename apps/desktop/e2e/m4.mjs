@@ -27,6 +27,10 @@ const bridge = async (cmd, args = {}) =>
 
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 960, height: 800 } });
+// M10: settings sections are foldable; these older tests expect everything open.
+await ctx.addInitScript(() =>
+  localStorage.setItem("tidy.settings.sections", JSON.stringify({ watch: true, rules: true, context: true, ai: true, security: true, advanced: true })),
+);
 const main = await ctx.newPage();
 main.on("dialog", (d) => d.accept(process.env.PROMPT_ANSWER ?? ""));
 await main.goto("http://localhost:1420/#/main");
@@ -56,16 +60,16 @@ await sleep(1000);
 
 // B. AI section: enable with an unreachable Ollama → saved, test fails gracefully
 {
-  const ai = main.locator("section").filter({ has: main.locator("h2", { hasText: "AI 분류" }) }).last();
+  const ai = main.locator("[data-testid=ai-section]");
   ok("B", "AI 설정 섹션 표시", (await ai.count()) === 1, `sections=${await main.locator("section").count()}`);
-  await ai.locator("label.row", { hasText: "AI 분류 사용" }).locator("input[type=checkbox]").check();
+  await ai.locator("label.row", { hasText: "AI 사용" }).locator("input[type=checkbox]").check();
   // Issue #8: unsaved AI edits survive a tab round-trip (dialog: stay / leave) …
   // (the page-level dialog handler accepts the "leave without saving?" confirm)
   await main.getByRole("button", { name: "활동" }).click();
   await sleep(300);
   await main.getByRole("button", { name: "설정", exact: true }).click();
   await sleep(800);
-  const kept = await ai.locator("label.row", { hasText: "AI 분류 사용" }).locator("input[type=checkbox]").isChecked();
+  const kept = await ai.locator("label.row", { hasText: "AI 사용" }).locator("input[type=checkbox]").isChecked();
   ok("B", "#8 저장 전 탭 이동해도 AI 입력 유지", kept);
   const hint = await main.locator(".savebar").innerText();
   ok("B", "#8 저장바에 '저장하지 않은 변경' 표시", hint.includes("저장하지 않은"), hint);
@@ -85,8 +89,8 @@ await sleep(1000);
   await main.waitForSelector(".topbar");
   await main.getByRole("button", { name: "설정", exact: true }).click();
   await sleep(1000);
-  const persisted = await main.locator("label.row", { hasText: "AI 분류 사용" }).locator("input[type=checkbox]").isChecked();
-  const prov = await main.locator("section").filter({ has: main.locator("h2", { hasText: "AI 분류" }) }).last().locator("select").first().inputValue();
+  const persisted = await main.locator("label.row", { hasText: "AI 사용" }).locator("input[type=checkbox]").isChecked();
+  const prov = await main.locator("[data-testid=ai-section]").locator("select").first().inputValue();
   ok("B", "#8 하단 저장 → 재진입 후 AI 설정 유지", persisted && prov === "ollama", `enabled=${persisted} provider=${prov}`);
   await ai.getByRole("button", { name: "연결 테스트" }).click();
   await sleep(6000);

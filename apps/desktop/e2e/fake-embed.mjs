@@ -39,7 +39,14 @@ export function curateAnswer(user) {
     if (!m) continue;
     const id = Number(m[1]);
     const name = m[2];
-    const entity = /가람|GARA/i.test(name) ? '가람정보' : /하늘|SKY/i.test(name) ? '하늘통신' : null;
+    // "RiverInfo" is a spelling the dictionary does not know (learning test).
+    const entity = /가람|GARA/i.test(name)
+      ? '가람정보'
+      : /하늘|SKY/i.test(name)
+        ? '하늘통신'
+        : /River/i.test(name)
+          ? 'RiverInfo'
+          : null;
     const issue = /과금/.test(name)
       ? '과금이슈'
       : /장애/.test(name)
@@ -57,7 +64,7 @@ export function curateAnswer(user) {
     files.push({
       id,
       entity,
-      issue: entity ? issue : '정책',
+      issue: !entity && /정책|방침/.test(name) ? '정책' : issue,
       date: d ? `${d[1]}-${d[2]}-${d[3]}` : null,
       doc_kind,
       topic,

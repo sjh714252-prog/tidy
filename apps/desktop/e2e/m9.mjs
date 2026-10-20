@@ -72,6 +72,10 @@ const ACCOUNT_FILE = path.join(DESK, "환불 계좌.txt");
 
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1100, height: 1000 } });
+// M10: settings sections are foldable; these older tests expect everything open.
+await ctx.addInitScript(() =>
+  localStorage.setItem("tidy.settings.sections", JSON.stringify({ watch: true, rules: true, context: true, ai: true, security: true, advanced: true })),
+);
 const main = await ctx.newPage();
 main.on("dialog", (d) => d.accept(process.env.PROMPT_ANSWER ?? ""));
 await main.goto("http://localhost:1420/#/main");

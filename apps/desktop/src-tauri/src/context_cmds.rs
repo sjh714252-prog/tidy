@@ -82,7 +82,10 @@ pub async fn get_curate_settings(app: AppHandle) -> CmdResult<CurateDto> {
 #[tauri::command]
 pub async fn save_curate_settings(app: AppHandle, settings: CurateDto) -> CmdResult<CurateDto> {
     blocking(move || {
-        for t in [&settings.settings.template, &settings.settings.other_template] {
+        for t in [
+            &settings.settings.template,
+            &settings.settings.other_template,
+        ] {
             tidy_core::curate::FolderTemplate::parse(t).map_err(|e| format!("폴더 틀: {e}"))?;
         }
         let state = app.state::<AppState>();
@@ -151,7 +154,12 @@ pub async fn plan_context(
         let anchors = Anchors::from_config(&cfg);
         let anchor = anchors.for_path(&root).unwrap_or(&root).to_path_buf();
         let mut protected: Vec<PathBuf> = cfg.report.protected.clone();
-        protected.extend(protect.iter().filter(|p| !p.trim().is_empty()).map(|p| expand(p)));
+        protected.extend(
+            protect
+                .iter()
+                .filter(|p| !p.trim().is_empty())
+                .map(|p| expand(p)),
+        );
         let plan = cur
             .plan(
                 &ai,

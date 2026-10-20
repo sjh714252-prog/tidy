@@ -302,8 +302,8 @@ export function SettingsView() {
         {!s.error && !aiError && sec.error && <span className="error">보안: {sec.error}</span>}
         {!s.error && !aiError && !sec.error && cur.error && <span className="error">업무 맥락: {cur.error}</span>}
         {!s.error && !aiError && !sec.error && secBlock && <span className="warn small">보안: {secBlock}</span>}
-        {s.message && !s.error && <span className="ok">{s.message}</span>}
-        {!s.message && !s.error && anyDirty() && <span className="muted small">저장하지 않은 변경이 있습니다</span>}
+        {s.message && !s.error && !anyDirty() && <span className="ok">{s.message}</span>}
+        {!s.error && anyDirty() && <span className="muted small">저장하지 않은 변경이 있습니다</span>}
         <div className="spacer" />
         <button onClick={() => void revert()} disabled={s.saving || ai.busy || sec.busy || cur.busy}>
           되돌리기

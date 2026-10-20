@@ -75,6 +75,10 @@ fs.writeFileSync(path.join(DESK, "부동산_서류.md"), "임대차 약정 조�
 
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1000, height: 900 } });
+// M10: settings sections are foldable; these older tests expect everything open.
+await ctx.addInitScript(() =>
+  localStorage.setItem("tidy.settings.sections", JSON.stringify({ watch: true, rules: true, context: true, ai: true, security: true, advanced: true })),
+);
 const main = await ctx.newPage();
 main.on("dialog", (d) => d.accept(process.env.PROMPT_ANSWER ?? ""));
 await main.goto("http://localhost:1420/#/main");
@@ -108,8 +112,8 @@ await sleep(1000);
 
 // B. AI settings: embedding model only (no classify model yet)
 {
-  const ai = main.locator("section").filter({ has: main.locator("h2", { hasText: "AI 분류" }) }).last();
-  await ai.locator("label.row", { hasText: "AI 분류 사용" }).locator("input[type=checkbox]").check();
+  const ai = main.locator("[data-testid=ai-section]");
+  await ai.locator("label.row", { hasText: "AI 사용" }).locator("input[type=checkbox]").check();
   const embedRow = ai.locator("label.row").filter({ has: main.locator("option[value=ollama]") }).filter({ hasNotText: "Anthropic" });
   await embedRow.locator("select").selectOption("openai");
   await sleep(300);
@@ -190,7 +194,7 @@ const query = async (q, wait = 2500) => {
   // Classify model on the same fake server (no key).
   await main.getByRole("button", { name: "설정", exact: true }).click();
   await sleep(800);
-  const ai = main.locator("section").filter({ has: main.locator("h2", { hasText: "AI 분류" }) }).last();
+  const ai = main.locator("[data-testid=ai-section]");
   await ai.locator("select").first().selectOption("openai");
   await sleep(300);
   const rows = ai.locator("label.row");
