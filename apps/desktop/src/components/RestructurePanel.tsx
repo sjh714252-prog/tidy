@@ -1,9 +1,26 @@
 import { useEffect, useState } from "react";
 import * as ipc from "../ipc/commands";
-import type { StoredPlan } from "../ipc/types";
+import type { CurateEstimate, StoredPlan } from "../ipc/types";
 import { useReport } from "../store/report";
 import { useStatus } from "../store/status";
 import { formatSize, formatTime } from "./format";
+import { AiNeeded, useAiOn } from "./AiNeeded";
+import { ContextTable, Suggestions } from "./ContextPlan";
+
+const SOURCE: Record<string, string> = { ai: "AI", rules: "규칙", context: "업무 맥락" };
+
+/** The cost notice shown before a work-context analysis (SPEC §14.3). */
+export function estimateText(e: CurateEstimate): string {
+  if (!e.files) return "정리할 파일이 없습니다.";
+  const head = `파일 ${e.files}개 중 ${e.to_analyze}개를 AI로 분석합니다`;
+  if (!e.to_analyze) return `${head} — 모두 이미 분석해 두어 AI를 다시 부르지 않습니다(비용 없음).`;
+  const cost = e.cost_usd != null ? `, 약 $${e.cost_usd.toFixed(e.cost_usd < 0.01 ? 4 : 2)}` : " (이 모델의 요금은 알 수 없음)";
+  return (
+    `${head}${e.cached ? ` (이미 분석한 ${e.cached}개는 다시 묻지 않음)` : ""}.\n` +
+    `요청 ${e.requests}번 · 예상 토큰 입력 약 ${e.input_tokens.toLocaleString()} / 출력 약 ${e.output_tokens.toLocaleString()}${cost}` +
+    `${e.model ? ` · ${e.model}` : ""}`
+  );
+}
 
 /**
  * Restructure (SPEC §5.7): plan from rules (no AI) or from the AI →
@@ -13,6 +30,7 @@ import { formatSize, formatTime } from "./format";
 export function RestructurePanel() {
   const r = useReport();
   const aiState = useStatus((s) => s.status?.aiState);
+  const aiOn = useAiOn();
   const [recursive, setRecursive] = useState(false);
   const [plans, setPlans] = useState<StoredPlan[]>([]);
   useEffect(() => {
@@ -21,6 +39,16 @@ export function RestructurePanel() {
 
   const plan = r.plan;
   const rel = (p: string) => (plan && p.startsWith(plan.root) ? p.slice(plan.root.length + 1) || "." : p);
+  const curate = async () => {
+    try {
+      const est = await ipc.curateEstimate(r.path, recursive);
+      if (!est.files) return window.alert("정리할 파일이 없습니다.");
+      if (!window.confirm(`${estimateText(est)}\n\n분석만 하고 아무것도 옮기지 않습니다. 진행할까요?`)) return;
+    } catch (e) {
+      return window.alert(String(e));
+    }
+    await r.makePlan("context", recursive);
+  };
   const confirmApply = () => {
     if (!plan) return;
     const n = r.selected.size;
@@ -40,17 +68,30 @@ export function RestructurePanel() {
         </label>
         <button
           disabled={!r.path || !!r.planning || aiState !== "ready"}
-          title={aiState === "ready" ? "" : "설정 > AI 분류에서 AI를 켜고 연결 테스트를 통과해야 합니다"}
+          title={aiState === "ready" ? "" : "설정 → AI 연결에서 AI를 켜고 연결 테스트를 통과해야 합니다"}
           onClick={() => void r.makePlan("ai")}
         >
           {r.planning === "ai" ? "AI가 구조를 보는 중… (최대 몇 분)" : "AI 재구성 제안"}
         </button>
+        <button
+          data-testid="curate-plan"
+          disabled={!r.path || !!r.planning || !aiOn}
+          title={
+            aiOn
+              ? "파일 이름·날짜·본문 앞부분으로 고객사/날짜_이슈/종류 폴더를 제안합니다(분석 전 비용 안내)"
+              : "AI를 켜면 쓸 수 있습니다"
+          }
+          onClick={() => void curate()}
+        >
+          {r.planning === "context" ? "AI가 업무 맥락을 보는 중…" : "업무 맥락으로 정리"}
+        </button>
+        <AiNeeded />
         {plans.length > 0 && (
           <select value="" onChange={(e) => e.target.value && void r.openPlan(Number(e.target.value))}>
             <option value="">지난 제안 열기…</option>
             {plans.map((p) => (
               <option key={p.id} value={p.id}>
-                #{p.id} {p.source} {formatTime(p.created_at)} {p.applied_batch ? "(적용됨)" : ""}
+                #{p.id} {SOURCE[p.source] ?? p.source} {formatTime(p.created_at)} {p.applied_batch ? "(적용됨)" : ""}
               </option>
             ))}
           </select>
@@ -71,7 +112,7 @@ export function RestructurePanel() {
         <div className="plan">
           <div className="row">
             <strong>
-              제안 #{plan.id} · {plan.source === "ai" ? "AI" : "규칙"} · {plan.moves.length}개 항목
+              제안 #{plan.id} · {SOURCE[plan.source] ?? plan.source} · {plan.moves.length}개 항목
             </strong>
             {plan.applied_batch && <span className="tag">적용됨</span>}
             <div className="spacer" />
@@ -91,6 +132,8 @@ export function RestructurePanel() {
           )}
           {plan.moves.length === 0 ? (
             <p className="muted">옮길 것이 없습니다.</p>
+          ) : plan.source === "context" ? (
+            <ContextTable plan={plan} rel={rel} />
           ) : (
             <table className="grid">
               <thead>
@@ -140,6 +183,8 @@ export function RestructurePanel() {
               </tbody>
             </table>
           )}
+          {r.suggestions.length > 0 && <Suggestions />}
+          {r.learnt && <p className="ok small">{r.learnt}</p>}
           {plan.rejected.length > 0 && (
             <details>
               <summary className="small warn">받아들이지 않은 AI 제안 {plan.rejected.length}개</summary>

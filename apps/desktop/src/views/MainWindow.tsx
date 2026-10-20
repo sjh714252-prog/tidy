@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import * as ipc from "../ipc/commands";
 import { onActivity, onNavigate, onPending, onProgress, onStatus } from "../ipc/events";
 import { useProgress } from "../store/progress";
@@ -10,6 +10,8 @@ import { useStatus } from "../store/status";
 import { useSettings } from "../store/settings";
 import { useAiSettings } from "../store/aiSettings";
 import { useSecurity } from "../store/security";
+import { useCurate } from "../store/curate";
+import { useNav } from "../store/nav";
 import { useReport } from "../store/report";
 import { ActivityView } from "./ActivityView";
 import { HistoryView } from "./HistoryView";
@@ -27,13 +29,15 @@ const TABS: { id: MainTab; label: string }[] = [
 
 /** Main window: status bar + tabs (활동 / 대기열 / 설정). Hidden to tray on close. */
 export function MainWindow() {
-  const [tab, setTab] = useState<MainTab>("activity");
+  const tab = useNav((s) => s.tab);
+  const setTab = useNav((s) => s.setTab);
+  const curateDirty = useCurate((s) => s.dirty);
   const settingsDirty = useSettings((s) => s.dirty);
   const aiDirty = useAiSettings((s) => s.dirty);
   const securityDirty = useSecurity((s) => s.dirty);
   // Leaving the settings tab with unsaved edits asks first (issue #8).
   const switchTab = (next: MainTab) => {
-    if (tab === "settings" && next !== "settings" && (settingsDirty() || aiDirty() || securityDirty())) {
+    if (tab === "settings" && next !== "settings" && (settingsDirty() || aiDirty() || securityDirty() || curateDirty())) {
       if (!window.confirm("설정에 저장하지 않은 변경이 있습니다. 저장하지 않고 이동할까요?")) return;
     }
     setTab(next);
@@ -51,6 +55,8 @@ export function MainWindow() {
         // The event reaches every window; only main-window tabs apply here.
         if (!TABS.some((x) => x.id === t)) return;
         setTab(t);
+        // "AI 연결에서 켜기" from another window: open that settings section.
+        if (t === "settings" && q.get("section")) useNav.getState().goSettings(q.get("section") ?? "");
         // Wizard "기존 파일 미리보기": rules plan of a watch folder (nothing
         // moves until the user applies selected items).
         if (t === "report" && q.get("plan") === "rules" && q.get("path")) {

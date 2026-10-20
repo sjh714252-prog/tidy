@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import * as ipc from "../ipc/commands";
-import type { ApplyResult, Plan, Preview, Report } from "../ipc/types";
+import type { ApplyResult, ContextSuggestion, MoveEdit, Plan, Preview, Report } from "../ipc/types";
 
 interface ReportState {
   roots: string[];
@@ -15,7 +15,11 @@ interface ReportState {
   plan: Plan | null;
   preview: Preview | null;
   selected: Set<number>;
-  planning: "rules" | "ai" | null;
+  planning: "rules" | "ai" | "context" | null;
+  /** (M10) Dictionary changes learnt from edits in a work-context plan (confirm to save). */
+  suggestions: { suggestion: ContextSuggestion; label: string }[];
+  editing: number | null;
+  learnt: string | null;
   applying: boolean;
   applied: ApplyResult | null;
 
@@ -24,7 +28,11 @@ interface ReportState {
   setDups: (b: boolean) => void;
   setProtect: (p: string) => void;
   build: () => Promise<void>;
-  makePlan: (kind: "rules" | "ai", recursive?: boolean) => Promise<void>;
+  makePlan: (kind: "rules" | "ai" | "context", recursive?: boolean) => Promise<void>;
+  /** (M10) Change customer / issue / kind of one work-context item. */
+  editMove: (moveId: number, edit: MoveEdit) => Promise<void>;
+  learn: (picked: ContextSuggestion[]) => Promise<void>;
+  dropSuggestions: () => void;
   openPlan: (id: number) => Promise<void>;
   toggle: (id: number) => void;
   setAll: (on: boolean) => void;
@@ -37,6 +45,11 @@ const protectList = (s: string) =>
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
+
+/** What a plan ticks by default: everything, except work-context items that
+ * stay where they are (미분류 / already in place). */
+const defaultSelected = (plan: Plan) =>
+  new Set(plan.moves.filter((m) => plan.source !== "context" || m.from !== m.to).map((m) => m.id));
 
 let previewTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -52,6 +65,9 @@ export const useReport = create<ReportState>((set, get) => ({
   preview: null,
   selected: new Set(),
   planning: null,
+  suggestions: [],
+  editing: null,
+  learnt: null,
   applying: false,
   applied: null,
 
@@ -81,13 +97,15 @@ export const useReport = create<ReportState>((set, get) => ({
   makePlan: async (kind, recursive = false) => {
     const { path, protect } = get();
     if (!path) return;
-    set({ planning: kind, error: null, applied: null });
+    set({ planning: kind, error: null, applied: null, suggestions: [], learnt: null });
     try {
       const r =
         kind === "ai"
           ? await ipc.planAi(path, protectList(protect))
-          : await ipc.planRules(path, recursive, protectList(protect));
-      set({ plan: r.plan, preview: r.preview, selected: new Set(r.plan.moves.map((m) => m.id)) });
+          : kind === "context"
+            ? await ipc.planContext(path, recursive, protectList(protect))
+            : await ipc.planRules(path, recursive, protectList(protect));
+      set({ plan: r.plan, preview: r.preview, selected: defaultSelected(r.plan) });
     } catch (e) {
       set({ error: String(e) });
     } finally {
@@ -97,7 +115,7 @@ export const useReport = create<ReportState>((set, get) => ({
   openPlan: async (id) => {
     try {
       const r = await ipc.openPlan(id);
-      set({ plan: r.plan, preview: r.preview, selected: new Set(r.plan.moves.map((m) => m.id)), applied: null });
+      set({ plan: r.plan, preview: r.preview, selected: defaultSelected(r.plan), applied: null, suggestions: [] });
     } catch (e) {
       set({ error: String(e) });
     }
@@ -111,7 +129,7 @@ export const useReport = create<ReportState>((set, get) => ({
   },
   setAll: (on) => {
     const plan = get().plan;
-    set({ selected: on && plan ? new Set(plan.moves.map((m) => m.id)) : new Set() });
+    set({ selected: on && plan ? defaultSelected(plan) : new Set() });
     refreshPreview();
   },
   apply: async () => {
@@ -127,7 +145,39 @@ export const useReport = create<ReportState>((set, get) => ({
       set({ applying: false });
     }
   },
-  closePlan: () => set({ plan: null, preview: null, applied: null }),
+  editMove: async (moveId, edit) => {
+    const { plan, selected, suggestions } = get();
+    if (!plan || plan.applied_batch) return;
+    set({ editing: moveId, error: null, learnt: null });
+    try {
+      const r = await ipc.editContextMove(plan.id, moveId, edit, [...selected]);
+      const m = r.plan.moves.find((x) => x.id === moveId);
+      const sel = new Set([...selected].filter((id) => r.plan.moves.some((x) => x.id === id && x.from !== x.to)));
+      if (m && m.from !== m.to) sel.add(moveId);
+      const seen = new Set(suggestions.map((x) => x.label));
+      set({
+        plan: r.plan,
+        preview: r.preview,
+        selected: sel,
+        suggestions: [...suggestions, ...r.suggestions.filter((x) => !seen.has(x.label))],
+      });
+    } catch (e) {
+      set({ error: String(e) });
+    } finally {
+      set({ editing: null });
+    }
+  },
+  learn: async (picked) => {
+    if (!picked.length) return set({ suggestions: [] });
+    try {
+      await ipc.applyContextSuggestions(picked);
+      set({ suggestions: [], learnt: `맥락 사전에 ${picked.length}개를 넣었습니다 — 다음 분석부터 반영됩니다.` });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+  dropSuggestions: () => set({ suggestions: [] }),
+  closePlan: () => set({ plan: null, preview: null, applied: null, suggestions: [], learnt: null }),
 }));
 
 /** Re-render the before/after trees after the selection settles. */
