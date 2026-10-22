@@ -108,6 +108,13 @@ const OUT_TOKENS_PER_FILE: u64 = 70;
 /// token-heavy; the batch is halved and retried when it still overflows).
 const CURATE_TOKENS_PER_FILE: u32 = 400;
 const CURATE_MAX_TOKENS: u32 = 16_000;
+
+/// Time budget for one curate batch: a fixed part plus a few seconds per
+/// file (long Korean answers from a slow model), capped well under the
+/// HTTP ceiling. A batch that still times out is halved and retried.
+fn curate_timeout(files: usize) -> std::time::Duration {
+    std::time::Duration::from_secs((60 + 6 * files as u64).min(300))
+}
 /// Files sent to "바탕화면에서 뽑기".
 const MAX_EXTRACT_FILES: usize = 200;
 
@@ -445,7 +452,7 @@ impl Curator {
             schema: &prompts::curate_schema(),
             max_tokens: (chunk.len() as u32 * CURATE_TOKENS_PER_FILE)
                 .clamp(2048, CURATE_MAX_TOKENS),
-            timeout: std::time::Duration::from_secs(120),
+            timeout: curate_timeout(chunk.len()),
         };
         let n_files = chunk.len();
         let answers = match ai.call(store, &call, |v| {
@@ -454,12 +461,9 @@ impl Curator {
             Ok((m, Some(summary)))
         }) {
             Ok(a) => a,
-            Err(AiError::Truncated) if chunk.len() > 1 => {
+            Err(e @ (AiError::Truncated | AiError::Timeout(_))) if chunk.len() > 1 => {
                 let (lo, hi) = chunk.split_at(chunk.len() / 2);
-                tracing::warn!(
-                    files = chunk.len(),
-                    "curate answer truncated; retrying in halves"
-                );
+                tracing::warn!(files = chunk.len(), error = %e, "curate batch too big; retrying in halves");
                 self.analyze_chunk(ai, store, inputs, lo, out)?;
                 return self.analyze_chunk(ai, store, inputs, hi, out);
             }
