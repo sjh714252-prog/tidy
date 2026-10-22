@@ -20,6 +20,8 @@ pub struct MockProvider {
     /// When this says `true` for a user prompt, the call fails with
     /// `AiError::Truncated` (simulates `max_tokens` cut-offs).
     truncate_when: Option<Predicate>,
+    /// Same, failing with `AiError::Timeout`.
+    timeout_when: Option<Predicate>,
 }
 
 impl MockProvider {
@@ -35,6 +37,7 @@ impl MockProvider {
             prompts: Mutex::new(Vec::new()),
             responder: None,
             truncate_when: None,
+            timeout_when: None,
         }
     }
 
@@ -46,7 +49,14 @@ impl MockProvider {
             prompts: Mutex::new(Vec::new()),
             responder: Some(Box::new(f)),
             truncate_when: None,
+            timeout_when: None,
         }
+    }
+
+    /// Fail with `AiError::Timeout` whenever `pred(user_prompt)` is true.
+    pub fn timeout_when(mut self, pred: impl Fn(&str) -> bool + Send + Sync + 'static) -> Self {
+        self.timeout_when = Some(Box::new(pred));
+        self
     }
 
     /// Fail with `AiError::Truncated` whenever `pred(user_prompt)` is true.
@@ -76,6 +86,9 @@ impl LlmProvider for MockProvider {
             .push((system.to_string(), user.to_string()));
         if self.truncate_when.as_ref().is_some_and(|p| p(user)) {
             return Err(AiError::Truncated);
+        }
+        if self.timeout_when.as_ref().is_some_and(|p| p(user)) {
+            return Err(AiError::Timeout(1));
         }
         if let Some(f) = &self.responder {
             return Ok(LlmResponse {
