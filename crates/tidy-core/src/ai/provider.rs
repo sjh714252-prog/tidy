@@ -38,6 +38,10 @@ pub enum AiError {
     Refusal,
     #[error("unusable AI response: {0}")]
     BadResponse(String),
+    /// The model hit `max_tokens` before finishing the JSON. Callers that
+    /// batch files split the batch and retry (curate); others report it.
+    #[error("AI 응답이 너무 길어 잘렸습니다 (max_tokens) — 파일을 나눠 다시 시도하세요")]
+    Truncated,
     #[error("could not start the AI runtime: {0}")]
     Runtime(String),
     #[error("not supported: {0}")]

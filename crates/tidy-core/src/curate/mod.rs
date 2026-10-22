@@ -104,6 +104,10 @@ const MAX_HASH_BYTES: u64 = 512 * 1024 * 1024;
 const CHARS_PER_TOKEN: f64 = 2.5;
 /// Answer tokens per file (estimate).
 const OUT_TOKENS_PER_FILE: u64 = 70;
+/// Answer budget per file in one curate call (Korean reasons are
+/// token-heavy; the batch is halved and retried when it still overflows).
+const CURATE_TOKENS_PER_FILE: u32 = 400;
+const CURATE_MAX_TOKENS: u32 = 16_000;
 /// Files sent to "바탕화면에서 뽑기".
 const MAX_EXTRACT_FILES: usize = 200;
 
@@ -408,35 +412,71 @@ impl Curator {
             }
         }
         for chunk in misses.chunks(self.cfg.batch_size.max(1)) {
-            let lines: Vec<prompts::CurateFileLine> = chunk
-                .iter()
-                .enumerate()
-                .map(|(k, &n)| self.file_line(k + 1, &inputs[n]))
-                .collect();
-            let user = prompts::curate_user(&self.dict.prompt_text(), &lines);
-            let call = AiCall {
-                purpose: "curate",
-                system: prompts::CURATE_SYSTEM,
-                user: &user,
-                schema: &prompts::curate_schema(),
-                max_tokens: (chunk.len() as u32 * 160).clamp(1024, 16_000),
-                timeout: std::time::Duration::from_secs(120),
-            };
-            let n_files = chunk.len();
-            let answers = ai.call(store, &call, |v| {
-                let m = parse_answer(&v, n_files);
-                let summary = format!("{}/{n_files}개 분석", m.len());
-                Ok((m, Some(summary)))
-            })?;
-            for (k, &n) in chunk.iter().enumerate() {
-                if let Some(c) = answers.get(&(k + 1)) {
-                    let c = self.canonical(c.clone());
-                    store.put_curation(&inputs[n].key, &inputs[n].path, &c, Some(ai.model()))?;
-                    out[n] = Some(c);
-                }
-            }
+            self.analyze_chunk(ai, store, inputs, chunk, &mut out)?;
         }
         Ok(out)
+    }
+
+    /// One AI call for `chunk`. When the answer is cut off at `max_tokens`
+    /// (long reasons, many files) the chunk is halved and both halves
+    /// retried; a single file that still does not fit is left
+    /// unclassified instead of failing the whole run.
+    fn analyze_chunk(
+        &self,
+        ai: &AiClassifier,
+        store: &Store,
+        inputs: &[CurateInput],
+        chunk: &[usize],
+        out: &mut [Option<Curation>],
+    ) -> Result<(), CurateError> {
+        if chunk.is_empty() {
+            return Ok(());
+        }
+        let lines: Vec<prompts::CurateFileLine> = chunk
+            .iter()
+            .enumerate()
+            .map(|(k, &n)| self.file_line(k + 1, &inputs[n]))
+            .collect();
+        let user = prompts::curate_user(&self.dict.prompt_text(), &lines);
+        let call = AiCall {
+            purpose: "curate",
+            system: prompts::CURATE_SYSTEM,
+            user: &user,
+            schema: &prompts::curate_schema(),
+            max_tokens: (chunk.len() as u32 * CURATE_TOKENS_PER_FILE)
+                .clamp(2048, CURATE_MAX_TOKENS),
+            timeout: std::time::Duration::from_secs(120),
+        };
+        let n_files = chunk.len();
+        let answers = match ai.call(store, &call, |v| {
+            let m = parse_answer(&v, n_files);
+            let summary = format!("{}/{n_files}개 분석", m.len());
+            Ok((m, Some(summary)))
+        }) {
+            Ok(a) => a,
+            Err(AiError::Truncated) if chunk.len() > 1 => {
+                let (lo, hi) = chunk.split_at(chunk.len() / 2);
+                tracing::warn!(
+                    files = chunk.len(),
+                    "curate answer truncated; retrying in halves"
+                );
+                self.analyze_chunk(ai, store, inputs, lo, out)?;
+                return self.analyze_chunk(ai, store, inputs, hi, out);
+            }
+            Err(AiError::Truncated) => {
+                tracing::warn!(path = %inputs[chunk[0]].path.display(), "curate answer truncated for a single file; left unclassified");
+                return Ok(());
+            }
+            Err(e) => return Err(e.into()),
+        };
+        for (k, &n) in chunk.iter().enumerate() {
+            if let Some(c) = answers.get(&(k + 1)) {
+                let c = self.canonical(c.clone());
+                store.put_curation(&inputs[n].key, &inputs[n].path, &c, Some(ai.model()))?;
+                out[n] = Some(c);
+            }
+        }
+        Ok(())
     }
 
     /// Use the dictionary's name for a known customer or alias.

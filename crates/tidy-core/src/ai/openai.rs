@@ -99,7 +99,7 @@ fn parse_response(v: &Value) -> Result<(String, Usage, Option<String>), AiError>
         return Err(AiError::Refusal);
     }
     if choice.get("finish_reason").and_then(Value::as_str) == Some("length") {
-        return Err(AiError::BadResponse("answer cut off (length)".into()));
+        return Err(AiError::Truncated);
     }
     let text = choice
         .pointer("/message/content")
