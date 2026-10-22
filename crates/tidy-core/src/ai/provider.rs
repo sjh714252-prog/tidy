@@ -131,9 +131,15 @@ pub fn build_provider(
     })
 }
 
+/// The HTTP client's own timeout is only a safety net: each call is
+/// bounded by its `AiCall::timeout` (classify 20 s, curate batches and
+/// restructure minutes). Using the short classify timeout here cut off
+/// every long answer with "request timed out".
+pub(crate) const HTTP_CEILING: Duration = Duration::from_secs(600);
+
 pub(crate) fn http_client(timeout: Duration) -> Result<reqwest::Client, AiError> {
     reqwest::Client::builder()
-        .timeout(timeout)
+        .timeout(timeout.max(HTTP_CEILING))
         .connect_timeout(Duration::from_secs(10).min(timeout))
         .user_agent(concat!("tidy/", env!("CARGO_PKG_VERSION")))
         .build()
@@ -354,6 +360,35 @@ pub(crate) mod test_server {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A slow answer (longer than the classify timeout the client was
+    /// built with) must still arrive: the per-call `AiCall::timeout` bounds
+    /// calls, the client's own timeout is only a 10-minute ceiling. This was
+    /// the "network error talking to anthropic: request timed out" on every
+    /// 30-file curate batch.
+    #[tokio::test]
+    async fn client_timeout_is_a_ceiling_not_the_classify_timeout() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut tmp = [0u8; 8192];
+            let _ = sock.read(&mut tmp).await;
+            tokio::time::sleep(Duration::from_millis(2500)).await;
+            let body = r#"{"ok":true}"#;
+            let out = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            sock.write_all(out.as_bytes()).await.unwrap();
+        });
+        let http = http_client(Duration::from_secs(1)).unwrap();
+        let v = post_json("test", 0, || http.post(&url).body("{}"))
+            .await
+            .expect("slow answer within the ceiling is not a timeout");
+        assert_eq!(v["ok"], true);
+    }
 
     #[test]
     fn parses_plain_and_fenced_json() {

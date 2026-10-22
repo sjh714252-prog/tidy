@@ -556,3 +556,20 @@ fn truncated_single_file_is_left_unclassified() {
         plan.moves.len()
     );
 }
+
+/// A batch that times out (slow model, many files) is halved and retried
+/// like a truncated one.
+#[test]
+fn timed_out_batch_is_split_and_retried() {
+    let (_tmp, desk) = setup();
+    let cfg = Config::default();
+    let files_in = |user: &str| user.lines().filter(|l| l.starts_with('[')).count();
+    let provider = Arc::new(mock_provider().timeout_when(move |u| files_in(u) > 3));
+    let ai = AiClassifier::with_provider(provider.clone(), &cfg, &RuleSet::default()).unwrap();
+    let cur = Curator::new(dict(), cfg.curate.clone(), true).unwrap();
+    let store = Store::open_in_memory().unwrap();
+    cur.plan(&ai, &store, &desk, &desk, false, &[], &[])
+        .expect("timeout is retried in halves, not an error");
+    assert!(provider.prompts().len() > 2);
+    assert_eq!(store.curation_count().unwrap(), answers().len() as u64);
+}
