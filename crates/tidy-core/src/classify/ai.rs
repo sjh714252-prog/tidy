@@ -311,7 +311,7 @@ impl AiClassifier {
         // Only transport-level results count for availability: a refusal or
         // an answer that fails validation still means the AI is reachable.
         match &res {
-            Ok(_) | Err(AiError::Refusal) => self.health.record_success(),
+            Ok(_) | Err(AiError::Refusal | AiError::Truncated) => self.health.record_success(),
             Err(e) => self.health.record_failure(&e.to_string()),
         }
         let outcome = res.and_then(|r| check(r.value));
