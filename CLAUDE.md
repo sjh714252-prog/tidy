@@ -34,6 +34,7 @@
 - 설정은 `config.toml` → `Config` 구조체(serde). 기본값은 `Default` impl에.
 - 프론트: 함수형 React, 상태는 zustand, Tauri IPC는 `src/ipc/*.ts`에 타입과 함께 모음.
 - 커밋 메시지: `feat(core/watcher): ...`, `fix(desktop/search): ...` 형태.
+- 버전: 마일스톤 머지 전에 `Cargo.toml`(workspace)·`apps/desktop/package.json`·`src-tauri/Cargo.toml`·`tauri.conf.json` 다섯 곳(`package-lock.json` 포함)의 버전을 함께 올린다(기능 추가 = minor, 수정만 = patch). 설치 파일명·앱 정보에 그대로 보인다.
 - PR: **마일스톤당 PR 하나**(브랜치도 마일스톤별). 이전 마일스톤 PR이 아직 머지 전이면 그 브랜치를 base로 쌓는다(stacked). 수동 테스트 절차는 해당 마일스톤 PR에만 적는다.
 
 ## 테스트
