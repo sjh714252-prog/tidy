@@ -148,9 +148,13 @@ fn later() -> HashMap<&'static str, Answer> {
 }
 
 fn mock() -> Arc<MockProvider> {
+    Arc::new(mock_provider())
+}
+
+fn mock_provider() -> MockProvider {
     let mut table = answers();
     table.extend(later());
-    Arc::new(MockProvider::responder(move |_system, user| {
+    MockProvider::responder(move |_system, user| {
         let mut files = Vec::new();
         for line in user.lines() {
             let Some(rest) = line.strip_prefix('[') else {
@@ -170,7 +174,7 @@ fn mock() -> Arc<MockProvider> {
             }
         }
         json!({ "files": files })
-    }))
+    })
 }
 
 fn setup() -> (tempfile::TempDir, PathBuf) {
@@ -495,4 +499,60 @@ fn ai_failure_is_an_error_not_a_move() {
         .is_err());
     assert_eq!(fs::read_dir(&desk).unwrap().count(), 10, "nothing moved");
     let _unused: Option<Value> = None;
+}
+
+/// A batch whose answer is cut off at `max_tokens` is halved and retried,
+/// so every file still gets judged and nothing errors out (the bug seen
+/// with claude-haiku on a 30-file batch).
+#[test]
+fn truncated_batch_is_split_and_retried() {
+    let (_tmp, desk) = setup();
+    let cfg = Config::default();
+    let files_in = |user: &str| user.lines().filter(|l| l.starts_with('[')).count();
+    // Everything with more than 2 files in one prompt "overflows".
+    let provider = Arc::new(mock_provider().truncate_when(move |u| files_in(u) > 2));
+    let ai = AiClassifier::with_provider(provider.clone(), &cfg, &RuleSet::default()).unwrap();
+    let cur = Curator::new(dict(), cfg.curate.clone(), true).unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let plan = cur
+        .plan(&ai, &store, &desk, &desk, false, &[], &[])
+        .expect("truncation is retried, not an error");
+    let calls = provider.prompts();
+    assert!(
+        calls.len() > 2,
+        "batch was split into smaller calls: {}",
+        calls.len()
+    );
+    assert!(calls.iter().all(|(_, u)| files_in(u) >= 1));
+    let judged = store.curation_count().unwrap();
+    assert_eq!(judged, answers().len() as u64, "every file judged");
+    assert!(!plan.moves.is_empty());
+    assert_eq!(
+        fs::read_dir(&desk).unwrap().count(),
+        10,
+        "preview moves nothing"
+    );
+}
+
+/// One file that cannot fit is skipped (left unclassified), not fatal.
+#[test]
+fn truncated_single_file_is_left_unclassified() {
+    let (_tmp, desk) = setup();
+    let cfg = Config::default();
+    let provider = Arc::new(mock_provider().truncate_when(|u| u.contains("애매한 파일.txt")));
+    let ai = AiClassifier::with_provider(provider, &cfg, &RuleSet::default()).unwrap();
+    let cur = Curator::new(dict(), cfg.curate.clone(), true).unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let plan = cur
+        .plan(&ai, &store, &desk, &desk, false, &[], &[])
+        .unwrap();
+    assert!(!plan
+        .moves
+        .iter()
+        .any(|m| m.from.ends_with("애매한 파일.txt")));
+    assert!(
+        plan.moves.len() >= 5,
+        "the other files are still planned: {}",
+        plan.moves.len()
+    );
 }
