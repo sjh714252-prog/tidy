@@ -8,10 +8,17 @@ import { useSecurity } from "../store/security";
 import { SecuritySection } from "../components/SecuritySection";
 import { OrganizeModeField, anchorOf } from "../components/OrganizeMode";
 import { RuleCards } from "../components/RuleCards";
+import { Section } from "../components/Section";
+import { Help } from "../components/Help";
+import { AiNeeded, useAiOn } from "../components/AiNeeded";
+import { ContextSection } from "../components/ContextSection";
+import { useCurate } from "../store/curate";
 
 /**
- * Settings (SPEC §9.7, §14.1): watch folders with their organize mode →
- * rule cards (TOML under "고급", kept in sync both ways) → AI → DB → misc.
+ * Settings (SPEC §14.4): six foldable sections — ① 감시 폴더 ② 규칙
+ * ③ 업무 맥락(AI) ④ AI 연결 ⑤ 보안(개인정보) ⑥ 고급(DB·단축키·자동 시작·
+ * 마법사·rules.toml 직접 편집). ①② start open; open/closed is remembered.
+ * One save button for everything (#8).
  */
 export function SettingsView() {
   const s = useSettings();
@@ -19,8 +26,9 @@ export function SettingsView() {
   const refreshStatus = useStatus((st) => st.refresh);
   const ai = useAiSettings();
   const sec = useSecurity();
+  const cur = useCurate();
   const { draft, rulesCheck, editor, cards } = s;
-  const aiState = useStatus((st) => st.status?.aiState);
+  const aiOn = useAiOn();
 
   useEffect(() => {
     void load();
@@ -40,14 +48,16 @@ export function SettingsView() {
     await s.save();
     if (ai.dirty()) await ai.save();
     if (sec.dirty()) await sec.save();
+    if (cur.dirty()) await cur.save();
     await refreshStatus();
   };
-  const anyDirty = () => s.dirty() || ai.dirty() || sec.dirty();
+  const anyDirty = () => s.dirty() || ai.dirty() || sec.dirty() || cur.dirty();
   const revert = async () => {
     if (anyDirty() && !window.confirm("저장하지 않은 변경을 버릴까요?")) return;
     await s.load();
     await ai.load(true);
     await sec.load(true);
+    await cur.load(true);
   };
   const aiError = ai.error;
   const secBlock = sec.dirty() ? sec.invalid() : null;
@@ -55,8 +65,7 @@ export function SettingsView() {
 
   return (
     <div className="settings">
-      <section>
-        <h2>감시 폴더</h2>
+      <Section id="watch" title="① 감시 폴더">
         <p className="muted small">
           새 파일이 생기면 규칙에 따라 정리합니다. 폴더 자체도 검색 인덱스에 들어갑니다.
         </p>
@@ -64,10 +73,18 @@ export function SettingsView() {
           <thead>
             <tr>
               <th>경로</th>
-              <th>하위 폴더</th>
-              <th>본문 인덱싱</th>
-              <th>종류</th>
-              <th>정리 방식</th>
+              <th>
+                하위 폴더 <Help id="recursive" />
+              </th>
+              <th>
+                본문 인덱싱 <Help id="indexContent" />
+              </th>
+              <th>
+                종류 <Help id="kind" />
+              </th>
+              <th>
+                정리 방식 <Help id="organizeMode" />
+              </th>
               <th />
             </tr>
           </thead>
@@ -118,7 +135,7 @@ export function SettingsView() {
                   <tr className="subrow">
                     <td colSpan={6}>
                       <label>
-                        폴링 간격(초){" "}
+                        확인 간격(초, 폴링) <Help id="pollInterval" />{" "}
                         <input
                           type="number"
                           min={5}
@@ -136,10 +153,10 @@ export function SettingsView() {
                           checked={w.pollOnly}
                           onChange={(e) => s.setWatch(i, { pollOnly: e.target.checked })}
                         />{" "}
-                        폴링만 사용
+                        폴링만 사용 (변경 알림 없이 주기적으로만 확인) <Help id="pollOnly" />
                       </label>
                       <label title="본문 인덱싱을 켰을 때, 백그라운드 인덱싱이 본문을 읽는 시간대. 비우면 항상">
-                        본문 인덱싱 시간대{" "}
+                        본문 인덱싱 시간대 <Help id="contentWindow" />{" "}
                         <input
                           className="narrow"
                           placeholder="02:00-05:00"
@@ -159,11 +176,12 @@ export function SettingsView() {
           </tbody>
         </table>
         <button onClick={() => void addFolder()}>폴더 추가…</button>
-      </section>
+      </Section>
 
-      <section className="rules-section">
-        <h2>규칙</h2>
+      <Section id="rules" title="② 규칙">
+        <div className="rules-section">
         <p className="muted small">
+          <Help id="ruleOrder" />{" "}
           위에서부터 검사하고 처음 맞는 규칙 하나만 적용합니다. 목적지가 상대 경로면 각 감시 폴더의 정리 방식을
           따릅니다(이 폴더 안 / 기준 폴더 아래). 저장하기 전에는 아무것도 바뀌지 않습니다.
           {editor?.preview &&
@@ -186,12 +204,13 @@ export function SettingsView() {
             + 규칙 추가
           </button>
           <button
-            disabled={aiState !== "ready" || s.drafting || (!!editor && !editor.cards)}
-            title={aiState === "ready" ? "감시 폴더의 파일 목록(이름·크기·날짜)을 보내 규칙 초안을 받습니다" : "AI를 켜면 쓸 수 있습니다"}
+            disabled={!aiOn || s.drafting || (!!editor && !editor.cards)}
+            title={aiOn ? "감시 폴더의 파일 목록(이름·크기·날짜)을 보내 규칙 초안을 받습니다" : "AI를 켜면 쓸 수 있습니다"}
             onClick={() => void s.aiDraft()}
           >
             {s.drafting ? "AI가 규칙을 만드는 중…" : "AI로 규칙 만들기"}
           </button>
+          <AiNeeded />
         </div>
         {s.draftNote && <p className="muted small">{s.draftNote}</p>}
         {rulesCheck &&
@@ -203,6 +222,22 @@ export function SettingsView() {
               {editor && !editor.cards && " — 고칠 때까지 카드는 읽기 전용입니다"}
             </p>
           ))}
+        </div>
+      </Section>
+
+      <Section id="context" title="③ 업무 맥락" badge={<AiNeeded always />}>
+        <ContextSection />
+      </Section>
+
+      <Section id="ai" title="④ AI 연결">
+        <AiSettingsSection />
+      </Section>
+
+      <Section id="security" title="⑤ 보안(개인정보)">
+        <SecuritySection />
+      </Section>
+
+      <Section id="advanced" title="⑥ 고급">
         <details className="advanced">
           <summary>고급: rules.toml 직접 편집</summary>
           <p className="muted small">
@@ -217,14 +252,8 @@ export function SettingsView() {
             onChange={(e) => s.setRules(e.target.value)}
           />
         </details>
-      </section>
 
-      <AiSettingsSection />
-
-      <SecuritySection />
-
-      <section>
-        <h2>데이터베이스</h2>
+        <h3>데이터베이스</h3>
         <label className="row">
           <span>DB 경로</span>
           <input
@@ -238,10 +267,8 @@ export function SettingsView() {
           현재: {draft.dbPath}. 로컬 디스크 경로만 사용하세요(네트워크 드라이브의 SQLite는 깨질 수 있음).
           {dbChanged && " 경로를 바꾸면 새 DB를 쓰며 기존 이동 기록·대기열·인덱스는 옮겨지지 않습니다."}
         </p>
-      </section>
 
-      <section>
-        <h2>기타</h2>
+        <h3>기타</h3>
         <label className="row">
           <span>검색 단축키</span>
           <input value={draft.hotkey} onChange={(e) => s.patch({ hotkey: e.target.value })} />
@@ -267,25 +294,26 @@ export function SettingsView() {
         </label>
         <p className="muted small">설정 파일: {draft.configPath}</p>
         <button onClick={() => void ipc.openWizard()}>마법사 다시 실행</button>
-      </section>
+      </Section>
 
       <footer className="savebar">
         {s.error && <span className="error">{s.error}</span>}
         {!s.error && aiError && <span className="error">AI: {aiError}</span>}
         {!s.error && !aiError && sec.error && <span className="error">보안: {sec.error}</span>}
+        {!s.error && !aiError && !sec.error && cur.error && <span className="error">업무 맥락: {cur.error}</span>}
         {!s.error && !aiError && !sec.error && secBlock && <span className="warn small">보안: {secBlock}</span>}
-        {s.message && !s.error && <span className="ok">{s.message}</span>}
-        {!s.message && !s.error && anyDirty() && <span className="muted small">저장하지 않은 변경이 있습니다</span>}
+        {s.message && !s.error && !anyDirty() && <span className="ok">{s.message}</span>}
+        {!s.error && anyDirty() && <span className="muted small">저장하지 않은 변경이 있습니다</span>}
         <div className="spacer" />
-        <button onClick={() => void revert()} disabled={s.saving || ai.busy || sec.busy}>
+        <button onClick={() => void revert()} disabled={s.saving || ai.busy || sec.busy || cur.busy}>
           되돌리기
         </button>
         <button
           className="primary"
           onClick={() => void save()}
-          disabled={s.saving || ai.busy || sec.busy || !!secBlock || (rulesCheck ? !rulesCheck.ok : false)}
+          disabled={s.saving || ai.busy || sec.busy || cur.busy || !!secBlock || (rulesCheck ? !rulesCheck.ok : false)}
         >
-          {s.saving || ai.busy || sec.busy ? "저장 중…" : "저장"}
+          {s.saving || ai.busy || sec.busy || cur.busy ? "저장 중…" : "저장"}
         </button>
       </footer>
     </div>

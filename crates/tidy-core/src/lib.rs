@@ -9,6 +9,7 @@
 pub mod ai;
 pub mod classify;
 pub mod config;
+pub mod curate;
 pub mod engine;
 pub mod index;
 pub mod mover;

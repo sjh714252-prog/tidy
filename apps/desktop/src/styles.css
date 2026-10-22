@@ -215,3 +215,32 @@ details.advanced summary { cursor: pointer; color: var(--muted); }
     color: #a9c4ff;
   }
 }
+
+/* M10: foldable settings sections, ⓘ help, "AI 필요", work context */
+.fold { border: 1px solid var(--line); border-radius: 8px; margin: 10px 0; background: var(--bg); }
+.settings .fold > h2 { margin: 0; display: flex; align-items: center; gap: 8px; padding: 2px 6px; }
+.fold-head { background: none; border: none; font-size: 15px; font-weight: 600; padding: 6px 4px; color: var(--fg); flex: 1; text-align: left; }
+.fold.open > h2 { border-bottom: 1px solid var(--line); }
+.chev { display: inline-block; width: 14px; color: var(--muted); }
+.fold-body { padding: 4px 12px 12px; }
+.help { position: relative; display: inline-block; }
+.help-i { background: none; border: none; color: var(--accent); padding: 0 2px; font-size: 13px; line-height: 1; cursor: help; }
+.help-pop { position: absolute; z-index: 20; left: 0; top: 100%; margin-top: 4px; width: 320px; max-width: 80vw; padding: 8px 10px; font-size: 12px; font-weight: normal;
+  color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.15); white-space: normal; text-align: left; }
+.help-pop.flip { left: auto; right: 0; }
+.help-line { display: block; }
+.help-pop details { margin-top: 4px; }
+.help-ex { display: block; color: var(--muted); word-break: break-all; }
+.ai-needed { display: inline-flex; align-items: center; gap: 2px; font-size: 12px; }
+.ai-needed .tag { margin-left: 0; color: var(--warn); }
+fieldset { border: none; padding: 0; margin: 0; min-width: 0; }
+fieldset:disabled { opacity: 0.55; }
+.candidates { border: 1px solid var(--accent); border-radius: 8px; padding: 6px 10px; margin: 8px 0; background: var(--bg2); }
+.candidates ul { list-style: none; padding: 0; margin: 4px 0; }
+.candidates li { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+.grid.dict { max-width: 720px; margin: 6px 0; }
+.context-plan select, .context-plan input:not([type=checkbox]) { max-width: 150px; font-size: 12px; }
+.context-plan tr.stays td { opacity: 0.7; }
+.tag.ok { color: var(--ok); }
+.suggestions { margin: 8px 0; }
+.suggestions ul { list-style: none; padding: 0; margin: 4px 0; }

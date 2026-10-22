@@ -63,9 +63,11 @@ cargo run -p tidy-cli -- log --batches / undo --batch <id>
 cargo run -p tidy-cli -- recover [--grace-secs 0]        # 중단된 이동(복사 도중 종료·NAS 끊김) 정리
 cargo run -p tidy-cli -- pii scan <폴더> [--all] [--format json]   # 개인정보 의심 파일 (읽기만)
 cargo run -p tidy-cli -- vault password / status / lock <파일> [--to DIR] / unlock <zip>   # 암호화 보관(AES zip, 키체인 tidy/vault)
+cargo run -p tidy-cli -- context list / add <이름> [--alias A,B | --issue | --kind --ext log] / alias <고객사> <별칭>   # 맥락 사전 context.toml
+cargo run -p tidy-cli -- curate scan [폴더] [--dry-run] [--recursive]  → curate apply <plan-id> [--only 1,3]   # 업무 맥락 정리(AI, 승인 전 무이동)
 cd apps/desktop && npm ci && npm run tauri dev   # 클라우드: npm run build + (src-tauri) cargo clippy 까지만
 cd apps/desktop && npx tauri build [--bundles deb,appimage]   # 설치 패키지 (docs/packaging.md), 태그 v*는 release.yml
-S=/tmp/tidy-e2e bash apps/desktop/e2e/run-headless.sh m9     # 헤드리스 GUI e2e (m3~m9)
+S=/tmp/tidy-e2e bash apps/desktop/e2e/run-headless.sh m10    # 헤드리스 GUI e2e (m3~m10, 가짜 OpenAI 호환 서버 e2e/fake-embed.mjs)
 ```
 
 ## 진행 상태
@@ -79,6 +81,7 @@ S=/tmp/tidy-e2e bash apps/desktop/e2e/run-headless.sh m9     # 헤드리스 GUI 
 - [x] M7 의미검색 + 패키징 (2026-10-16) — 임베딩(OpenAI 호환/Ollama)·BLOB+int8 brute-force·RRF, AI 가용성, Linux Secret Service, 자동 시작, 설치 패키지(release.yml). 설치판 실행 확인은 Windows 로컬에서 (`docs/packaging.md`)
 - [x] M8 첫 실행 마법사 + 시각 규칙 편집기 + 폴더별 정리 방식 (2026-10-19) — onboarded 플래그로 첫 실행 판정(마법사 전 무이동), in_place/collect·{root}, 규칙 카드↔TOML 라운드트립, 폴더 트리, AI 규칙 초안. 트레이·실제 창 확인은 Windows 로컬에서
 - [x] M9 개인정보 탐지 + 암호화 보관 (2026-10-19) — 정규식 탐지(주민번호·계좌·이름+휴대전화·이름+이메일, 오프라인), 보안 폴더 모으기/규칙 encrypt, 확인/자동 승인, ZIP+AES-256(검증 후 원본 정리·undo 복호화), 키체인 비밀번호(이전 목록), 🔒 검색·임시 열기. 실제 압축 프로그램(반디집·7-Zip)·Windows 자격 증명 관리자 확인은 로컬에서
+- [x] M10 업무 맥락 정리 + 설정 화면 정돈 + 사용 설명서 (2026-10-20) — context.toml 사전·바탕화면에서 뽑기, curate 배치 분석(해시+이름 캐시, store v8)·14일 날짜 묶기·폴더 틀, 리포트 미리보기 수정→사전 학습→한 배치 적용/undo, 감시 중 자동(기존 폴더+확신도)/확인 팝업, AI 필요 배지, 설정 6개 접는 섹션+ⓘ, docs/manual.md. 실제 AI 응답 품질·창 확인은 로컬에서
 
 ## 열린 결정
 SPEC §13 참조. 결정되면 여기와 SPEC 양쪽 갱신.

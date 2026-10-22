@@ -62,7 +62,7 @@ grep -a -c -e "dev bridge" -e "tidy-devbridge" -e "127.0.0.1:1421" src-tauri/tar
 
 ## 자동 시작 (로그인 시 트레이 상주)
 
-설정 → 일반 → “로그인 시 자동 시작”(`[general] start_on_login`, 기본 켜짐).
+설정 → ⑥ 고급 → “로그인 시 자동 시작”(`[general] start_on_login`, 기본 켜짐).
 릴리스 빌드는 앱이 시작될 때와 설정을 저장할 때 OS 시작 항목을 이 값에 맞춘다.
 
 | OS | 등록 위치 |

@@ -28,6 +28,12 @@ import type {
   SearchHit,
   SearchResult,
   SecuritySettings,
+  ContextCandidates,
+  ContextEdit,
+  ContextSuggestion,
+  CurateEstimate,
+  CurateSettings,
+  MoveEdit,
   SemanticStatus,
   Settings,
   Status,
@@ -93,6 +99,21 @@ export const buildReport = (path: string, duplicates: boolean) =>
 export const planRules = (path: string, recursive: boolean, protect: string[]) =>
   invoke<PlanResult>("plan_rules", { path, recursive, protect });
 export const planAi = (path: string, protect: string[]) => invoke<PlanResult>("plan_ai", { path, protect });
+// ── M10 work context ──
+export const getCurateSettings = () => invoke<CurateSettings>("get_curate_settings");
+export const saveCurateSettings = (settings: CurateSettings) =>
+  invoke<CurateSettings>("save_curate_settings", { settings });
+export const curateEstimate = (path: string, recursive: boolean) =>
+  invoke<CurateEstimate>("curate_estimate", { path, recursive });
+/** AI analysis → saved plan + preview. Nothing moves. */
+export const planContext = (path: string, recursive: boolean, protect: string[]) =>
+  invoke<PlanResult>("plan_context", { path, recursive, protect });
+export const editContextMove = (id: number, moveId: number, edit: MoveEdit, selected: number[]) =>
+  invoke<ContextEdit>("edit_context_move", { id, moveId, edit, selected });
+export const applyContextSuggestions = (suggestions: ContextSuggestion[]) =>
+  invoke<CurateSettings>("apply_context_suggestions", { suggestions });
+export const extractContext = () => invoke<ContextCandidates>("extract_context");
+export const contextGroups = () => invoke<[string, string][]>("context_groups");
 export const previewPlan = (id: number, ids: number[]) => invoke<Preview>("preview_plan", { id, ids });
 /** Moves files. Only call from an explicit user confirmation. */
 export const applyPlan = (id: number, ids: number[], protect: string[]) =>

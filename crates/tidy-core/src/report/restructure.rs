@@ -48,6 +48,8 @@ pub enum PlanSource {
     Rules,
     /// An AI proposal (SPEC §8.2).
     Ai,
+    /// (M10) Work-context curation: customer / dated issue / kind (§14.3).
+    Context,
 }
 
 impl PlanSource {
@@ -55,6 +57,7 @@ impl PlanSource {
         match self {
             PlanSource::Rules => "rules",
             PlanSource::Ai => "ai",
+            PlanSource::Context => "context",
         }
     }
 }
@@ -74,6 +77,37 @@ pub struct PlannedMove {
     pub reason: String,
     /// Things the user should know before approving.
     pub warnings: Vec<String>,
+    /// (M10) What the AI judged for this file (work-context plans).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<ContextNote>,
+    /// (M10) Lock it into an encrypted zip at the destination (personal
+    /// information with the vault mode on, SPEC §14.2).
+    #[serde(default)]
+    pub encrypt: bool,
+}
+
+/// (M10) The work-context judgement behind a planned move.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ContextNote {
+    pub entity: Option<String>,
+    pub issue: String,
+    /// Folder date after merging (YYYY-MM-DD).
+    pub date: String,
+    /// The file's own date (AI's date, else modified), before merging.
+    pub own_date: String,
+    pub doc_kind: String,
+    pub topic: Option<String>,
+    pub confidence: f64,
+    pub reason: String,
+    /// What the AI said, kept when the user changes it (dictionary learning).
+    pub ai_entity: Option<String>,
+    pub ai_issue: String,
+    /// Below `min_confidence`: left in place unless the user assigns it.
+    pub unclassified: bool,
+    /// Changed by the user in the preview.
+    pub edited: bool,
+    /// `curation.key` of the file.
+    pub key: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -102,6 +136,9 @@ pub struct Plan {
     /// AI moves that failed validation (shown, never applied).
     pub rejected: Vec<Rejected>,
     pub applied_batch: Option<String>,
+    /// (M10) Anchor relative layouts were resolved against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -132,6 +169,8 @@ struct FileMove {
     src: PathBuf,
     dest_dir: PathBuf,
     new_name: Option<String>,
+    encrypt: bool,
+    context: Option<ContextNote>,
 }
 
 fn now() -> i64 {
@@ -227,6 +266,8 @@ pub fn plan_from_rules_in(
                 c.rule_name
             },
             warnings,
+            context: None,
+            encrypt: false,
         });
     }
     let n = moves.len();
@@ -240,6 +281,7 @@ pub fn plan_from_rules_in(
         moves,
         rejected: Vec::new(),
         applied_batch: None,
+        anchor: None,
     })
 }
 
@@ -487,6 +529,8 @@ fn validate_ai_plan(
             bytes,
             reason: r.reason.trim().chars().take(200).collect(),
             warnings,
+            context: None,
+            encrypt: false,
         });
     }
     Plan {
@@ -499,6 +543,7 @@ fn validate_ai_plan(
         moves,
         rejected,
         applied_batch: None,
+        anchor: None,
     }
 }
 
@@ -535,6 +580,10 @@ fn selected<'a>(plan: &'a Plan, ids: Option<&'a [u32]>) -> impl Iterator<Item = 
 fn expand(plan: &Plan, ids: Option<&[u32]>) -> Vec<FileMove> {
     let mut out = Vec::new();
     for m in selected(plan, ids) {
+        // Unclassified work-context items stay where they are.
+        if m.from == m.to {
+            continue;
+        }
         if m.is_dir {
             let walker = walkdir::WalkDir::new(&m.from)
                 .min_depth(1)
@@ -552,14 +601,20 @@ fn expand(plan: &Plan, ids: Option<&[u32]>) -> Vec<FileMove> {
                     src: e.path().to_path_buf(),
                     dest_dir: target.parent().unwrap_or(&m.to).to_path_buf(),
                     new_name: None,
+                    encrypt: false,
+                    context: None,
                 });
             }
         } else {
             let new = name_of(&m.to);
+            // An encrypted move's `to` ends in ".zip"; the mover names it.
+            let renamed = !m.encrypt && new != name_of(&m.from);
             out.push(FileMove {
                 src: m.from.clone(),
                 dest_dir: m.to.parent().unwrap_or(&plan.root).to_path_buf(),
-                new_name: (new != name_of(&m.from)).then_some(new),
+                new_name: renamed.then_some(new),
+                encrypt: m.encrypt,
+                context: m.context.clone(),
             });
         }
     }
@@ -590,7 +645,10 @@ pub fn preview(plan: &Plan, ids: Option<&[u32]>) -> Result<Preview, PlanError> {
                 None => after_files.push((rel, f.size)),
                 Some(m) => {
                     moved += 1;
-                    let name = m.new_name.clone().unwrap_or_else(|| f.name.clone());
+                    let mut name = m.new_name.clone().unwrap_or_else(|| f.name.clone());
+                    if m.encrypt {
+                        name = crate::mover::zip_name_for(&name);
+                    }
                     let target = m.dest_dir.join(&name);
                     match target.strip_prefix(&res.root) {
                         Ok(r) => after_files.push((r.to_string_lossy().replace('\\', "/"), f.size)),
@@ -652,7 +710,10 @@ pub fn apply(
     }
     let store = mover.store();
     let batch_id = new_batch_id();
-    let label = format!("재구성 #{}", plan.id);
+    let label = match plan.source {
+        PlanSource::Context => format!("업무 맥락 #{}", plan.id),
+        _ => format!("재구성 #{}", plan.id),
+    };
     let mut report = ApplyReport {
         batch_id: batch_id.clone(),
         ..Default::default()
@@ -677,12 +738,22 @@ pub fn apply(
             batch_id: batch_id.clone(),
             decided_by: DecidedBy::Restructure,
             rule_name: Some(label.clone()),
-            ai_confidence: None,
+            ai_confidence: fm.context.as_ref().map(|c| c.confidence),
             new_name: fm.new_name.clone(),
-            encrypt: false,
+            encrypt: fm.encrypt,
         };
+        if fm.encrypt {
+            if let Some(opts) = index {
+                crate::engine::prepare_vault_index(store, &fm.src, opts);
+            }
+        }
         match mover.move_file(&req) {
             Ok(MoveOutcome::Moved { log_id, src, dst }) => {
+                if let Some(note) = &fm.context {
+                    // Remember the folder date this group got, so new files
+                    // of the same issue join it (SPEC §14.3).
+                    crate::curate::remember_applied(store, note, &dst);
+                }
                 if let Some(opts) = index {
                     reindex_for(
                         store,
@@ -694,7 +765,7 @@ pub fn apply(
                             log_id,
                             by: DecidedBy::Restructure,
                             confidence: None,
-                            encrypted: false,
+                            encrypted: fm.encrypt,
                         },
                         opts,
                     );

@@ -4,6 +4,7 @@ import { hideCurrentWindow } from "../ipc/transport";
 import { onNavigate } from "../ipc/events";
 import { AiSettingsSection } from "../components/AiSettingsSection";
 import { OrganizeModeField, anchorOf } from "../components/OrganizeMode";
+import { Help } from "../components/Help";
 import { useWizard } from "../store/wizard";
 
 const STEPS = ["감시 폴더", "시작 규칙", "AI (선택)", "마무리"];
@@ -66,7 +67,7 @@ export function WizardWindow() {
             <p className="muted small">
               새 파일이 생기면 규칙대로 정리합니다. 폴더마다 정리 방식을 고를 수 있습니다:{" "}
               <b>이 폴더 안에서 정리</b>(하위 폴더를 만들어 그 안에서만 분류) 또는 <b>지정 위치로 모으기</b>(예:
-              D:\정리 아래로).
+              D:\정리 아래로). <Help id="organizeMode" />
             </p>
             <table className="grid">
               <tbody>
@@ -101,7 +102,9 @@ export function WizardWindow() {
 
         {w.step === 2 && (
           <div data-testid="step-rules">
-            <h2>어떻게 나눌까요?</h2>
+            <h2>
+              어떻게 나눌까요? <Help id="ruleOrder" />
+            </h2>
             <p className="muted small">
               체크한 것만 규칙이 됩니다. 숫자는 지금 고른 폴더에 있는 파일 중 해당하는 수입니다(아직 옮기지 않음).
               {!!w.info.existingRules.length &&
@@ -163,7 +166,11 @@ export function WizardWindow() {
             <h2>AI를 쓸까요? (선택)</h2>
             <p className="muted small">
               규칙에 맞지 않는 파일을 AI에 물어보고, 검색창에서 자연어로 찾을 수 있습니다. 건너뛰면 규칙과 단어
-              검색만으로 동작합니다. 키는 OS 키체인에만 저장됩니다.
+              검색만으로 동작합니다. 키는 OS 키체인에만 저장됩니다. <Help id="keychain" />
+            </p>
+            <p className="notice small" data-testid="wizard-curate-note">
+              고객사·이슈별로 묶는 <b>업무 맥락 정리</b>를 쓰려면 AI가 필요합니다. 여기서 켜 두면 나중에 설정 → ③ 업무
+              맥락에서 "바탕화면에서 뽑기"로 고객사 사전을 만들 수 있습니다.
             </p>
             <AiSettingsSection />
           </div>
