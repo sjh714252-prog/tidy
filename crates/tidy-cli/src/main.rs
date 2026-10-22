@@ -76,6 +76,13 @@ enum Cmd {
     Report(ReportArgs),
     /// Propose a reorganisation (rules or AI), show the diff, apply on approval.
     Restructure(RestructureArgs),
+    /// (M10) Work-context curation: customer / dated issue / kind folders
+    /// proposed by the AI, applied only on approval.
+    #[command(subcommand)]
+    Curate(CurateCmd),
+    /// (M10) The work-context dictionary (customers, aliases, issue types).
+    #[command(subcommand)]
+    Context(ContextCmd),
     /// (M9) Find personal information in a folder (reads only, moves nothing).
     #[command(subcommand)]
     Pii(PiiCmd),
@@ -162,6 +169,50 @@ enum RulesCmd {
         #[arg(long, value_delimiter = ',')]
         toml: Vec<String>,
     },
+}
+
+#[derive(Subcommand)]
+enum CurateCmd {
+    /// Analyse FOLDER (AI) and save a plan: 고객사/날짜_이슈/종류. Moves nothing.
+    Scan {
+        /// Default: the first [[watch]] folder.
+        folder: Option<PathBuf>,
+        /// Only show the cost estimate (files, tokens, price); no AI call.
+        #[arg(long)]
+        dry_run: bool,
+        /// Also files in subfolders.
+        #[arg(long)]
+        recursive: bool,
+    },
+    /// Apply a saved work-context plan as one undoable batch.
+    Apply {
+        plan: i64,
+        /// Comma-separated item numbers (default: every classified item).
+        #[arg(long, value_delimiter = ',', value_name = "N,..")]
+        only: Vec<u32>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ContextCmd {
+    /// Show customers (with aliases), issue types and kinds of material.
+    List,
+    /// Add a customer/project (or with --issue an issue type, --kind a kind).
+    Add {
+        name: String,
+        /// Aliases for a customer, comma-separated (e.g. BADA,바다).
+        #[arg(long, value_delimiter = ',')]
+        alias: Vec<String>,
+        #[arg(long, conflicts_with = "kind")]
+        issue: bool,
+        #[arg(long)]
+        kind: bool,
+        /// --kind: extensions that usually mean it (comma-separated).
+        #[arg(long, value_delimiter = ',', requires = "kind")]
+        ext: Vec<String>,
+    },
+    /// Add an alias to a customer: `tidy context alias 바다정보 BADA`.
+    Alias { entity: String, alias: String },
 }
 
 #[derive(Subcommand)]
@@ -432,6 +483,8 @@ fn main() -> Result<()> {
         Cmd::Report(args) => cmd_report(cli.config, args),
         Cmd::Restructure(args) => cmd_restructure(cli.config, args),
         Cmd::Pii(cmd) => cmd_pii(cli.config, cmd),
+        Cmd::Curate(cmd) => cmd_curate(cli.config, cmd),
+        Cmd::Context(cmd) => cmd_context(cli.config, cmd),
         Cmd::Vault(cmd) => cmd_vault(cli.config, cmd),
     }
 }
@@ -1756,6 +1809,35 @@ fn print_plan(plan: &restructure::Plan, only: Option<&[u32]>) -> Result<()> {
                 .map(|r| r.display().to_string())
                 .unwrap_or_else(|_| p.display().to_string())
         };
+        if let Some(n) = &m.context {
+            let who = n.entity.clone().unwrap_or_else(|| {
+                format!("(고객사 없음: {})", n.topic.clone().unwrap_or_default())
+            });
+            println!(
+                "{:>3}. {}  {}",
+                m.id,
+                rel(&m.from),
+                if n.unclassified {
+                    format!(
+                        "미분류 — 그대로 둠 ({:.0}%: {})",
+                        n.confidence * 100.0,
+                        n.reason
+                    )
+                } else {
+                    format!(
+                        "-> {}{}\n       {who} · {} · {} · {} · {:.0}% — {}",
+                        rel(&m.to),
+                        if m.encrypt { " 🔒" } else { "" },
+                        n.issue,
+                        n.date,
+                        n.doc_kind,
+                        n.confidence * 100.0,
+                        n.reason
+                    )
+                }
+            );
+            continue;
+        }
         println!(
             "{:>3}. {}{} -> {}  [{}]{}",
             m.id,
@@ -2116,6 +2198,191 @@ fn cmd_vault(config: Option<PathBuf>, cmd: VaultCmd) -> Result<()> {
             if !r.conflicts.is_empty() {
                 std::process::exit(1);
             }
+            Ok(())
+        }
+    }
+}
+
+// ── M10: work context ───────────────────────────────────────────────────
+
+fn cmd_context(config: Option<PathBuf>, cmd: ContextCmd) -> Result<()> {
+    use tidy_core::curate::ContextDict;
+    let cfg = load_config(config)?;
+    let path = &cfg.curate.context;
+    let mut dict = ContextDict::load(path)?;
+    match cmd {
+        ContextCmd::List => {
+            println!(
+                "# {}{}",
+                path.display(),
+                if path.exists() {
+                    ""
+                } else {
+                    " (아직 없음: 기본값)"
+                }
+            );
+            println!("고객사·프로젝트 ({}):", dict.entities.len());
+            for e in &dict.entities {
+                println!(
+                    "  {}{}",
+                    e.name,
+                    if e.aliases.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  (별칭: {})", e.aliases.join(", "))
+                    }
+                );
+            }
+            println!(
+                "이슈 유형: {}",
+                dict.issue_types
+                    .iter()
+                    .map(|i| i.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            println!("자료 종류:");
+            for k in &dict.doc_kinds {
+                println!(
+                    "  {}{}",
+                    k.name,
+                    if k.ext.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  ({})", k.ext.join(", "))
+                    }
+                );
+            }
+            return Ok(());
+        }
+        ContextCmd::Add {
+            name,
+            alias,
+            issue,
+            kind,
+            ext,
+        } => {
+            let changed = if issue {
+                dict.add_issue_type(&name)?
+            } else if kind {
+                dict.add_doc_kind(&name, &ext)?
+            } else {
+                dict.add_entity(&name, &alias)?
+            };
+            println!(
+                "{}: {name}",
+                if changed { "added" } else { "already there" }
+            );
+        }
+        ContextCmd::Alias { entity, alias } => {
+            let changed = dict.add_alias(&entity, &alias)?;
+            println!(
+                "{}: {entity} ← {alias}",
+                if changed { "added" } else { "already there" }
+            );
+        }
+    }
+    dict.save(path)?;
+    Ok(())
+}
+
+fn cmd_curate(config: Option<PathBuf>, cmd: CurateCmd) -> Result<()> {
+    use tidy_core::curate::Curator;
+    let cfg = load_config(config)?;
+    let store = Store::open(&cfg.store.db_path())?;
+    match cmd {
+        CurateCmd::Apply { plan, only } => {
+            let plan = restructure::load(&store, plan)?;
+            if plan.source != restructure::PlanSource::Context {
+                bail!(
+                    "plan #{} is not a work-context plan (use tidy restructure --apply)",
+                    plan.id
+                );
+            }
+            // Default: every classified item (미분류 items stay anyway).
+            let only = (!only.is_empty()).then_some(only.as_slice());
+            let mover = Mover::new(store, cfg.mover.duplicate_policy);
+            let r = restructure::apply(
+                &mover,
+                &plan,
+                only,
+                &protected_dirs(&cfg, &[]),
+                Some(&IndexOptions::from_config(&cfg)),
+            )?;
+            for (a, b) in &r.moved {
+                println!("moved     {} -> {}", a.display(), b.display());
+            }
+            for (p, why) in &r.skipped {
+                println!("skipped   {} ({why})", p.display());
+            }
+            for (p, e) in &r.errors {
+                eprintln!("error     {}: {e}", p.display());
+            }
+            println!(
+                "\n{} moved in batch {} — undo all with: tidy undo --batch {}",
+                r.moved.len(),
+                short(&r.batch_id),
+                short(&r.batch_id)
+            );
+            Ok(())
+        }
+        CurateCmd::Scan {
+            folder,
+            dry_run,
+            recursive,
+        } => {
+            let root = default_folder(&cfg, folder)?;
+            let root = dunce::canonicalize(&root)
+                .with_context(|| format!("no such folder: {}", root.display()))?;
+            let cur = Curator::from_config(&cfg)?;
+            let protected = protected_dirs(&cfg, &[]);
+            let files = Curator::files_in(&root, recursive, &cfg.classify.ignore_globs, &protected);
+            let inputs: Vec<_> = files
+                .iter()
+                .filter_map(|p| cur.input(p, Some(&store)).ok())
+                .collect();
+            let (provider, model) = cfg
+                .ai
+                .active()
+                .and_then(|p| p.classify.as_ref())
+                .map(|p| (p.provider.as_str().to_string(), p.model.clone()))
+                .unwrap_or_default();
+            let est = cur.estimate(&store, &inputs, &provider, &model);
+            println!(
+                "파일 {}개 (이미 분석 {}개) → 새로 분석 {}개, 요청 {}번, 예상 토큰 입력 {} · 출력 {}{}{}",
+                est.files,
+                est.cached,
+                est.to_analyze,
+                est.requests,
+                est.input_tokens,
+                est.output_tokens,
+                est.cost_usd.map(|c| format!(", 약 ${c:.4}")).unwrap_or_else(|| ", 비용 알 수 없음(모델 단가 미등록)".into()),
+                if cfg.ai.send_content() { "" } else { " — 본문은 보내지 않음(send_content = false)" },
+            );
+            if dry_run {
+                return Ok(());
+            }
+            let rules = RuleSet::load(&cfg.classify.rules).unwrap_or_default();
+            let ai = AiClassifier::from_config(&cfg, &rules)
+                .context("업무 맥락 정리는 AI가 필요합니다 — [ai]를 켜고 분류 모델을 정하세요 (tidy ai status)")?;
+            eprintln!("# asking {} / {} …", ai.provider_name(), ai.model());
+            let anchors = tidy_core::classify::Anchors::from_config(&cfg);
+            let anchor = anchors.for_path(&root).unwrap_or(&root).to_path_buf();
+            let plan = cur.plan(
+                &ai,
+                &store,
+                &root,
+                &anchor,
+                recursive,
+                &cfg.classify.ignore_globs,
+                &protected,
+            )?;
+            let plan = restructure::save(&store, plan)?;
+            print_plan(&plan, None)?;
+            println!(
+                "\n적용: tidy curate apply {} [--only 1,3]  (승인 전에는 아무것도 옮기지 않음)",
+                plan.id
+            );
             Ok(())
         }
     }

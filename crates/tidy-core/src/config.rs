@@ -256,6 +256,103 @@ pub struct Config {
     pub search: SearchCfg,
     /// (M9) Personal information detection + encrypted vault.
     pub security: Security,
+    /// (M10) Work-context curation (customer / issue folders, AI).
+    pub curate: CurateCfg,
+}
+
+/// `[curate]` (SPEC §14.3, M10): group files by customer and issue with
+/// the AI. Needs the classify model of `[ai]`; without it nothing here runs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct CurateCfg {
+    /// Also place NEW files in the watch folders by work context (files no
+    /// rule takes; with `prefer`, before the rules).
+    pub enabled: bool,
+    /// "맥락 정리 우선": try the work context before the rules.
+    pub prefer: bool,
+    /// The context dictionary (customers, issue types, kinds of material).
+    /// Relative to the config file's folder.
+    pub context: PathBuf,
+    /// Folder layout for files with a customer.
+    pub template: String,
+    /// Folder layout for files without one.
+    pub other_template: String,
+    /// Below this confidence a file is left as "미분류".
+    pub min_confidence: f64,
+    /// Files per AI request.
+    pub batch_size: usize,
+    /// Same customer + issue within this many days → one folder, earliest date.
+    pub merge_days: u32,
+    /// Characters of body text per file (only with `ai.send_content`).
+    pub excerpt_chars: usize,
+}
+
+impl Default for CurateCfg {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            prefer: false,
+            context: PathBuf::from("context.toml"),
+            template: "{entity}/{yyyymmdd}_{issue}/{doc_kind}".into(),
+            other_template: "기타/{topic}".into(),
+            min_confidence: 0.6,
+            batch_size: 30,
+            merge_days: 14,
+            excerpt_chars: 400,
+        }
+    }
+}
+
+/// The `[curate]` fields the settings screen edits.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CuratePatch {
+    pub enabled: bool,
+    pub prefer: bool,
+    pub template: String,
+    pub other_template: String,
+    pub min_confidence: f64,
+}
+
+/// Apply `patch` to `[curate]` of the config at `path`, keeping the rest.
+pub fn write_curate_settings(path: &Path, patch: &CuratePatch) -> Result<(), ConfigError> {
+    use toml_edit::{value, DocumentMut, Item, Table};
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(source) => {
+            return Err(ConfigError::Read {
+                path: path.to_path_buf(),
+                source,
+            })
+        }
+    };
+    let mut doc: DocumentMut = text.parse().map_err(|e| ConfigError::Edit {
+        path: path.to_path_buf(),
+        source: Box::new(e),
+    })?;
+    let t = doc
+        .entry("curate")
+        .or_insert(Item::Table(Table::new()))
+        .as_table_mut()
+        .expect("[curate] is a table");
+    t.insert("enabled", value(patch.enabled));
+    t.insert("prefer", value(patch.prefer));
+    t.insert("template", value(patch.template.trim()));
+    t.insert("other_template", value(patch.other_template.trim()));
+    t.insert(
+        "min_confidence",
+        value(patch.min_confidence.clamp(0.0, 1.0)),
+    );
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    std::fs::write(path, doc.to_string()).map_err(|source| ConfigError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 /// `[search]` (SPEC §5.6): semantic search on top of FTS.
@@ -990,6 +1087,9 @@ impl Config {
         if self.classify.rules.is_relative() {
             self.classify.rules = base.join(&self.classify.rules);
         }
+        if self.curate.context.is_relative() {
+            self.curate.context = base.join(&self.curate.context);
+        }
         if let Some(p) = &self.store.path {
             if p.is_relative() {
                 self.store.path = Some(base.join(p));
@@ -1012,6 +1112,7 @@ impl Config {
             r.path = expand_home(&r.path);
         }
         cfg.classify.rules = expand_home(&cfg.classify.rules);
+        cfg.curate.context = expand_home(&cfg.curate.context);
         for r in &mut cfg.ai.candidate_roots {
             *r = expand_home(r);
         }
@@ -1080,6 +1181,16 @@ impl Config {
                 "보안 폴더로 모으기가 켜져 있지만 보안 폴더(security.vault_dir)가 없습니다 — 규칙 옵션으로만 암호화합니다."
                     .into(),
             );
+        }
+        for (what, t) in [
+            ("고객사 폴더 틀", &self.curate.template),
+            ("기타 폴더 틀", &self.curate.other_template),
+        ] {
+            if let Err(e) = crate::curate::FolderTemplate::parse(t) {
+                out.push(format!(
+                    "업무 맥락 {what} 오류: {e} — 업무 맥락 정리를 쓰지 않습니다"
+                ));
+            }
         }
         if let Err(e) = crate::pii::Detector::new(&self.security.pii) {
             out.push(format!(

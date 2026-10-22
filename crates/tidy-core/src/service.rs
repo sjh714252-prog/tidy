@@ -163,6 +163,14 @@ pub fn run_watch(
                     ai.model()
                 ))));
                 engine = engine.with_ai(ai);
+                if cfg.curate.enabled {
+                    match crate::curate::Curator::from_config(cfg) {
+                        Ok(c) => engine = engine.with_curator(Arc::new(c)),
+                        Err(e) => on_event(WatchEvent::Warning(format!(
+                            "업무 맥락 정리를 쓰지 않습니다: {e}"
+                        ))),
+                    }
+                }
             }
             Err(e) => on_event(WatchEvent::Ai(Err(e.to_string()))),
         }

@@ -536,9 +536,26 @@ CREATE TABLE schema_version (version INTEGER NOT NULL);
 -- move_log.dst_hash TEXT    -- encrypt: 만든 zip의 해시 (hash는 원본 해시)
 -- pending.encrypt INTEGER   -- 승인하면 암호화
 -- pending.pii TEXT          -- 탐지 결과 JSON (배지)
+
+-- (M10) v8: 업무 맥락 분석 캐시 (§14.3)
+CREATE TABLE curation (
+  key TEXT PRIMARY KEY,        -- "<blake3>|<소문자 파일 이름>" 또는 "meta:<경로>|<크기>|<mtime>"
+  path TEXT NOT NULL,          -- 마지막으로 본 경로(적용하면 새 경로)
+  entity TEXT,                 -- NULL = 고객사 없음
+  issue TEXT NOT NULL,
+  issue_date TEXT,             -- YYYY-MM-DD (파일 자기 날짜)
+  doc_kind TEXT NOT NULL,
+  topic TEXT,
+  confidence REAL NOT NULL,
+  reason TEXT NOT NULL,
+  source TEXT NOT NULL,        -- ai | user
+  model TEXT,
+  analyzed_at INTEGER NOT NULL
+);
+CREATE INDEX idx_curation_group ON curation(entity, issue);
 ```
 
-마이그레이션: `schema_version`에 적용 버전을 기록하고 순서대로 적용. M1(v1)은 `move_log`, `pending`, `ignored`, M2(v2)는 `roots`, `files`, `files_fts`, `files_fts_word`를 만든다. M4(v3)는 `pending.source/suggested_name` 열과 `decisions`, `ai_log`, `learn_dismissed`를 추가한다. M5(v4)는 `restructure_plans`를 추가한다. M6(v5)는 `move_log.state`와 `dst_path`·`state` 인덱스를 추가한다(기존 행은 `done`). M7(v6)은 `vectors`, `file_vectors`를 추가한다. M9(v7)은 `files.pii_flags/pii_counts/vault`, `move_log.op/dst_hash`, `pending.encrypt/pii`를 추가한다.
+마이그레이션: `schema_version`에 적용 버전을 기록하고 순서대로 적용. M1(v1)은 `move_log`, `pending`, `ignored`, M2(v2)는 `roots`, `files`, `files_fts`, `files_fts_word`를 만든다. M4(v3)는 `pending.source/suggested_name` 열과 `decisions`, `ai_log`, `learn_dismissed`를 추가한다. M5(v4)는 `restructure_plans`를 추가한다. M6(v5)는 `move_log.state`와 `dst_path`·`state` 인덱스를 추가한다(기존 행은 `done`). M7(v6)은 `vectors`, `file_vectors`를 추가한다. M9(v7)은 `files.pii_flags/pii_counts/vault`, `move_log.op/dst_hash`, `pending.encrypt/pii`를 추가한다. M10(v8)은 `curation`을 추가한다.
 
 **DB 파일 위치**: SQLite는 파일 잠금이 필요하므로 `store.path`는 반드시 로컬 디스크여야 한다. NAS/공유 폴더/네트워크 드라이브에 두면 `disk I/O error`로 실패한다(에러 메시지에 힌트를 붙인다. M6: `kind = "network"` 루트 아래이거나 네트워크 위치로 보이는 store.path는 기동 시 경고 — CLI `# warning:`, 앱 활동 탭 "주의").
 
@@ -650,6 +667,17 @@ min_name_phone = 1
 min_name_email = 1
 exclude = ["^010-?0000-?0000$"]  # 값(그대로 또는 숫자만)이 맞으면 세지 않음
 ai_check = false               # AI가 켜져 있으면 정규식 양성을 AI에 한 번 더 묻기
+
+[curate]                       # (M10, §14.3) 업무 맥락 정리 — AI 필요
+enabled = false                # 감시 중 새 파일도 맥락으로 정리 (리포트의 "업무 맥락으로 정리"는 꺼져 있어도 됨)
+prefer = false                 # 맥락 정리 우선: 규칙보다 먼저
+context = "context.toml"       # 맥락 사전 (고객사·별칭, 이슈 유형, 자료 종류)
+template = "{entity}/{yyyymmdd}_{issue}/{doc_kind}"
+other_template = "기타/{topic}"
+min_confidence = 0.6           # 미만은 미분류(그대로 둠)
+merge_days = 14                # 같은 고객사·이슈를 이 일수 안이면 가장 이른 날짜 폴더로
+batch_size = 30                # 한 번에 AI에 묻는 파일 수
+excerpt_chars = 400            # 파일당 본문 앞부분(ai.send_content일 때만)
 
 [ai.profiles.home]
 classify = { provider = "anthropic", model = "claude-haiku-5-5", key_ref = "tidy/anthropic", effort = "low" }
@@ -884,6 +912,18 @@ send_content = false
 
 **테스트**: MockProvider로 결정론적 분석 결과를 돌려 묶기·날짜 병합·틀 적용·undo를 검증. 한국어 fixture(고객사 2곳 × 이슈 2건 + 기타 정책 문서 3건).
 
+**M10 구현 확정 (구현 중 정한 세부)**
+- **설정**: `[curate] enabled = false`(감시 중 새 파일에 쓸지 — 리포트의 "업무 맥락으로 정리"는 꺼져 있어도 AI만 있으면 쓸 수 있다), `prefer = false`(맥락 정리 우선: 규칙보다 먼저), `context = "context.toml"`(설정 파일 기준 상대 경로), `template = "{entity}/{yyyymmdd}_{issue}/{doc_kind}"`, `other_template = "기타/{topic}"`, `min_confidence = 0.6`(미만은 미분류), `batch_size = 30`, `merge_days = 14`, `excerpt_chars = 400`(본문은 `ai.send_content`일 때만). 틀 변수: `{entity} {issue} {doc_kind} {topic} {yyyy} {mm} {dd} {yyyymmdd} {root}`. 틀은 상대 경로만(절대·`~`·`..` 거부), AI가 준 값은 폴더 이름 하나로 다듬는다(구분자·Windows 금지 문자 제거, 60자). `{topic}`은 최대 2단. 기준 폴더는 감시 폴더의 정리 방식(in_place = 그 폴더, collect = `organize_root`).
+- **사전 파일이 없으면** 시작 사전(이슈 유형 과금·장애·전환·점검·제안, 자료 종류 로그·안내문서·계약·회의록·캡처·데이터·발표와 확장자 힌트, 고객사 없음)으로 동작하고, 저장할 때 만든다. 별칭은 대소문자·공백을 무시하고 맞춘다 — AI가 별칭(`BADA`)으로 답해도 사전 이름(`바다정보`)으로 바꾼다.
+- **캐시 키**: `"<blake3 해시>|<소문자 파일 이름>"`(내용이 같아도 이름이 다르면 다른 판단 — 이름이 큰 단서라서), 본문을 못 읽는 파일은 `meta:<경로>|<크기>|<mtime>`. 저장소 v8 `curation` 테이블. 사용자가 미리보기에서 고친 판단은 `source = user`로 덮어써 다시 묻지 않고, 확신도와 무관하게 분류된 것으로 본다. 적용하면 새 경로로 갱신.
+- **날짜 묶기**: (고객사, 이슈)별로 이번 제안의 파일 날짜 + 캐시에 있던 날짜를 정렬해, 앞 날짜와 `merge_days` 이하로 이어지는 사슬을 한 묶음으로 보고 묶음의 가장 이른 날짜를 폴더 날짜로 쓴다(그래서 10-14·10-20·10-27은 모두 1014).
+- **미분류**: 확신도 미만, AI 응답에 빠진 파일은 제자리(`from == to`)로 두고 미리보기에서 체크하지 않는다. 고객사를 직접 정해 주면 분류된다.
+- **AI 실패**: 분석 실패는 오류로 보고하고 아무것도 옮기지 않는다(절대 규칙 4: 블로킹·추측 이동 없음). `ai_log` 목적은 `curate`(분석)·`context`(사전 뽑기).
+- **제안**: `restructure_plans`에 `source = "context"`로 저장하고 기존 미리보기·적용·배치 undo를 그대로 쓴다. 항목마다 `context`(고객사·이슈·날짜·자기 날짜·종류·주제·확신도·근거·AI 원래 답·미분류·고침 여부). 고치면 그 제안 전체를 다시 배치(날짜 묶기 포함)하고 사전 학습 후보(새 고객사, AI가 쓴 모르는 이름 → 고른 고객사의 별칭, 새 이슈 유형)를 돌려준다 — "사전에 반영"을 눌러야 `context.toml`에 쓴다. 모드 A(보안 폴더)에서 개인정보 파일은 같은 맥락 폴더에 `.zip`으로 암호화(§14.2 안전 절차). 배치 이름은 "업무 맥락 #id".
+- **감시 중 새 파일**: `enabled`이고 AI가 있으면, 규칙에 안 걸린 파일(`prefer`면 규칙보다 먼저)을 한 개짜리 배치로 분석한다. 목적지 폴더(또는 그 상위의 `날짜_이슈` 폴더)가 이미 있고 확신도 ≥ `ai.auto_threshold`일 때만 바로 옮기고(`decided_by = ai`, 규칙 이름 "업무 맥락"), 나머지는 확인 팝업 — 질문은 대기열 `reason` 앞에 둔다: "새 고객사 'X'의 'Y'(yyyymmdd) 폴더를 만들까요?", "바다정보의 새 이슈 '대체발송 중복'(20261021)으로 폴더를 만들까요?", "새 주제 'Z' 폴더를 만들까요?". 되돌린 파일은 다시 옮기지 않는다. 분석 실패·미분류면 그대로 둔다.
+- **비용 안내**: 캐시에 없는 파일만 센다 — 파일 수, 요청 수, 입력 토큰(글자 수 ÷ 2.5 근사), 출력 토큰(파일당 70), 알려진 모델이면 달러 금액.
+- **CLI**: `tidy curate scan [폴더] [--dry-run] [--recursive]`(비용 안내 후 분석 → 제안 저장, `--dry-run`은 비용만), `tidy curate apply <plan-id> [--only 1,3]`(= `restructure --apply`), `tidy context list`, `tidy context add <이름> [--alias A,B]`, `tidy context add <이름> --issue`, `tidy context add <이름> --kind [--ext log,txt]`, `tidy context alias <고객사> <별칭>`.
+
 ### 14.4 M10 — 설정 화면 정돈 + 사용 설명서
 
 - 설정 탭을 **접히는 섹션** 6개로 재구성: ① 감시 폴더 ② 규칙 ③ 업무 맥락(AI) ④ AI 연결 ⑤ 보안(개인정보) ⑥ 고급(데이터베이스·단축키·자동 시작·마법사 다시 실행·TOML 직접 편집). 기본은 ①②만 펼침, 상태는 기억.
@@ -891,3 +931,8 @@ send_content = false
 - 어려운 항목마다 ⓘ 도움말(한 줄 + 펼치면 예시): 확신도 기준, 폴링 간격, 본문 인덱싱 시간대, 보관 모드, 승인 방식, 키체인 등. 전문 용어는 한국어로 바꾸거나 괄호 설명.
 - 마법사에도 같은 도움말 사용. 마법사 3단계(AI)에 "업무 맥락 정리를 쓰려면 AI가 필요합니다" 안내.
 - **사용 설명서** `docs/manual.md`(한국어): 설치 → 마법사 → 평소 사용 → 규칙 편집 → 업무 맥락 정리 → 개인정보 보관 → 검색 → 되돌리기 → 문제 해결(SmartScreen, AI 키, NAS). 스크린샷은 e2e가 찍는 캡처를 재사용. README는 기능 요약 + 설명서 링크 + 설치 파일 받는 법(Releases 또는 Actions 아티팩트).
+
+**M10 구현 확정 (설정 화면)**
+- 섹션 접힘 상태는 WebView `localStorage`(`tidy.settings.sections`)에 둔다 — 설정 파일에 쓰지 않는다. 접힌 섹션도 편집 중인 값은 유지되고, 저장 버튼은 하나(#8): 일반 설정 → AI → 보안 → 업무 맥락(사전 + `[curate]`) 순서로 바뀐 것만 저장한다.
+- "AI 필요"는 상태바의 AI 상태가 사용 가능(`ready`/`starting`)이 아닐 때 비활성 + 배지 + "AI 연결에서 켜기"(설정 ④를 펼치고 그 위치로 이동; 다른 창에서는 메인 창을 연다). 대상: ③ 업무 맥락 전체, 리포트의 "업무 맥락으로 정리"·"AI 재구성 제안", 규칙의 "AI로 규칙 만들기". ③에는 AI가 켜져 있어도 배지를 붙여 AI를 쓰는 기능임을 알린다.
+- ⓘ 도움말 문구는 `src/components/helpTexts.ts` 한 곳에 두고 설정·마법사가 함께 쓴다. 용어: "AI 분류" → "AI 연결", effort → "생각 깊이(낮음·보통·높음)", 폴링 → "확인 간격(초, 폴링)", 제외 패턴 → "제외할 값", 임베딩 → "의미검색 모델".

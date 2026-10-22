@@ -2,6 +2,28 @@
 
 바탕화면·지정 폴더를 상시 감시해 규칙/AI 판단으로 정리하고, 본문까지 인덱싱해 검색하는 크로스플랫폼 데스크톱 앱.
 
+**📖 사용 설명서: [`docs/manual.md`](docs/manual.md)** (설치 → 마법사 → 평소 사용 → 규칙 → 업무 맥락 → 개인정보 보관 → 검색 → 되돌리기 → 문제 해결)
+
+## 기능 요약
+
+- **자동 정리**: 감시 폴더에 새 파일이 생기면 규칙(확장자·이름·크기·날짜)대로 옮깁니다. 폴더마다 "이 폴더 안에서 정리" 또는 "지정 위치로 모으기". 규칙은 카드로 편집.
+- **확인 팝업·대기열**: 애매한 파일은 묻고 옮깁니다(이동 / 다른 곳 / 이름 바꿔 / 건너뜀 / 무시).
+- **삭제 없음 + 되돌리기**: 모든 이동은 기록되고, 묶음(배치) 단위로 되돌립니다. 파일을 지우지 않습니다.
+- **검색**: `Ctrl+Shift+Space`로 파일 이름과 본문(pdf·docx·xlsx·pptx·txt…)을 찾습니다. 의미검색 모델이 있으면 자연어로.
+- **AI (선택)**: 규칙에 안 맞는 파일의 자리 제안, 규칙 초안, 재구성 제안. 키는 OS 키체인에만. AI가 없어도 모든 기본 기능이 동작합니다.
+- **업무 맥락 정리 (M10, AI 필요)**: `고객사/날짜_이슈/종류`(예: `바다정보/20261014_과금이슈/로그`)로 묶는 미리보기 → 고쳐서 → 승인 후 한 번에 적용. 고친 내용은 맥락 사전에 학습.
+- **개인정보 보관**: 주민번호·계좌·이름+연락처를 오프라인으로 찾아 AES-256 zip으로 보관(승인 후, 되돌리기 가능).
+- **리포트**: 폴더 트리·통계·중복·오래된 파일, 규칙/AI 재구성 미리보기.
+- **NAS**: 폴링 감시, 끊김/복구, 복사→검증 후 이동.
+
+## 설치 파일 받기
+
+- **정식 배포판**: 이 저장소의 **Releases**에서 OS별 파일(Windows `.msi`/`-setup.exe`, macOS `.dmg`, Linux `.deb`/`.AppImage`)을 받습니다.
+- **개발판**: **Actions → Release → 최근 실행 → Artifacts**(Actions 탭에서 *Run workflow*로 직접 만들 수도 있음).
+- Windows에서 "PC 보호" 창이 뜨면 **추가 정보 → 실행**(코드 서명 전). 자세한 내용: [`docs/packaging.md`](docs/packaging.md)
+
+## 개발 문서
+
 - 설계: [`docs/SPEC.md`](docs/SPEC.md)
 - 개발 규칙·진행 상태: [`CLAUDE.md`](CLAUDE.md)
 
@@ -167,4 +189,23 @@ cargo run -p tidy-cli -- vault password                      # 보관 비밀번�
 cargo run -p tidy-cli -- vault lock <파일> [--to 폴더]        # 암호화해서 보관 (되돌리기 가능)
 cargo run -p tidy-cli -- vault unlock <zip>                  # 원래 자리로 풀기
 cargo run -p tidy-cli -- vault status
+```
+
+## 업무 맥락 정리와 설정 화면 정돈 (M10)
+
+AI가 파일 이름·날짜·본문 앞부분(`send_content`일 때만)과 **맥락 사전**(`context.toml`: 고객사·별칭, 이슈 유형, 자료 종류)을 보고 "어느 고객사의 어느 이슈 자료인지"를 판단해 `{entity}/{yyyymmdd}_{issue}/{doc_kind}`로, 고객사가 없으면 `기타/{topic}`으로 묶습니다.
+
+- **바탕화면에서 뽑기**: 감시 폴더에서 고객사·이슈 후보를 뽑아 → 고른 것만 사전에.
+- **미리보기**: 리포트 탭 "업무 맥락으로 정리" → 분석 전 비용 안내 → 항목별 AI 판단·근거 → 고객사/이슈/종류 수정(사전 학습 제안) → **승인 후 한 배치 적용**, 되돌리기 가능.
+- 같은 고객사·이슈는 14일 안이면 가장 이른 날짜 폴더로 묶고, 확신이 낮으면 미분류로 그대로 둡니다. 분석 결과는 파일 해시로 캐시해 다시 묻지 않습니다.
+- **감시 중 새 파일**(`[curate] enabled`): 기존 폴더 + 확신도 ≥ `auto_threshold`면 자동, 새 고객사·이슈면 확인 팝업.
+- 설정 탭은 접히는 6개 섹션(감시 폴더 / 규칙 / 업무 맥락 / AI 연결 / 보안 / 고급)과 ⓘ 도움말, AI가 필요한 기능에는 "AI 필요" 배지.
+
+```
+cargo run -p tidy-cli -- context list                          # 맥락 사전
+cargo run -p tidy-cli -- context add 바다정보 --alias BADA,바다
+cargo run -p tidy-cli -- context alias 하늘통신 SKY
+cargo run -p tidy-cli -- curate scan ~/Desktop --dry-run       # 비용만 (파일 수·토큰·금액)
+cargo run -p tidy-cli -- curate scan ~/Desktop                 # 분석 → 제안 저장 (이동 없음)
+cargo run -p tidy-cli -- curate apply 3 --only 1,2,5           # 승인한 항목만 한 배치로
 ```
