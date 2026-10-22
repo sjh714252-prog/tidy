@@ -1,6 +1,6 @@
 [package]
 name = "tidy-desktop"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 license = "MIT"
 description = "Tidy desktop app (Tauri 2): tray, search window, confirm popup, queue, settings"

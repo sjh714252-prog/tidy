@@ -10,12 +10,16 @@ use serde_json::Value;
 use super::provider::{AiError, LlmProvider, LlmResponse, Usage};
 
 type Responder = Box<dyn Fn(&str, &str) -> Value + Send + Sync>;
+type Predicate = Box<dyn Fn(&str) -> bool + Send + Sync>;
 
 pub struct MockProvider {
     answers: Mutex<Vec<Result<Value, String>>>,
     prompts: Mutex<Vec<(String, String)>>,
     /// Computes the answer from `(system, user)` instead of the queue.
     responder: Option<Responder>,
+    /// When this says `true` for a user prompt, the call fails with
+    /// `AiError::Truncated` (simulates `max_tokens` cut-offs).
+    truncate_when: Option<Predicate>,
 }
 
 impl MockProvider {
@@ -30,6 +34,7 @@ impl MockProvider {
             answers: Mutex::new(answers.into_iter().rev().collect()),
             prompts: Mutex::new(Vec::new()),
             responder: None,
+            truncate_when: None,
         }
     }
 
@@ -40,7 +45,14 @@ impl MockProvider {
             answers: Mutex::new(Vec::new()),
             prompts: Mutex::new(Vec::new()),
             responder: Some(Box::new(f)),
+            truncate_when: None,
         }
+    }
+
+    /// Fail with `AiError::Truncated` whenever `pred(user_prompt)` is true.
+    pub fn truncate_when(mut self, pred: impl Fn(&str) -> bool + Send + Sync + 'static) -> Self {
+        self.truncate_when = Some(Box::new(pred));
+        self
     }
 
     /// `(system, user)` prompts received so far.
@@ -62,6 +74,9 @@ impl LlmProvider for MockProvider {
             .lock()
             .unwrap()
             .push((system.to_string(), user.to_string()));
+        if self.truncate_when.as_ref().is_some_and(|p| p(user)) {
+            return Err(AiError::Truncated);
+        }
         if let Some(f) = &self.responder {
             return Ok(LlmResponse {
                 value: f(system, user),

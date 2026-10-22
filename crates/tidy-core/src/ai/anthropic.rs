@@ -71,9 +71,7 @@ impl AnthropicProvider {
 fn parse_response(v: &Value) -> Result<(String, Usage, Option<String>), AiError> {
     match v.get("stop_reason").and_then(Value::as_str) {
         Some("refusal") => return Err(AiError::Refusal),
-        Some("max_tokens") => {
-            return Err(AiError::BadResponse("answer cut off at max_tokens".into()))
-        }
+        Some("max_tokens") => return Err(AiError::Truncated),
         _ => {}
     }
     let text: String = v
