@@ -146,80 +146,108 @@ export function RuleCards({
             <div className="rule-body">
               <fieldset disabled={readOnly}>
                 <legend>어떤 파일</legend>
-                <div className="chips">
-                  {c.ext.map((e) => (
-                    <span key={e} className="chip">
-                      .{e}
-                      <button className="link" onClick={() => set(i, { ext: c.ext.filter((x) => x !== e) })}>
-                        ×
-                      </button>
-                    </span>
-                  ))}
+                <div className="cond">
+                  <span className="cond-label">확장자</span>
+                  <div>
+                    <div className="chips">
+                      {c.ext.map((e) => (
+                        <span key={e} className="chip">
+                          .{e}
+                          <button className="link" onClick={() => set(i, { ext: c.ext.filter((x) => x !== e) })}>
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                      <input
+                        className="narrow"
+                        placeholder="확장자 + Enter"
+                        value={extDraft[i] ?? ""}
+                        onChange={(e) => setExtDraft({ ...extDraft, [i]: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === ",") {
+                            e.preventDefault();
+                            addExt(i, (extDraft[i] ?? "").split(/[,\s]+/));
+                            setExtDraft({ ...extDraft, [i]: "" });
+                          }
+                        }}
+                      />
+                    </div>
+                    <div className="chips presets">
+                      {EXT_PRESETS.map((p) => (
+                        <button key={p.label} className="chip-btn" onClick={() => addExt(i, p.ext)}>
+                          + {p.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <label className="cond-label" htmlFor={`name-${i}`}>
+                    이름에 포함
+                  </label>
                   <input
-                    className="narrow"
-                    placeholder="확장자 + Enter"
-                    value={extDraft[i] ?? ""}
-                    onChange={(e) => setExtDraft({ ...extDraft, [i]: e.target.value })}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === ",") {
-                        e.preventDefault();
-                        addExt(i, (extDraft[i] ?? "").split(/[,\s]+/));
-                        setExtDraft({ ...extDraft, [i]: "" });
-                      }
-                    }}
+                    id={`name-${i}`}
+                    className="wide"
+                    placeholder="예: 스크린샷, 견적서"
+                    value={c.nameContains}
+                    onChange={(e) => set(i, { nameContains: e.target.value })}
                   />
                 </div>
-                <div className="chips presets">
-                  {EXT_PRESETS.map((p) => (
-                    <button key={p.label} className="chip-btn" onClick={() => addExt(i, p.ext)}>
-                      + {p.label}
-                    </button>
-                  ))}
-                </div>
-                <label className="row">
-                  <span>이름에 포함</span>
-                  <input value={c.nameContains} onChange={(e) => set(i, { nameContains: e.target.value })} />
-                  <span>정규식</span>
-                  <input
-                    className="narrow"
-                    placeholder="^스크린샷"
-                    value={c.nameRegex}
-                    onChange={(e) => set(i, { nameRegex: e.target.value })}
-                  />
-                </label>
-                <label className="row">
-                  <span>크기</span>
-                  <input
-                    className="narrow"
-                    placeholder="최소 (10MB)"
-                    value={c.minSize}
-                    onChange={(e) => set(i, { minSize: e.target.value })}
-                  />
-                  <span>~</span>
-                  <input
-                    className="narrow"
-                    placeholder="최대"
-                    value={c.maxSize}
-                    onChange={(e) => set(i, { maxSize: e.target.value })}
-                  />
-                  <span>수정일</span>
-                  <input
-                    type="number"
-                    min={1}
-                    className="narrow"
-                    placeholder="N일 이내"
-                    value={c.newerThanDays ?? ""}
-                    onChange={(e) => set(i, { newerThanDays: e.target.value ? Number(e.target.value) : null })}
-                  />
-                  <input
-                    type="number"
-                    min={1}
-                    className="narrow"
-                    placeholder="N일 지남"
-                    value={c.olderThanDays ?? ""}
-                    onChange={(e) => set(i, { olderThanDays: e.target.value ? Number(e.target.value) : null })}
-                  />
-                </label>
+                <details
+                  className="more-conds"
+                  open={!!(c.nameRegex || c.minSize || c.maxSize || c.newerThanDays || c.olderThanDays)}
+                >
+                  <summary>조건 더 보기 (정규식 · 크기 · 수정일)</summary>
+                  <div className="cond">
+                    <label className="cond-label" htmlFor={`regex-${i}`}>
+                      이름 정규식
+                    </label>
+                    <input
+                      id={`regex-${i}`}
+                      className="wide"
+                      placeholder="예: ^스크린샷|Screenshot"
+                      value={c.nameRegex}
+                      onChange={(e) => set(i, { nameRegex: e.target.value })}
+                    />
+                    <span className="cond-label">크기</span>
+                    <div className="inline">
+                      <input
+                        className="narrow"
+                        placeholder="최소 (예: 10MB)"
+                        value={c.minSize}
+                        onChange={(e) => set(i, { minSize: e.target.value })}
+                      />
+                      <span>~</span>
+                      <input
+                        className="narrow"
+                        placeholder="최대"
+                        value={c.maxSize}
+                        onChange={(e) => set(i, { maxSize: e.target.value })}
+                      />
+                    </div>
+                    <span className="cond-label">수정일</span>
+                    <div className="inline">
+                      <span>최근</span>
+                      <input
+                        type="number"
+                        min={1}
+                        className="narrow"
+                        placeholder="N"
+                        value={c.newerThanDays ?? ""}
+                        onChange={(e) => set(i, { newerThanDays: e.target.value ? Number(e.target.value) : null })}
+                      />
+                      <span>일 이내</span>
+                      <span className="muted">또는</span>
+                      <input
+                        type="number"
+                        min={1}
+                        className="narrow"
+                        placeholder="N"
+                        value={c.olderThanDays ?? ""}
+                        onChange={(e) => set(i, { olderThanDays: e.target.value ? Number(e.target.value) : null })}
+                      />
+                      <span>일 넘게 안 쓴 파일</span>
+                    </div>
+                  </div>
+                </details>
               </fieldset>
 
               <fieldset disabled={readOnly}>
