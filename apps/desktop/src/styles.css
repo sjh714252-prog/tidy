@@ -147,7 +147,15 @@ input.narrow { width: 110px; }
 .rule-card .handle { cursor: grab; color: var(--muted); user-select: none; }
 .rule-card .rule-name { font-weight: 600; min-width: 160px; }
 .rule-card .match-count, .starter-list .match-count, .custom-rule .match-count { color: var(--accent); font-size: 12px; }
-.rule-body { display: grid; grid-template-columns: 1fr 1fr 0.7fr; gap: 8px; padding: 8px 10px; }
+.rule-body { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 8px 10px; }
+.rule-body fieldset:first-child { grid-column: 1 / -1; }
+.rule-body .cond { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 6px 10px; align-items: start; margin: 4px 0; }
+.rule-body .cond-label { font-size: 13px; color: var(--muted); padding-top: 4px; white-space: nowrap; }
+.rule-body .cond .inline { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rule-body .cond .inline input.narrow { width: 120px; }
+.rule-body .cond input.wide { min-width: 0; max-width: 420px; }
+.rule-body details.more-conds > summary { font-size: 12px; color: var(--muted); cursor: pointer; margin: 6px 0 2px; }
+@media (max-width: 760px) { .rule-body { grid-template-columns: 1fr; } }
 .rule-body fieldset { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-width: 0; }
 .rule-body legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
 .rule-body .row { flex-wrap: wrap; }
