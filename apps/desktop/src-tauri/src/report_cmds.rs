@@ -264,7 +264,7 @@ pub async fn apply_plan(
                 if plan.source == restructure::PlanSource::Context {
                     "업무 맥락"
                 } else {
-                    "재구성"
+                    "정리 제안"
                 },
                 r.moved.len(),
                 &r.batch_id[..8]

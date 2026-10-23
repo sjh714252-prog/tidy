@@ -25,13 +25,14 @@ export function estimateText(e: CurateEstimate): string {
 /**
  * Restructure (SPEC §5.7): plan from rules (no AI) or from the AI →
  * before/after diff + move checkboxes → apply the ticked ones as ONE batch
- * (undo in 이동 기록). Never applied without the user's click + confirm.
+ * (undo in 되돌리기). Never applied without the user's click + confirm.
  */
 export function RestructurePanel() {
   const r = useReport();
   const aiState = useStatus((s) => s.status?.aiState);
   const aiOn = useAiOn();
-  const [recursive, setRecursive] = useState(false);
+  const recursive = r.recursive;
+  const setRecursive = r.setRecursive;
   const [plans, setPlans] = useState<StoredPlan[]>([]);
   useEffect(() => {
     void ipc.listPlans().then(setPlans).catch(() => {});
@@ -39,7 +40,19 @@ export function RestructurePanel() {
 
   const plan = r.plan;
   const rel = (p: string) => (plan && p.startsWith(plan.root) ? p.slice(plan.root.length + 1) || "." : p);
+  // (M11) Organizing a "모으기" root re-moves files that are already sorted:
+  // two confirmations before any plan there.
+  const guard = () =>
+    !r.target ||
+    (window.confirm(
+      `이 폴더는 정리 결과가 모이는 곳입니다(${r.target}). 여기서 정리하면 이미 정리된 파일을 다시 옮깁니다. 그래도 미리보기를 만들까요?`,
+    ) &&
+      window.confirm("정말 정리 위치를 다시 정리할까요? (미리보기만 만들고, 적용 전에는 아무것도 옮기지 않습니다)"));
+  const plan_ = (kind: "rules" | "ai") => {
+    if (guard()) void r.makePlan(kind, recursive);
+  };
   const curate = async () => {
+    if (!guard()) return;
     try {
       const est = await ipc.curateEstimate(r.path, recursive);
       if (!est.files) return window.alert("정리할 파일이 없습니다.");
@@ -52,15 +65,15 @@ export function RestructurePanel() {
   const confirmApply = () => {
     if (!plan) return;
     const n = r.selected.size;
-    if (window.confirm(`선택한 ${n}개 항목을 옮깁니다. 이동 기록에서 한 번에 되돌릴 수 있습니다. 진행할까요?`))
+    if (window.confirm(`선택한 ${n}개 항목을 옮깁니다. 되돌리기 탭에서 한 번에 되돌릴 수 있습니다. 진행할까요?`))
       void r.apply();
   };
 
   return (
     <section className="restructure pad">
-      <h3>정리 제안 (재구성)</h3>
+      <h3>정리 제안</h3>
       <div className="row">
-        <button disabled={!r.path || !!r.planning} onClick={() => void r.makePlan("rules", recursive)}>
+        <button disabled={!r.path || !!r.planning} onClick={() => plan_("rules")}>
           {r.planning === "rules" ? "계산 중…" : "규칙으로 정리 미리보기"}
         </button>
         <label className="small">
@@ -69,12 +82,13 @@ export function RestructurePanel() {
         <button
           disabled={!r.path || !!r.planning || aiState !== "ready"}
           title={aiState === "ready" ? "" : "설정 → AI 연결에서 AI를 켜고 연결 테스트를 통과해야 합니다"}
-          onClick={() => void r.makePlan("ai")}
+          onClick={() => plan_("ai")}
         >
-          {r.planning === "ai" ? "AI가 구조를 보는 중… (최대 몇 분)" : "AI 재구성 제안"}
+          {r.planning === "ai" ? "AI가 구조를 보는 중… (최대 몇 분)" : "AI 정리 제안"}
         </button>
         <button
           data-testid="curate-plan"
+          className={r.suggestCurate && aiOn ? "primary" : undefined}
           disabled={!r.path || !!r.planning || !aiOn}
           title={
             aiOn
@@ -108,8 +122,16 @@ export function RestructurePanel() {
         <p className="muted small">config.toml의 [report] protected 목록도 항상 적용됩니다.</p>
       </details>
 
+      {r.suggestCurate && aiOn && !r.planning && plan?.source === "rules" && (
+        <p className="small notice" data-testid="curate-hint">
+          규칙에 안 맞는 파일은 "업무 맥락으로 정리"로 고객사·이슈별로 묶을 수도 있습니다(분석 전 비용 안내).
+        </p>
+      )}
       {plan && (
         <div className="plan">
+          <p className="notice small no-move" data-testid="no-move-notice">
+            적용을 누르기 전에는 아무것도 옮기지 않습니다. 적용 후에도 되돌리기 탭에서 되돌릴 수 있습니다.
+          </p>
           <div className="row">
             <strong>
               제안 #{plan.id} · {SOURCE[plan.source] ?? plan.source} · {plan.moves.length}개 항목
@@ -237,7 +259,7 @@ export function RestructurePanel() {
                   void ipc.undoBatch(r.applied!.batchId).then((u) => alert(`${u.restored.length}개 되돌림`))
                 }
               >
-                이 재구성 되돌리기
+                이 정리 되돌리기
               </button>
               {r.applied.skipped.length > 0 && <div className="small">건너뜀 {r.applied.skipped.length}개</div>}
               {r.applied.errors.length > 0 && <div className="small error">{r.applied.errors.join("; ")}</div>}

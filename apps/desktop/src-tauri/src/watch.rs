@@ -204,7 +204,11 @@ fn on_event(app: &AppHandle, ev: WatchEvent<'_>) {
                     &r.path,
                     format!(
                         "다시 연결됨 — 끊긴 동안 바뀐 파일을 처리합니다{}",
-                        if r.events { "" } else { " (폴링만 사용)" }
+                        if r.events {
+                            ""
+                        } else {
+                            " (주기 확인만 사용)"
+                        }
                     ),
                 );
             } else {
