@@ -129,6 +129,11 @@ export const openPlan = (id: number) => invoke<PlanResult>("open_plan", { id });
 export const listBatches = (limit = 100) => invoke<BatchSummary[]>("list_batches", { limit });
 export const batchMoves = (batchId: string) => invoke<MoveLogEntry[]>("batch_moves", { batchId });
 export const undoBatch = (batchId: string) => invoke<UndoResult>("undo_batch", { batchId });
+/** Bulk undo of the last N seconds (autoOnly = rule/AI moves only). */
+export const countMovesSince = (sinceSecsAgo: number, autoOnly: boolean) =>
+  invoke<number>("count_moves_since", { sinceSecsAgo, autoOnly });
+export const undoSince = (sinceSecsAgo: number, autoOnly: boolean) =>
+  invoke<UndoResult>("undo_since", { sinceSecsAgo, autoOnly });
 
 // M8: wizard, rule editor, folder tree.
 export const wizardInfo = () => invoke<WizardInfo>("wizard_info");
@@ -146,6 +151,9 @@ export const fsRoots = () => invoke<FsRoot[]>("fs_roots");
 export const listDirs = (path: string) => invoke<DirEntry[]>("list_dirs", { path });
 export const makeDir = (parent: string, name: string) => invoke<string>("make_dir", { parent, name });
 export const openWizard = () => invoke<void>("open_wizard");
+/** Files the user chose "무시" for; `unignore` puts one back under organizing. */
+export const listIgnored = () => invoke<string[]>("list_ignored");
+export const unignore = (path: string) => invoke<boolean>("unignore", { path });
 
 // ── M11 home / help ──
 export const watchOverview = (refresh = false) => invoke<Overview>("watch_overview", { refresh });

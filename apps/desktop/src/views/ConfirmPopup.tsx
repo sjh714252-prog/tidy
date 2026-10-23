@@ -115,17 +115,22 @@ export function ConfirmPopup() {
         <button disabled={busy || !item.suggestedDest} onClick={() => setRenaming((r) => !r)}>
           이름 바꿔 이동
         </button>
-        <button disabled={busy} onClick={() => void resolve(item.id, { kind: "skip" })}>
+        <button
+          disabled={busy}
+          title="이번만 그대로 둡니다. 파일이 다시 바뀌거나 '지금 정리'를 하면 또 묻습니다."
+          onClick={() => void resolve(item.id, { kind: "skip" })}
+        >
           건너뜀
         </button>
         <button
           disabled={busy}
-          title="이 파일은 앞으로 정리하지 않습니다"
+          title="이 파일은 앞으로 묻지도, 옮기지도 않습니다. 설정 ⑥ 고급의 '무시한 파일'에서 풀 수 있습니다."
           onClick={() => void resolve(item.id, { kind: "ignore" })}
         >
           무시
         </button>
       </div>
+      <p className="muted small hint">건너뜀 = 이번만 그대로 둠 · 무시 = 이 파일은 앞으로 묻지 않음 (설정 ⑥에서 해제)</p>
       <footer>
         <button className="link" onClick={() => void ipc.showWindow("main:pending")}>
           확인 대기 전체 보기
