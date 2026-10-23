@@ -10,7 +10,6 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
-use tidy_core::watcher::IgnoreFilter;
 use tidy_core::classify::ai_rules::{draft_rules, RuleDrafts};
 use tidy_core::classify::preview::{collect_files, match_files, FileSample, PreviewReport};
 use tidy_core::classify::starter::{starter_cards, starters, Starter};
@@ -18,6 +17,7 @@ use tidy_core::classify::{
     append_cards, apply_cards, parse_cards, AiClassifier, RuleCard, RuleSet,
 };
 use tidy_core::config::{write_settings, SettingsPatch, WatchRoot};
+use tidy_core::watcher::IgnoreFilter;
 
 use crate::commands::{
     blocking, status, watches_from_dtos, CmdResult, StatusDto, WatchDto, RULES_HEADER,
@@ -41,7 +41,12 @@ fn sample_for(watches: &[WatchRoot], globs: &[String]) -> FileSample {
     // covers them too.
     let filter = IgnoreFilter::new(globs)
         .unwrap_or_else(|_| IgnoreFilter::new(&[]).unwrap())
-        .with_dirs(watches.iter().flat_map(|w| w.exclude.iter().cloned()).collect());
+        .with_dirs(
+            watches
+                .iter()
+                .flat_map(|w| w.exclude.iter().cloned())
+                .collect(),
+        );
     let key = format!("{watches:?}|{globs:?}");
     let mut guard = SAMPLE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((k, at, sample)) = guard.as_ref() {
