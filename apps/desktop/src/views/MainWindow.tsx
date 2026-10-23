@@ -14,20 +14,23 @@ import { useCurate } from "../store/curate";
 import { useNav } from "../store/nav";
 import { useReport } from "../store/report";
 import { ActivityView } from "./ActivityView";
+import { HelpMenu } from "../components/HelpMenu";
+import { AboutDialog } from "../components/AboutDialog";
+import { baseName, shortPath, useHome } from "../store/home";
 import { HistoryView } from "./HistoryView";
 import { PendingView } from "./PendingView";
 import { ReportView } from "./ReportView";
 import { SettingsView } from "./SettingsView";
 
 const TABS: { id: MainTab; label: string }[] = [
-  { id: "activity", label: "활동" },
-  { id: "pending", label: "대기열" },
-  { id: "report", label: "리포트" },
-  { id: "history", label: "이동 기록" },
+  { id: "activity", label: "홈" },
+  { id: "pending", label: "확인 대기" },
+  { id: "report", label: "정리하기" },
+  { id: "history", label: "되돌리기" },
   { id: "settings", label: "설정" },
 ];
 
-/** Main window: status bar + tabs (활동 / 대기열 / 설정). Hidden to tray on close. */
+/** Main window: status bar + tabs (홈 / 확인 대기 / 정리하기 / 되돌리기 / 설정, SPEC §14.6). Hidden to tray on close. */
 export function MainWindow() {
   const tab = useNav((s) => s.tab);
   const setTab = useNav((s) => s.setTab);
@@ -55,14 +58,15 @@ export function MainWindow() {
         // The event reaches every window; only main-window tabs apply here.
         if (!TABS.some((x) => x.id === t)) return;
         setTab(t);
+        // Tray "정보…".
+        if (q.get("about")) useHome.getState().openAbout(false);
         // "AI 연결에서 켜기" from another window: open that settings section.
         if (t === "settings" && q.get("section")) useNav.getState().goSettings(q.get("section") ?? "");
         // Wizard "기존 파일 미리보기": rules plan of a watch folder (nothing
         // moves until the user applies selected items).
         if (t === "report" && q.get("plan") === "rules" && q.get("path")) {
           const r = useReport.getState();
-          r.setPath(q.get("path") ?? "");
-          void r.makePlan("rules");
+          void r.setPath(q.get("path") ?? "").then(() => useReport.getState().makePlan("rules"));
         }
       }),
       onStatus(() => void refresh()),
@@ -88,7 +92,7 @@ export function MainWindow() {
     <div className="main">
       <header className="topbar">
         <div className="brand">Tidy</div>
-        <nav>
+        <nav aria-label="탭">
           {TABS.map((t) => (
             <button key={t.id} className={tab === t.id ? "tab on" : "tab"} onClick={() => switchTab(t.id)}>
               {t.label}
@@ -103,6 +107,7 @@ export function MainWindow() {
         {status && (
           <button onClick={() => void setPaused(!status.paused)}>{status.paused ? "감시 재개" : "일시정지"}</button>
         )}
+        <HelpMenu />
       </header>
       <StatusBar />
       <section className="content">
@@ -112,6 +117,7 @@ export function MainWindow() {
         {tab === "history" && <HistoryView />}
         {tab === "settings" && <SettingsView />}
       </section>
+      <AboutDialog />
     </div>
   );
 }
@@ -128,54 +134,110 @@ const PHASE = { copy: "NAS 복사 중", verify: "검증 중", done: "복사 완�
 function StatusBar() {
   const status = useStatus((s) => s.status);
   const progress = useProgress((s) => s.current);
+  const togglePanel = useHome((s) => s.togglePanel);
+  const openAbout = useHome((s) => s.openAbout);
   if (!status) return null;
+  const n = status.watchTotal;
+  const roots = status.organizeRoots;
+  const places = status.organizeInPlace + roots.length;
+  const where = !roots.length
+    ? "각 폴더 안에서 정리"
+    : places === 1
+      ? `정리 위치 ${shortPath(roots[0] ?? "")}`
+      : `정리 위치 ${places}곳`;
+  const watchLabel = n === 1 ? `감시 중: ${baseName(status.watchPaths[0] ?? "")}` : `감시 중 ${n}곳`;
   const state = !status.onboarded
-    ? "설정 마법사를 마치면 감시를 시작합니다"
+    ? null
     : status.paused
-    ? "일시정지됨"
-    : status.watching.length
-      ? `감시 중: ${status.watching.join(" · ")}`
-      : "감시 중인 폴더 없음 — 설정에서 추가하세요";
+      ? { text: "일시정지", cls: "warn" }
+      : status.offline.length
+        ? { text: `연결 끊김 ${status.offline.length}곳`, cls: "warn" }
+        : status.watching.length
+          ? { text: "새 파일 자동 정리 중", cls: "ok" }
+          : null;
   return (
-    <div className="statusbar">
-      <span>{state}</span>
-      {!status.onboarded && (
-        <button className="link" onClick={() => void ipc.openWizard()}>
-          마법사 열기
+    <div className="statusbar" data-testid="statusbar">
+      {!status.onboarded ? (
+        <span className="sb-group">
+          설정 마법사를 마치면 감시를 시작합니다{" "}
+          <button className="link" onClick={() => void ipc.openWizard()}>
+            마법사 열기
+          </button>
+        </span>
+      ) : n === 0 ? (
+        <span className="sb-group">감시 중인 폴더 없음 — 설정에서 추가하세요</span>
+      ) : (
+        <button
+          className="sb-group sb-summary"
+          data-testid="watch-summary"
+          title={`${status.watchPaths.join("\n")}${roots.length ? `\n정리 위치: ${roots.join(", ")}` : ""}\n(눌러서 감시 현황 보기)`}
+          onClick={togglePanel}
+        >
+          📁 {watchLabel} · <span title={roots.join("\n")}>{where}</span>
         </button>
       )}
-      <span className="muted">
-        인덱스 {status.filesIndexed.toLocaleString()}개{status.indexing ? " (인덱싱 중…)" : ""}
+      {state && (
+        <>
+          <span className="sb-sep" aria-hidden>
+            │
+          </span>
+          <span
+            className={`sb-group ${state.cls}`}
+            data-testid="watch-state"
+            title={status.offline.length ? `연결이 돌아오면 자동으로 다시 감시합니다: ${status.offline.join(", ")}` : ""}
+          >
+            {state.text}
+          </span>
+        </>
+      )}
+      <div className="spacer" />
+      {progress && (
+        <span className="sb-group" title={`${progress.src} → ${progress.dst}`}>
+          {PHASE[progress.phase]} {progress.total ? Math.floor((progress.copied * 100) / progress.total) : 100}% (
+          {formatSize(progress.copied)} / {formatSize(progress.total)}) {baseName(progress.dst)}
+        </span>
+      )}
+      {status.lastError && (
+        <span className="sb-group error sb-err" title={status.lastError}>
+          {status.lastError}
+        </span>
+      )}
+      <span className="sb-group muted">
+        인덱스 {status.filesIndexed.toLocaleString()}
+        {status.indexing ? " (인덱싱 중…)" : ""}
       </span>
-      <span className={status.aiState === "unavailable" ? "warn" : "muted"} title={status.aiDetail ?? ""}>
+      <span className="sb-sep" aria-hidden>
+        │
+      </span>
+      <span className={`sb-group ${status.aiState === "unavailable" ? "warn" : "muted"}`} title={status.aiDetail ?? ""}>
         {AI_LABEL[status.aiState]}
-        {status.aiState === "ready" && status.aiDetail ? ` (${status.aiDetail})` : ""}
+        {status.aiState === "ready" && status.aiDetail ? ` (${aiModel(status.aiDetail)})` : ""}
       </span>
       {status.semanticState !== "off" && (
         <span
-          className={status.semanticState === "unavailable" ? "warn" : "muted"}
+          className={`sb-group ${status.semanticState === "unavailable" ? "warn" : "muted"}`}
           title={status.semanticDetail ?? ""}
           data-testid="semantic-state"
         >
           {status.semanticState === "ready" ? "의미검색 켜짐" : "의미검색 일시 중단 (단어 검색만)"}
         </span>
       )}
-      {status.offline.length > 0 && (
-        <span className="warn" title="연결이 돌아오면 자동으로 다시 감시합니다 (60초마다 확인)">
-          연결 끊김(일시정지): {status.offline.join(" · ")}
-        </span>
+      {status.update && (
+        <button
+          className="sb-group update-dot"
+          data-testid="update-dot"
+          title={`새 버전 ${status.update.latest}`}
+          onClick={() => openAbout(false)}
+        >
+          ● 업데이트 있음
+        </button>
       )}
-      {progress && (
-        <span title={`${progress.src} → ${progress.dst}`}>
-          {PHASE[progress.phase]} {progress.total ? Math.floor((progress.copied * 100) / progress.total) : 100}% (
-          {formatSize(progress.copied)} / {formatSize(progress.total)}) {baseName(progress.dst)}
-        </span>
-      )}
-      {status.lastError && <span className="error">{status.lastError}</span>}
     </div>
   );
 }
 
-function baseName(p: string): string {
-  return p.split(/[\\/]/).pop() ?? p;
+/** "openai / fake-chat" → "fake-chat" (the full text stays in the title). */
+function aiModel(detail: string): string {
+  const i = detail.lastIndexOf(" / ");
+  return i >= 0 ? detail.slice(i + 3) : detail;
 }

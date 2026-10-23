@@ -83,6 +83,7 @@ pub struct StatusDto {
     pub semantic_detail: Option<String>,
     /// (M11) Configured watch folders (also when not running).
     pub watch_total: usize,
+    pub watch_paths: Vec<String>,
     /// (M11) Watch folders organized in place, and the distinct
     /// "지정 위치로 모으기" roots — the status bar's "정리 위치".
     pub organize_in_place: usize,
@@ -171,6 +172,7 @@ pub fn status(app: &AppHandle) -> StatusDto {
         semantic_state,
         semantic_detail,
         watch_total: inner.cfg.watches.len(),
+        watch_paths: inner.cfg.watches.iter().map(|w| s(&w.path)).collect(),
         organize_in_place: crate::overview::organize_summary(&inner.cfg.watches).0,
         organize_roots: crate::overview::organize_summary(&inner.cfg.watches).1,
         update: crate::about::available(),

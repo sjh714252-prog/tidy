@@ -3,6 +3,7 @@ import * as ipc from "../ipc/commands";
 import type { ActivityKind } from "../ipc/types";
 import { useActivity } from "../store/activity";
 import { formatTime } from "../components/format";
+import { OrganizeCard, WatchPanel } from "../components/HomeCards";
 
 const LABEL: Record<ActivityKind, string> = {
   moved: "이동",
@@ -15,7 +16,7 @@ const LABEL: Record<ActivityKind, string> = {
   info: "알림",
 };
 
-/** Live feed of watcher actions since the app started, plus undo / index. */
+/** 홈 (SPEC §14.6): 감시 현황 패널 + 정리 현황 카드 + live feed of watcher actions. */
 export function ActivityView() {
   const { items, clear } = useActivity();
   const [msg, setMsg] = useState<string | null>(null);
@@ -37,6 +38,8 @@ export function ActivityView() {
   const shown = hideNoRule ? items.filter((a) => a.kind !== "no_rule") : items;
   return (
     <div className="activity">
+      <WatchPanel />
+      <OrganizeCard />
       <div className="toolbar">
         <button onClick={() => void undo()}>마지막 이동 되돌리기</button>
         <button onClick={() => void ipc.indexNow()}>지금 인덱싱</button>

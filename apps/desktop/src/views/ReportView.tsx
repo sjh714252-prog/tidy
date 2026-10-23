@@ -4,7 +4,7 @@ import { useReport } from "../store/report";
 import { formatSize, formatTime } from "../components/format";
 import { RestructurePanel } from "../components/RestructurePanel";
 
-/** Report (SPEC §9.5): stats cards, types, big folders/files, duplicates, stale files, tree. */
+/** 정리하기 (SPEC §9.5, §14.6): 정리 제안 + stats cards, types, big folders/files, duplicates, stale files, tree. */
 export function ReportView() {
   const r = useReport();
   const loadRoots = useReport((s) => s.loadRoots);
@@ -14,7 +14,7 @@ export function ReportView() {
 
   const pick = async () => {
     const dir = await ipc.pickFolder(r.path || null);
-    if (dir) r.setPath(dir);
+    if (dir) void r.setPath(dir);
   };
   const rep = r.report;
   const join = (rel: string) => `${rep?.root ?? ""}/${rel}`;
@@ -23,8 +23,8 @@ export function ReportView() {
   return (
     <div className="report">
       <div className="toolbar">
-        <select value={r.path} onChange={(e) => r.setPath(e.target.value)}>
-          {r.path && !r.roots.includes(r.path) && <option value={r.path}>{r.path}</option>}
+        <select value={r.path} data-testid="report-folder" onChange={(e) => void r.setPath(e.target.value)}>
+          {r.path && !r.roots.includes(r.path) && <option value={r.path}>{r.path} (다른 폴더)</option>}
           {r.roots.map((p) => (
             <option key={p} value={p}>
               {p}
@@ -39,6 +39,11 @@ export function ReportView() {
           {r.loading ? "분석 중…" : "리포트 만들기"}
         </button>
       </div>
+      {r.target && (
+        <div className="notice warn" data-testid="organize-root-warning">
+          ⚠ 이 폴더는 정리 결과가 모이는 곳입니다({r.target}). 여기서 정리하면 이미 정리된 파일을 다시 옮깁니다.
+        </div>
+      )}
       {r.error && <div className="error pad">{r.error}</div>}
 
       <RestructurePanel />

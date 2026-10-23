@@ -8,6 +8,7 @@ export const EV_STATUS = "tidy://status";
 export const EV_NAVIGATE = "tidy://navigate";
 export const EV_PROGRESS = "tidy://progress";
 export const EV_FOCUS_SEARCH = "tidy://focus-search";
+export const EV_ORGANIZE = "tidy://organize-status";
 
 export const onActivity = (cb: (a: Activity) => void): Promise<UnlistenFn> =>
   listen<Activity>(EV_ACTIVITY, (e) => cb(e.payload));
@@ -24,3 +25,5 @@ export const onFocusSearch = (cb: () => void): Promise<UnlistenFn> =>
   listen(EV_FOCUS_SEARCH, () => cb());
 export const onProgress = (cb: (p: TransferProgress) => void): Promise<UnlistenFn> =>
   listen<TransferProgress>(EV_PROGRESS, (e) => cb(e.payload));
+/** (M11) Backlog counts recomputed (home tab). */
+export const onOrganize = (cb: () => void): Promise<UnlistenFn> => listen(EV_ORGANIZE, () => cb());

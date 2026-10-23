@@ -30,7 +30,7 @@ export function describe(r: Resolution): string {
     case "ignored":
       return "무시 (앞으로 정리하지 않음)";
     case "gone":
-      return "파일이 없어 대기열에서 뺌";
+      return "파일이 없어 확인 대기에서 뺌";
   }
 }
 

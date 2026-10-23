@@ -22,9 +22,16 @@ interface ReportState {
   learnt: string | null;
   applying: boolean;
   applied: ApplyResult | null;
+  /** (M11) Include sub-folders in the plan. */
+  recursive: boolean;
+  /** (M11) The "모으기" root the chosen folder is (or lies in): organizing it re-moves results. */
+  target: string | null;
+  /** (M11) "지금 정리" with AI + a context dictionary: highlight "업무 맥락으로 정리". */
+  suggestCurate: boolean;
 
   loadRoots: () => Promise<void>;
-  setPath: (p: string) => void;
+  setPath: (p: string) => Promise<void>;
+  setRecursive: (b: boolean) => void;
   setDups: (b: boolean) => void;
   setProtect: (p: string) => void;
   build: () => Promise<void>;
@@ -70,16 +77,30 @@ export const useReport = create<ReportState>((set, get) => ({
   learnt: null,
   applying: false,
   applied: null,
+  recursive: false,
+  target: null,
+  suggestCurate: false,
 
   loadRoots: async () => {
     try {
       const roots = await ipc.reportRoots();
-      set({ roots, path: get().path || roots[0] || "" });
+      set({ roots });
+      if (!get().path && roots[0]) await get().setPath(roots[0]);
     } catch (e) {
       set({ error: String(e) });
     }
   },
-  setPath: (path) => set({ path, report: null, plan: null, preview: null, applied: null }),
+  setPath: async (path) => {
+    set({ path, report: null, plan: null, preview: null, applied: null, target: null, suggestCurate: false });
+    if (!path) return;
+    try {
+      const target = await ipc.organizeTarget(path);
+      if (get().path === path) set({ target });
+    } catch {
+      // Only a warning: no answer = no warning.
+    }
+  },
+  setRecursive: (recursive) => set({ recursive }),
   setDups: (dups) => set({ dups }),
   setProtect: (protect) => set({ protect }),
   build: async () => {
