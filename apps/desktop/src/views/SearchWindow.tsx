@@ -30,6 +30,10 @@ export function SearchWindow() {
     move,
     select,
     refreshSemantic,
+    customer,
+    customers,
+    setCustomer,
+    loadCustomers,
   } = useSearch();
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLUListElement>(null);
@@ -41,9 +45,11 @@ export function SearchWindow() {
     };
     focus();
     void refreshSemantic();
+    void loadCustomers();
     const un = onFocusSearch(() => {
       focus();
       void refreshSemantic();
+      void loadCustomers();
     });
     return () => {
       void un.then((f) => f());
@@ -86,6 +92,7 @@ export function SearchWindow() {
 
   return (
     <div className="search" onKeyDown={onKey}>
+      <div className="search-bar">
       <input
         ref={input}
         className="search-input"
@@ -99,6 +106,27 @@ export function SearchWindow() {
         spellCheck={false}
         autoFocus
       />
+        {customers.length > 0 && (
+          <select
+            className="customer-filter"
+            aria-label="고객사"
+            data-testid="customer-filter"
+            title="고객사 폴더 안에서만 찾습니다"
+            value={customer}
+            onChange={(e) => {
+              setCustomer(e.target.value);
+              input.current?.focus();
+            }}
+          >
+            <option value="">모든 고객사</option>
+            {customers.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
       <div className="search-body">
         <ul className="results" ref={list}>
           {hits.map((h, i) => (

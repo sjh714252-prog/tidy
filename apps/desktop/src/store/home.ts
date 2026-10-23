@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import * as ipc from "../ipc/commands";
-import type { FolderOverview, Overview } from "../ipc/types";
+import type { CustomerStat, FolderOverview, Overview } from "../ipc/types";
 import { useNav } from "./nav";
 import { useReport } from "./report";
 
@@ -13,7 +13,10 @@ interface HomeState {
   aboutOpen: boolean;
   /** Run an update check when the about window opens. */
   checkOnOpen: boolean;
+  /** (M12) 고객사별 보기. */
+  customers: CustomerStat[] | null;
   load: (refresh?: boolean) => Promise<void>;
+  loadCustomers: () => Promise<void>;
   togglePanel: () => void;
   openAbout: (check?: boolean) => void;
   closeAbout: () => void;
@@ -25,6 +28,14 @@ export const useHome = create<HomeState>((set) => ({
   panelOpen: false,
   aboutOpen: false,
   checkOnOpen: false,
+  customers: null,
+  loadCustomers: async () => {
+    try {
+      set({ customers: await ipc.customerOverview() });
+    } catch {
+      set({ customers: [] });
+    }
+  },
   load: async (refresh = false) => {
     try {
       set({ overview: await ipc.watchOverview(refresh), error: null });
@@ -52,6 +63,19 @@ export async function organizeNow(f: FolderOverview, canCurate: boolean) {
   await r.setPath(f.path);
   useReport.setState({ suggestCurate: canCurate, recursive: f.recursive });
   await useReport.getState().makePlan("rules", f.recursive);
+}
+
+/**
+ * (M12) "새 폴더 N개 — 지금 정리": go to 정리하기 with this folder and start
+ * a work-context run (cost notice + confirm first; nothing moves until the
+ * preview is applied).
+ */
+export async function organizeFolders(f: FolderOverview) {
+  useNav.getState().setTab("report");
+  const r = useReport.getState();
+  await r.setPath(f.path);
+  useReport.setState({ suggestCurate: true });
+  await useReport.getState().curate();
 }
 
 /** Last two path parts ("…\\바탕 화면"); the full path goes in a title. */
