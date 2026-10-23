@@ -77,7 +77,7 @@ await sleep(1500);
 
 // 4. auto move of a txt (example rule "문서": ext txt → ~/문서/{yyyy} ...): use whatever the example says
 {
-  await main.getByRole("button", { name: "활동" }).click();
+  await main.locator(".topbar nav").getByRole("button", { name: "홈" }).click();
   fs.writeFileSync(path.join(DESK, "tidy-test 보안점검.txt"), "수탁자 보안점검 결과");
   await sleep(5000);
   const feed = await main.locator(".activity").innerText();
@@ -158,7 +158,7 @@ let movedPath = null;
   await sleep(2500);
   for (const n of [5, 6, 7]) fs.writeFileSync(path.join(DESK, `setup ${n}.exe`), "");
   await sleep(5000);
-  await main.getByRole("button", { name: "대기열" }).click();
+  await main.locator(".topbar nav").getByRole("button", { name: "확인 대기" }).click();
   await sleep(1000);
   const rows = main.locator(".pending tbody tr");
   ok(7, "대기열 3건", (await rows.count()) === 3, `rows=${await rows.count()}`);
@@ -177,7 +177,7 @@ let movedPath = null;
 
 // 8. undo last
 {
-  await main.getByRole("button", { name: "활동" }).click();
+  await main.locator(".topbar nav").getByRole("button", { name: "홈" }).click();
   await main.getByRole("button", { name: "마지막 이동 되돌리기" }).click();
   await sleep(2500);
   const notice = await main.locator(".activity .notice").innerText().catch(() => "");
@@ -258,7 +258,7 @@ let movedPath = null;
   await sleep(2500);
   const cfg = fs.readFileSync(path.join(T, "config.toml"), "utf8");
   ok(12, "config.toml에 exclude 두 항목", /exclude\s*=\s*\[[^\]]*작업중[^\]]*보관/.test(cfg), cfg.split("\n").filter((l) => /exclude/.test(l)).join(" | "));
-  await main.getByRole("button", { name: "활동" }).click();
+  await main.locator(".topbar nav").getByRole("button", { name: "홈" }).click();
   fs.writeFileSync(path.join(EX1, "tidy-test 제외.txt"), "x");
   fs.writeFileSync(path.join(EX2, "tidy-test 제외2.txt"), "x");
   fs.writeFileSync(path.join(DESK, "tidy-test 포함.txt"), "x");

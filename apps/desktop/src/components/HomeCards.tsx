@@ -116,7 +116,7 @@ export function WatchPanel() {
                   {f.mode === "collect" && f.organizeRoot ? `→ ${shortPath(f.organizeRoot)}` : "이 폴더 안"}
                 </td>
                 <td className={STATE[f.state].cls}>{STATE[f.state].label}</td>
-                <td className="num">{f.exclude ? `${f.exclude}개` : "—"}</td>
+                <td>{f.exclude ? `${f.exclude}개` : "—"}</td>
                 <td>
                   {count(f, o)}{" "}
                   {!!f.backlog?.total && (

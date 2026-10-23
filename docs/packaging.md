@@ -15,7 +15,9 @@ Tidy 데스크톱 앱은 `tauri build`로 OS별 설치 파일을 만든다.
   ```
   git tag v0.1.0 && git push origin v0.1.0
   ```
-- Actions 탭 → Release → *Run workflow*로 수동 실행하면 릴리스 없이 워크플로 아티팩트로만 받는다.
+- Actions 탭 → Release → *Run workflow*를 **main**에서 실행하면 **공개 릴리스**를 만든다(M11): `apps/desktop/package.json`의 버전으로 태그 `v<버전>`을 워크플로 안에서 만들고(GITHUB_TOKEN, 이미 있으면 그 릴리스의 파일만 교체) 설치 파일을 붙인다. 릴리스 본문은 GitHub 자동 릴리스 노트(이전 릴리스 이후 머지된 PR 제목). 앱의 "업데이트 확인"은 이 최신 공개 릴리스(`releases/latest`)를 본다.
+- 다른 브랜치에서 수동 실행하면 릴리스 없이 워크플로 아티팩트로만 받는다.
+- 빌드에는 `TIDY_GIT_SHA`(짧은 커밋 해시)가 들어가 앱의 정보 창에 "빌드"로 보인다(로컬 빌드는 "dev").
 - 각 OS 빌드 뒤에 **릴리스 바이너리에 개발용 테스트 브리지가 없는지** 검사한다
   (`dev bridge`, `tidy-devbridge`, `127.0.0.1:1421` 문자열이 있으면 실패).
 - 서명: 현재 코드 서명/공증은 하지 않는다. Windows SmartScreen은 "추가 정보 → 실행",
