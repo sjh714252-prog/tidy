@@ -156,11 +156,26 @@ let movedPath = null;
   // 무시
   fs.writeFileSync(path.join(DESK, "setup 4.exe"), "");
   await sleep(4000);
+  const hint = await c.locator(".confirm .hint").innerText().catch(() => "");
+  ok(6, "팝업에 건너뜀/무시 차이 안내", /건너뜀 = 이번만/.test(hint) && /무시 = /.test(hint), hint);
   await c.getByRole("button", { name: "무시", exact: true }).click();
   await sleep(2000);
   const st2 = await bridge("get_status");
   ok(6, "무시 → 대기 0, 파일 제자리", st2.pendingCount === 0 && fs.existsSync(path.join(DESK, "setup 4.exe")), `pending=${st2.pendingCount}`);
   await c.close();
+  // 무시한 파일은 설정 ⑥에 보이고, 해제하면 다시 정리 대상
+  const ign = await bridge("list_ignored");
+  ok(6, "무시 목록에 setup 4.exe", ign.some((p) => p.endsWith("setup 4.exe")), JSON.stringify(ign));
+  await main.getByRole("button", { name: "설정", exact: true }).click();
+  await sleep(500);
+  const advHead = main.locator("section[data-section=advanced] button.fold-head");
+  if ((await advHead.getAttribute("aria-expanded")) !== "true") await advHead.click();
+  await sleep(500);
+  const box = main.locator("[data-testid=ignored-files]");
+  ok(6, "설정 ⑥ 무시한 파일 1개 표시", /1개/.test(await box.innerText()) && /setup 4\.exe/.test(await box.innerText()));
+  await box.getByRole("button", { name: "해제" }).first().click();
+  await sleep(500);
+  ok(6, "해제 → 목록 비움", /없음/.test(await box.innerText()) && (await bridge("list_ignored")).length === 0);
 }
 
 // 7. quiet mode + queue bulk actions
