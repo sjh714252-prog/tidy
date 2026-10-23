@@ -55,7 +55,7 @@ pub struct SettingsPatch {
 /// every other key and all comments as they are (`toml_edit`).
 /// Only the settings file is written; user files are never touched here.
 pub fn write_settings(path: &Path, patch: &SettingsPatch) -> Result<(), ConfigError> {
-    use toml_edit::{value, ArrayOfTables, DocumentMut, Item, Table};
+    use toml_edit::{value, Array, ArrayOfTables, DocumentMut, Item, Table};
 
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
@@ -115,6 +115,13 @@ pub fn write_settings(path: &Path, patch: &SettingsPatch) -> Result<(), ConfigEr
             .filter(|r| !r.as_os_str().is_empty())
         {
             t.insert("organize_root", value(r.to_string_lossy().into_owned()));
+        }
+        if !w.exclude.is_empty() {
+            let mut ex = Array::new();
+            for e in &w.exclude {
+                ex.push(e.to_string_lossy().into_owned());
+            }
+            t.insert("exclude", value(ex));
         }
         watches.push(t);
     }
@@ -586,6 +593,10 @@ pub struct WatchRoot {
     /// `collect` mode: the folder the category folders are made under
     /// (`{root}` and relative rule destinations).
     pub organize_root: Option<PathBuf>,
+    /// Sub-folders left alone entirely (SPEC §14.5): nothing inside them
+    /// is classified, moved, proposed by a plan or counted by a preview.
+    /// They are still indexed for search.
+    pub exclude: Vec<PathBuf>,
 }
 
 /// Where a watch folder's files go (SPEC §14.1).
@@ -621,6 +632,7 @@ struct RawWatchRoot {
     poll_only: bool,
     mode: OrganizeMode,
     organize_root: Option<PathBuf>,
+    exclude: Vec<PathBuf>,
 }
 
 impl Default for RawWatchRoot {
@@ -636,6 +648,7 @@ impl Default for RawWatchRoot {
             poll_only: false,
             mode: OrganizeMode::InPlace,
             organize_root: None,
+            exclude: Vec::new(),
         }
     }
 }
@@ -652,6 +665,7 @@ impl From<RawWatchRoot> for WatchRoot {
             poll_only: r.poll_only,
             mode: r.mode,
             organize_root: r.organize_root,
+            exclude: r.exclude,
         }
     }
 }
@@ -668,6 +682,7 @@ impl Default for WatchRoot {
             poll_only: false,
             mode: OrganizeMode::InPlace,
             organize_root: None,
+            exclude: Vec::new(),
         }
     }
 }
@@ -1097,12 +1112,31 @@ impl Config {
         }
     }
 
+    /// Name globs (`[classify] ignore_globs`) plus every watch folder's
+    /// `exclude` sub-folders: what the watcher, previews and plans skip.
+    pub fn ignore_filter(
+        &self,
+    ) -> Result<crate::watcher::IgnoreFilter, crate::watcher::WatchError> {
+        let dirs: Vec<PathBuf> = self
+            .watches
+            .iter()
+            .flat_map(|w| w.exclude.iter().cloned())
+            .collect();
+        Ok(crate::watcher::IgnoreFilter::new(&self.classify.ignore_globs)?.with_dirs(dirs))
+    }
+
     pub fn from_toml(text: &str) -> Result<Self, toml::de::Error> {
         let mut cfg: Config = toml::from_str(text)?;
         for w in &mut cfg.watches {
             w.path = expand_home(&w.path);
             if let Some(r) = &w.organize_root {
                 w.organize_root = Some(expand_home(r));
+            }
+            // Relative excludes are sub-folders of the watch folder.
+            let base = w.path.clone();
+            for e in &mut w.exclude {
+                let x = expand_home(e);
+                *e = if x.is_relative() { base.join(x) } else { x };
             }
         }
         if let Some(v) = &cfg.security.vault_dir {
@@ -1158,6 +1192,15 @@ impl Config {
                     "감시 폴더가 네트워크 위치로 보입니다: {} — kind = \"network\"로 두면 폴링·복사-검증 이동을 씁니다.",
                     w.path.display()
                 ));
+            }
+            for e in &w.exclude {
+                if !e.starts_with(&w.path) {
+                    out.push(format!(
+                        "{}: 제외 폴더 {}가 이 감시 폴더 안에 있지 않습니다 — 효과가 없습니다.",
+                        w.path.display(),
+                        e.display()
+                    ));
+                }
             }
             if w.mode == OrganizeMode::Collect
                 && w.organize_root

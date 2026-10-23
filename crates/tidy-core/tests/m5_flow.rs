@@ -36,7 +36,14 @@ fn report_plan_apply_history_undo() {
          [[rule]]\nname = \"사진\"\nmatch = {{ ext = [\"png\"] }}\ndest = \"{b}/사진\"\n"
     ))
     .unwrap();
-    let plan = restructure::plan_from_rules(&desk, &rules, false, &[], &[]).unwrap();
+    let plan = restructure::plan_from_rules(
+        &desk,
+        &rules,
+        false,
+        &tidy_core::watcher::IgnoreFilter::new(&[]).unwrap(),
+        &[],
+    )
+    .unwrap();
     assert_eq!(plan.moves.len(), 3); // root-level files only (not recursive)
     let plan = restructure::save(&store, plan).unwrap();
 

@@ -242,6 +242,8 @@ fn list(root: &PollRoot, filter: &IgnoreFilter) -> Option<Listing> {
         .min_depth(1)
         .max_depth(depth)
         .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| !filter.in_excluded_dir(e.path()))
     {
         match entry {
             Ok(e) if e.file_type().is_file() && !filter.is_ignored(e.path()) => {

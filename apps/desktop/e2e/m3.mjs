@@ -236,6 +236,46 @@ let movedPath = null;
   await main.screenshot({ path: `${SHOT}/11-hotkey.png` });
 }
 
+// 12. exclude sub-folders (M10.5): files inside stay put, config has `exclude`, UI chip removes it
+{
+  await main.getByRole("button", { name: "설정", exact: true }).click();
+  await sleep(500);
+  const EX1 = path.join(DESK, "작업중");
+  const EX2 = path.join(DESK, "보관");
+  fs.mkdirSync(EX1, { recursive: true });
+  fs.mkdirSync(EX2, { recursive: true });
+  // recursive on so the sub-folder would otherwise be organized
+  await main.locator(".settings tbody tr").first().locator("input[type=checkbox]").first().check();
+  const exRow = main.locator("tr.exclude-row").first();
+  process.env.PROMPT_ANSWER = EX1;
+  await exRow.getByRole("button", { name: "제외 폴더 추가…" }).click();
+  await sleep(200);
+  process.env.PROMPT_ANSWER = EX2;
+  await exRow.getByRole("button", { name: "제외 폴더 추가…" }).click();
+  await sleep(200);
+  ok(12, "제외 폴더 2개 칩 표시", (await exRow.locator(".chip").count()) === 2, await exRow.innerText());
+  await main.getByRole("button", { name: "저장", exact: true }).click();
+  await sleep(2500);
+  const cfg = fs.readFileSync(path.join(T, "config.toml"), "utf8");
+  ok(12, "config.toml에 exclude 두 항목", /exclude\s*=\s*\[[^\]]*작업중[^\]]*보관/.test(cfg), cfg.split("\n").filter((l) => /exclude/.test(l)).join(" | "));
+  await main.getByRole("button", { name: "활동" }).click();
+  fs.writeFileSync(path.join(EX1, "tidy-test 제외.txt"), "x");
+  fs.writeFileSync(path.join(EX2, "tidy-test 제외2.txt"), "x");
+  fs.writeFileSync(path.join(DESK, "tidy-test 포함.txt"), "x");
+  await sleep(5000);
+  ok(12, "제외 폴더 안 파일은 그대로", fs.existsSync(path.join(EX1, "tidy-test 제외.txt")) && fs.existsSync(path.join(EX2, "tidy-test 제외2.txt")));
+  ok(12, "제외 밖 파일은 이동", !fs.existsSync(path.join(DESK, "tidy-test 포함.txt")));
+  // remove one via the chip's × and save → config keeps the other only
+  await main.getByRole("button", { name: "설정", exact: true }).click();
+  await sleep(500);
+  await main.locator("tr.exclude-row").first().getByRole("button", { name: `제외 해제 ${EX1}` }).click();
+  await main.getByRole("button", { name: "저장", exact: true }).click();
+  await sleep(2500);
+  const cfg2 = fs.readFileSync(path.join(T, "config.toml"), "utf8");
+  ok(12, "칩 × → 저장 → 하나만 남음", !/작업중/.test(cfg2) && /보관/.test(cfg2), cfg2.split("\n").filter((l) => /exclude/.test(l)).join(" | "));
+  await main.screenshot({ path: `${SHOT}/12-exclude.png` });
+}
+
 fs.writeFileSync(path.join(process.env.S, "m3-results.json"), JSON.stringify(results, null, 2));
 await browser.close();
 const fails = results.filter((r) => !r.pass).length;

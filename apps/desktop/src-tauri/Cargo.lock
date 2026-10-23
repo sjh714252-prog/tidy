@@ -5242,7 +5242,7 @@ dependencies = [
 
 [[package]]
 name = "tidy-core"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5279,7 +5279,7 @@ dependencies = [
 
 [[package]]
 name = "tidy-desktop"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "dirs 6.0.0",
  "dunce",
