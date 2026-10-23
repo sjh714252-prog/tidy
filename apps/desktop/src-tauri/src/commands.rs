@@ -584,7 +584,10 @@ fn resolve_one(
     let inner = state.lock_inner();
     let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
     let idx = IndexOptions::from_config(&inner.cfg);
-    let r = resolve(mover, id, decision, batch, Some(&idx)).map_err(|e| e.to_string())?;
+    let r = resolve(mover, id, decision, batch, Some(&idx)).map_err(|e| {
+        tracing::warn!(id, error = %e, "pending resolve failed");
+        e.user_message()
+    })?;
     Ok(match r {
         Resolution::Moved {
             src, dst, batch_id, ..

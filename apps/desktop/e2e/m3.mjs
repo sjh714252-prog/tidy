@@ -139,6 +139,20 @@ let movedPath = null;
   await c.getByRole("button", { name: "다른 곳…", exact: true }).click();
   await sleep(2500);
   ok(6, "다른 곳… → 다른 곳/setup 3.exe", fs.existsSync(path.join(T, "다른 곳", "setup 3.exe")));
+  // 옮길 수 없는 곳(파일인 경로) → 오류가 팝업에 남고 항목은 대기열에 그대로
+  fs.writeFileSync(path.join(DESK, "setup 3b.exe"), "");
+  await sleep(4000);
+  const blocker = path.join(T, "막힌 곳");
+  fs.writeFileSync(blocker, "not a dir");
+  process.env.PROMPT_ANSWER = blocker;
+  await c.getByRole("button", { name: "다른 곳…", exact: true }).click();
+  await sleep(2500);
+  const errTxt = await c.locator(".confirm .error").innerText().catch(() => "");
+  const stErr = await bridge("get_status");
+  ok(6, "이동 실패 → 팝업에 이유 표시 + 대기열 유지", /옮기지 못했습니다|옮길 수 없습니다/.test(errTxt) && stErr.pendingCount === 1 && fs.existsSync(path.join(DESK, "setup 3b.exe")), `err="${errTxt.slice(0, 80)}" pending=${stErr.pendingCount}`);
+  await c.screenshot({ path: `${SHOT}/06-confirm-error.png` });
+  await c.getByRole("button", { name: "건너뜀", exact: true }).click();
+  await sleep(2000);
   // 무시
   fs.writeFileSync(path.join(DESK, "setup 4.exe"), "");
   await sleep(4000);
