@@ -173,11 +173,21 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "set_paused" => ok(commands::set_paused(app, arg(&args, "paused")?).await?),
         "index_now" => ok(commands::index_now(app).await?),
         "show_window" => ok(commands::show_window(app, arg(&args, "which")?).await?),
-        "search" => ok(commands::search(app, arg(&args, "query")?, arg(&args, "limit")?).await?),
+        "search" => ok(commands::search(
+            app,
+            arg(&args, "query")?,
+            arg(&args, "limit")?,
+            arg(&args, "customer")?,
+        )
+        .await?),
         // M7: semantic search.
-        "search_semantic" => {
-            ok(commands::search_semantic(app, arg(&args, "query")?, arg(&args, "limit")?).await?)
-        }
+        "search_semantic" => ok(commands::search_semantic(
+            app,
+            arg(&args, "query")?,
+            arg(&args, "limit")?,
+            arg(&args, "customer")?,
+        )
+        .await?),
         "semantic_status" => ok(commands::semantic_status(app).await?),
         // M8: wizard, rule editor, folder tree.
         "wizard_info" => ok(onboarding::wizard_info(app).await?),
@@ -257,19 +267,22 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "save_curate_settings" => {
             ok(context_cmds::save_curate_settings(app, arg(&args, "settings")?).await?)
         }
-        "curate_estimate" => {
+        "curate_estimate" => ok(context_cmds::curate_estimate(app, arg(&args, "path")?).await?),
+        "plan_context" => {
             ok(
-                context_cmds::curate_estimate(app, arg(&args, "path")?, arg(&args, "recursive")?)
+                context_cmds::plan_context(app, arg(&args, "path")?, arg(&args, "protect")?)
                     .await?,
             )
         }
-        "plan_context" => ok(context_cmds::plan_context(
+        "split_context_folder" => ok(context_cmds::split_context_folder(
             app,
-            arg(&args, "path")?,
-            arg(&args, "recursive")?,
-            arg(&args, "protect")?,
+            arg(&args, "id")?,
+            arg(&args, "moveId")?,
+            arg(&args, "selected")?,
         )
         .await?),
+        "customer_overview" => ok(context_cmds::customer_overview(app).await?),
+        "customer_names" => ok(context_cmds::customer_names(app).await?),
         "edit_context_move" => ok(context_cmds::edit_context_move(
             app,
             arg(&args, "id")?,
