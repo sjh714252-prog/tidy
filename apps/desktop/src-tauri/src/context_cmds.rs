@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
-use tidy_core::watcher::IgnoreFilter;
 use tidy_core::classify::{AiClassifier, Anchors, RuleSet};
 use tidy_core::config::{write_curate_settings, CuratePatch};
 use tidy_core::curate::{
@@ -15,6 +14,7 @@ use tidy_core::curate::{
 };
 use tidy_core::report::restructure;
 use tidy_core::store::Store;
+use tidy_core::watcher::IgnoreFilter;
 use tidy_core::Config;
 
 use crate::commands::{blocking, CmdResult};
