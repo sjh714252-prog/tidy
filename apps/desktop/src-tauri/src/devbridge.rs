@@ -223,6 +223,8 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
             Err("dev bridge: 폴더 선택 창을 열 수 없습니다 — 경로를 직접 입력하세요".into())
         }
         "get_settings" => ok(commands::get_settings(app).await?),
+        "list_ignored" => ok(commands::list_ignored(app).await?),
+        "unignore" => ok(commands::unignore(app, arg(&args, "path")?).await?),
         "check_rules" => ok(commands::check_rules(arg(&args, "text")?).await?),
         "save_settings" => ok(commands::save_settings(app, arg(&args, "args")?).await?),
         // M6: network folder detection for "폴더 추가".

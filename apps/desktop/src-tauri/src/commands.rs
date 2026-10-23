@@ -193,6 +193,39 @@ pub async fn set_paused(app: AppHandle, paused: bool) -> CmdResult<StatusDto> {
     .await
 }
 
+/// Files the user chose "무시" for (confirm popup / queue).
+#[tauri::command]
+pub async fn list_ignored(app: AppHandle) -> CmdResult<Vec<String>> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let inner = state.lock_inner();
+        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        Ok(mover
+            .store()
+            .list_ignored()
+            .map_err(|e| e.to_string())?
+            .iter()
+            .map(|p| s(p))
+            .collect())
+    })
+    .await
+}
+
+/// Take a file off the ignore list; it is organised again from now on.
+#[tauri::command]
+pub async fn unignore(app: AppHandle, path: String) -> CmdResult<bool> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let inner = state.lock_inner();
+        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        mover
+            .store()
+            .remove_ignored(Path::new(&path))
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn index_now(app: AppHandle) -> CmdResult<()> {
     watch::spawn_index(&app);

@@ -122,6 +122,8 @@ pub fn run() {
             commands::get_status,
             commands::set_paused,
             commands::index_now,
+            commands::list_ignored,
+            commands::unignore,
             commands::show_window,
             commands::search,
             commands::search_semantic,

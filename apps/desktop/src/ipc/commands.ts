@@ -146,6 +146,9 @@ export const fsRoots = () => invoke<FsRoot[]>("fs_roots");
 export const listDirs = (path: string) => invoke<DirEntry[]>("list_dirs", { path });
 export const makeDir = (parent: string, name: string) => invoke<string>("make_dir", { parent, name });
 export const openWizard = () => invoke<void>("open_wizard");
+/** Files the user chose "무시" for; `unignore` puts one back under organizing. */
+export const listIgnored = () => invoke<string[]>("list_ignored");
+export const unignore = (path: string) => invoke<boolean>("unignore", { path });
 
 // ── M11 home / help ──
 export const watchOverview = (refresh = false) => invoke<Overview>("watch_overview", { refresh });

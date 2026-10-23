@@ -705,6 +705,23 @@ impl Store {
         Ok(())
     }
 
+    /// Every ignored path, newest first.
+    pub fn list_ignored(&self) -> Result<Vec<PathBuf>, StoreError> {
+        let mut st = self
+            .conn
+            .prepare("SELECT path FROM ignored ORDER BY added_at DESC, path")?;
+        let rows = st.query_map([], |r| r.get::<_, String>(0))?;
+        Ok(rows.filter_map(Result::ok).map(PathBuf::from).collect())
+    }
+
+    /// Organise this path again (settings "무시 해제").
+    pub fn remove_ignored(&self, path: &Path) -> Result<bool, StoreError> {
+        let n = self
+            .conn
+            .execute("DELETE FROM ignored WHERE path = ?1", [path_str(path)?])?;
+        Ok(n > 0)
+    }
+
     pub fn is_ignored(&self, path: &Path) -> Result<bool, StoreError> {
         Ok(self
             .conn

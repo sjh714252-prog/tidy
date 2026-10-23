@@ -1,4 +1,4 @@
-import { Fragment, useEffect } from "react";
+import { Fragment, useEffect, useState } from "react";
 import * as ipc from "../ipc/commands";
 import { useSettings } from "../store/settings";
 import { useStatus } from "../store/status";
@@ -339,6 +339,7 @@ export function SettingsView() {
         </label>
         <p className="muted small">설정 파일: {draft.configPath}</p>
         <button onClick={() => void ipc.openWizard()}>마법사 다시 실행</button>
+        <IgnoredFiles />
       </Section>
 
       <footer className="savebar">
@@ -366,6 +367,46 @@ export function SettingsView() {
           {s.saving || ai.busy || sec.busy || cur.busy ? "저장 중…" : "저장"}
         </button>
       </footer>
+    </div>
+  );
+}
+
+/** Files marked "무시" in the confirm popup / queue, with a way back. */
+function IgnoredFiles() {
+  const [files, setFiles] = useState<string[] | null>(null);
+  const load = async () => setFiles(await ipc.listIgnored().catch(() => []));
+  useEffect(() => {
+    void load();
+  }, []);
+  if (!files) return null;
+  return (
+    <div className="ignored-files" data-testid="ignored-files">
+      <h4>
+        무시한 파일 <span className="muted small">({files.length}개)</span>
+      </h4>
+      <p className="muted small">
+        확인 팝업·확인 대기에서 "무시"를 누른 파일입니다. 다시 정리 대상으로 돌리려면 "해제"를 누르세요.
+      </p>
+      {files.length === 0 ? (
+        <p className="muted small">없음</p>
+      ) : (
+        <ul>
+          {files.map((f) => (
+            <li key={f}>
+              <span title={f}>{f}</span>{" "}
+              <button
+                className="link"
+                onClick={async () => {
+                  await ipc.unignore(f);
+                  await load();
+                }}
+              >
+                해제
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
