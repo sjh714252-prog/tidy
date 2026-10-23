@@ -15,6 +15,7 @@
 //   GET  /stats                {calls, texts, chats, fail}
 
 import http from 'node:http';
+import { pathToFileURL } from 'node:url';
 
 const PORT = Number(process.argv[2] || process.env.FAKE_EMBED_PORT || 18080);
 const DIM = 256;
@@ -75,7 +76,7 @@ export function curateAnswer(user) {
   return { files };
 }
 
-const CONTEXT_ANSWER = {
+export const CONTEXT_ANSWER = {
   entities: [
     { name: '가람정보', aliases: ['GARA'], files: 3, reason: '파일 이름에 자주 나옴' },
     { name: '하늘통신', aliases: ['SKY'], files: 2, reason: '파일 이름에 자주 나옴' },
@@ -164,4 +165,7 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(PORT, '127.0.0.1', () => console.log(`fake OpenAI API on http://127.0.0.1:${PORT}/v1`));
+// Only when run directly (fake-llm.mjs imports the answer helpers).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  server.listen(PORT, '127.0.0.1', () => console.log(`fake OpenAI API on http://127.0.0.1:${PORT}/v1`));
+}

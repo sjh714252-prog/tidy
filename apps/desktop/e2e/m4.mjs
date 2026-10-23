@@ -65,7 +65,7 @@ await sleep(1000);
   await ai.locator("label.row", { hasText: "AI 사용" }).locator("input[type=checkbox]").check();
   // Issue #8: unsaved AI edits survive a tab round-trip (dialog: stay / leave) …
   // (the page-level dialog handler accepts the "leave without saving?" confirm)
-  await main.getByRole("button", { name: "활동" }).click();
+  await main.locator(".topbar nav").getByRole("button", { name: "홈" }).click();
   await sleep(300);
   await main.getByRole("button", { name: "설정", exact: true }).click();
   await sleep(800);
@@ -107,7 +107,7 @@ await sleep(1000);
 // C. Rule 4: with AI enabled but unreachable, rules still move files, and a
 //    no-rule file is reported (no hang) within a few seconds.
 {
-  await main.getByRole("button", { name: "활동" }).click();
+  await main.locator(".topbar nav").getByRole("button", { name: "홈" }).click();
   await main.locator("label", { hasText: "규칙 없는 파일 숨기기" }).locator("input").uncheck();
   fs.writeFileSync(path.join(DESK, "tidy-test ai폴백.txt"), "AI 없이도 규칙으로");
   fs.writeFileSync(path.join(DESK, "무규칙.unknownext"), "no rule");
@@ -136,7 +136,7 @@ await sleep(1000);
   ok("D", "같은 폴더로 3회 이동", moved === 3, `moved=${moved}`);
   await c.close();
 
-  await main.getByRole("button", { name: "대기열" }).click();
+  await main.locator(".topbar nav").getByRole("button", { name: "확인 대기" }).click();
   await sleep(1500);
   const card = main.locator(".learn-card").first();
   const shown = (await card.count()) > 0;

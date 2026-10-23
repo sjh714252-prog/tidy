@@ -180,7 +180,7 @@ const save = async () => {
 // D. 리포트 → 업무 맥락으로 정리: cost notice, then the preview
 let planId = null;
 {
-  await main.getByRole("button", { name: "리포트" }).click();
+  await main.locator(".topbar nav").getByRole("button", { name: "정리하기" }).click();
   await sleep(800);
   const panel = main.locator(".restructure");
   const btn = panel.locator("[data-testid=curate-plan]");
@@ -252,7 +252,7 @@ const DEST = {
   ok("F", "이동 기록: 한 배치 '업무 맥락'", batches[0]?.label?.includes("업무 맥락") ?? false, batches[0]?.label ?? "");
   await main.screenshot({ path: `${SHOT}/m10-F-applied.png` });
   dialogs.length = 0;
-  await panel.getByRole("button", { name: "이 재구성 되돌리기" }).click();
+  await panel.getByRole("button", { name: "이 정리 되돌리기" }).click();
   await waitFor(() => dialogs.some((d) => /되돌림/.test(d)), 15000);
   const back = Object.keys(FILES).filter((n) => !fs.existsSync(at(n)));
   ok("F", "되돌리기 → 모두 원래 자리", back.length === 0, back.join(", "));
@@ -309,7 +309,7 @@ const DEST = {
   const badges = await section("context").locator("[data-testid=ai-needed]").count();
   ok("H", "③ 업무 맥락 비활성 + 'AI 필요' 배지", extractOff && badges >= 1, `extractDisabled=${extractOff} badges=${badges}`);
   ok("H", "규칙 'AI로 규칙 만들기' 비활성", await main.getByRole("button", { name: "AI로 규칙 만들기" }).isDisabled());
-  await main.getByRole("button", { name: "리포트" }).click();
+  await main.locator(".topbar nav").getByRole("button", { name: "정리하기" }).click();
   await sleep(800);
   const panel = main.locator(".restructure");
   if (await panel.getByRole("button", { name: "닫기" }).count()) await panel.getByRole("button", { name: "닫기" }).click();
