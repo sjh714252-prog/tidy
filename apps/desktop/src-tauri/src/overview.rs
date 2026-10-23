@@ -28,8 +28,17 @@ struct Cache {
     /// Watches + rules the counts were made for.
     key: String,
     at: Option<Instant>,
-    counts: HashMap<PathBuf, Backlog>,
+    counts: HashMap<PathBuf, Counts>,
     computing: bool,
+}
+
+/// Backlog of files + (M12) new sub-folders (folder items) and those
+/// still being copied.
+#[derive(Debug, Clone, Default)]
+struct Counts {
+    files: Backlog,
+    new_folders: usize,
+    settling: usize,
 }
 
 static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
@@ -52,15 +61,22 @@ pub struct BacklogDto {
     pub no_rule: usize,
     pub total: usize,
     pub capped: bool,
+    /// (M12) Sub-folders to organize as whole items ("새 폴더 N개").
+    pub new_folders: usize,
+    /// (M12) Sub-folders still changing (copy / unpack): not offered yet.
+    pub settling: usize,
 }
 
-impl From<&Backlog> for BacklogDto {
-    fn from(b: &Backlog) -> Self {
+impl From<&Counts> for BacklogDto {
+    fn from(c: &Counts) -> Self {
+        let b = &c.files;
         Self {
             to_move: b.to_move,
             no_rule: b.no_rule,
             total: b.total(),
             capped: b.capped,
+            new_folders: c.new_folders,
+            settling: c.settling,
         }
     }
 }
@@ -90,6 +106,8 @@ pub struct OverviewDto {
     /// Sum over counted folders (to_move + no_rule).
     pub total: usize,
     pub capped: bool,
+    /// (M12) New sub-folders over all watch folders.
+    pub new_folders: usize,
     /// AI on and at least one customer in the context dictionary: offer
     /// "업무 맥락으로 정리" next to the rules preview.
     pub can_curate: bool,
@@ -195,6 +213,11 @@ pub fn overview(app: &AppHandle, refresh: bool) -> OverviewDto {
         .filter_map(|f| f.backlog.as_ref())
         .map(|b| b.total)
         .sum();
+    let new_folders = folders
+        .iter()
+        .filter_map(|f| f.backlog.as_ref())
+        .map(|b| b.new_folders)
+        .sum();
     let capped = folders
         .iter()
         .filter_map(|f| f.backlog.as_ref())
@@ -214,6 +237,7 @@ pub fn overview(app: &AppHandle, refresh: bool) -> OverviewDto {
         capped,
         can_curate,
         cap: BACKLOG_CAP,
+        new_folders,
     }
 }
 
@@ -233,11 +257,36 @@ fn spawn_count(
                 .ignore_filter()
                 .unwrap_or_else(|_| tidy_core::watcher::IgnoreFilter::new(&[]).unwrap());
             let skip = organize_roots(&watches);
+            // (M12) New sub-folders = folder items of a work-context run.
+            let cur = tidy_core::curate::Curator::from_config(&cfg).ok();
+            let store = tidy_core::store::Store::open(&cfg.store.db_path()).ok();
+            let now = std::time::SystemTime::now();
             let mut counts = HashMap::new();
             for w in watches.iter().filter(|w| w.kind == RootKind::Local) {
+                let files = backlog(w, &rules, &filter, &skip, BACKLOG_CAP);
+                let (new_folders, settling) = match &cur {
+                    Some(cur) => {
+                        let skip_dirs = tidy_core::curate::skip_dirs(&cfg, &rules, w.anchor());
+                        let (units, unsettled) = cur.folder_units(
+                            &w.path,
+                            w.anchor(),
+                            &filter,
+                            &cfg.report.protected,
+                            &skip_dirs,
+                            store.as_ref(),
+                            now,
+                        );
+                        (units.len(), unsettled.len())
+                    }
+                    None => (0, 0),
+                };
                 counts.insert(
                     w.path.clone(),
-                    backlog(w, &rules, &filter, &skip, BACKLOG_CAP),
+                    Counts {
+                        files,
+                        new_folders,
+                        settling,
+                    },
                 );
             }
             {

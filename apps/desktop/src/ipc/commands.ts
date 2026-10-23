@@ -35,6 +35,7 @@ import type {
   ContextEdit,
   ContextSuggestion,
   CurateEstimate,
+  CustomerStat,
   CurateSettings,
   MoveEdit,
   SemanticStatus,
@@ -49,11 +50,12 @@ export const indexNow = () => invoke<void>("index_now");
 /** "search" | "main" | "main:<tab>" | "confirm" */
 export const showWindow = (which: string) => invoke<void>("show_window", { which });
 
-export const search = (query: string, limit = 50) =>
-  invoke<SearchHit[]>("search", { query, limit });
+/** (M12) `customer`: only that customer's folders. */
+export const search = (query: string, limit = 50, customer: string | null = null) =>
+  invoke<SearchHit[]>("search", { query, limit, customer });
 /** Words + meaning; falls back to words only (with a note) without a model. */
-export const searchSemantic = (query: string, limit = 50) =>
-  invoke<SearchResult>("search_semantic", { query, limit });
+export const searchSemantic = (query: string, limit = 50, customer: string | null = null) =>
+  invoke<SearchResult>("search_semantic", { query, limit, customer });
 export const semanticStatus = () => invoke<SemanticStatus>("semantic_status");
 /** Opens with the default app. For a vault zip (M9) a temporary decrypted
  * copy is opened instead and its path returned. */
@@ -108,11 +110,16 @@ export const planAi = (path: string, protect: string[]) => invoke<PlanResult>("p
 export const getCurateSettings = () => invoke<CurateSettings>("get_curate_settings");
 export const saveCurateSettings = (settings: CurateSettings) =>
   invoke<CurateSettings>("save_curate_settings", { settings });
-export const curateEstimate = (path: string, recursive: boolean) =>
-  invoke<CurateEstimate>("curate_estimate", { path, recursive });
+/** (M12) Sub-folders are whole items: no "include sub-folders" switch. */
+export const curateEstimate = (path: string) => invoke<CurateEstimate>("curate_estimate", { path });
 /** AI analysis → saved plan + preview. Nothing moves. */
-export const planContext = (path: string, recursive: boolean, protect: string[]) =>
-  invoke<PlanResult>("plan_context", { path, recursive, protect });
+export const planContext = (path: string, protect: string[]) =>
+  invoke<PlanResult>("plan_context", { path, protect });
+/** (M12) "이 폴더는 파일별로 나눠서": re-analyze a folder item's files. */
+export const splitContextFolder = (id: number, moveId: number, selected: number[]) =>
+  invoke<ContextEdit>("split_context_folder", { id, moveId, selected });
+export const customerOverview = () => invoke<CustomerStat[]>("customer_overview");
+export const customerNames = () => invoke<string[]>("customer_names");
 export const editContextMove = (id: number, moveId: number, edit: MoveEdit, selected: number[]) =>
   invoke<ContextEdit>("edit_context_move", { id, moveId, edit, selected });
 export const applyContextSuggestions = (suggestions: ContextSuggestion[]) =>

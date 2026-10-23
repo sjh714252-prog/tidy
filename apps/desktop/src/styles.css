@@ -60,7 +60,9 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; }
 
 /* search window */
 .search { display: flex; flex-direction: column; height: 100%; border: 1px solid var(--line); }
-.search-input { font-size: 18px; padding: 12px 14px; border: none; border-bottom: 1px solid var(--line); border-radius: 0; outline: none; }
+.search-bar { display: flex; border-bottom: 1px solid var(--line); }
+.search-input { flex: 1; font-size: 18px; padding: 12px 14px; border: none; border-radius: 0; outline: none; }
+.customer-filter { border: none; border-left: 1px solid var(--line); border-radius: 0; max-width: 160px; }
 .search-body { flex: 1; display: flex; min-height: 0; }
 .results { list-style: none; margin: 0; padding: 0; width: 45%; overflow-y: auto; border-right: 1px solid var(--line); }
 .results li { padding: 6px 12px; cursor: default; border-bottom: 1px solid var(--line); }
@@ -287,3 +289,11 @@ button.update-dot { background: none; border: none; padding: 0; font-size: 12px;
 .ignored-files li { font-size: 13px; padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .confirm .hint { margin: 6px 0 0; }
 .history .bulk-undo { padding: 6px 8px; border-bottom: 1px solid var(--line); }
+
+/* (M12) folder items in a work-context plan */
+.folder-item .path { font-weight: 600; }
+.item-tree { margin: 4px 0 0; padding: 6px 8px; background: var(--bg2); font-size: 12px; max-height: 220px; overflow: auto; white-space: pre; }
+.date-edit { width: 9.5em; }
+.customers { list-style: none; margin: 4px 0 0; padding: 0; }
+.customers li { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; border-bottom: 1px solid var(--line); }
+.customers li button { padding: 0; }

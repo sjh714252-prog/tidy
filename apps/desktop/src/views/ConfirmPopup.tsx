@@ -135,8 +135,13 @@ export function ConfirmPopup() {
         <button className="link" onClick={() => void ipc.showWindow("main:pending")}>
           확인 대기 전체 보기
         </button>
-        <button className="link" onClick={() => void hideCurrentWindow()}>
-          나중에
+        <button
+          className="link"
+          data-testid="popup-defer"
+          title="결정을 미룹니다. 확인 대기 탭에 남습니다."
+          onClick={() => void hideCurrentWindow()}
+        >
+          대기열에 두기
         </button>
       </footer>
     </div>

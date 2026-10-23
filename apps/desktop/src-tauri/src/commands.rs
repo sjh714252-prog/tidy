@@ -311,9 +311,16 @@ fn search_opts(limit: Option<u32>) -> SearchOptions {
 }
 
 #[tauri::command]
-pub async fn search(app: AppHandle, query: String, limit: Option<u32>) -> CmdResult<Vec<HitDto>> {
+pub async fn search(
+    app: AppHandle,
+    query: String,
+    limit: Option<u32>,
+    customer: Option<String>,
+) -> CmdResult<Vec<HitDto>> {
     blocking(move || {
-        let q = Query::parse(&query);
+        let Some(q) = customer_query(&app, &query, customer.as_deref()) else {
+            return Ok(Vec::new());
+        };
         if q.is_empty() {
             return Ok(Vec::new());
         }
@@ -324,6 +331,20 @@ pub async fn search(app: AppHandle, query: String, limit: Option<u32>) -> CmdRes
         Ok(hits.into_iter().map(hit_dto).collect())
     })
     .await
+}
+
+/// (M12) The query, limited to a customer's folders when one is chosen;
+/// `None` when that customer has no folder yet (nothing can match).
+fn customer_query(app: &AppHandle, query: &str, customer: Option<&str>) -> Option<Query> {
+    let mut q = Query::parse(query);
+    if let Some(c) = customer.map(str::trim).filter(|c| !c.is_empty()) {
+        let cfg = app.state::<AppState>().config();
+        q.in_any = tidy_core::curate::customer_dirs(&cfg, c);
+        if q.in_any.is_empty() {
+            return None;
+        }
+    }
+    Some(q)
 }
 
 #[derive(Debug, Serialize)]
@@ -346,9 +367,17 @@ pub async fn search_semantic(
     app: AppHandle,
     query: String,
     limit: Option<u32>,
+    customer: Option<String>,
 ) -> CmdResult<SearchResultDto> {
     blocking(move || {
-        let q = Query::parse(&query);
+        let Some(q) = customer_query(&app, &query, customer.as_deref()) else {
+            return Ok(SearchResultDto {
+                hits: Vec::new(),
+                mode: "fts",
+                natural: false,
+                note: Some("이 고객사의 폴더가 아직 없습니다".into()),
+            });
+        };
         if q.is_empty() {
             return Ok(SearchResultDto {
                 hits: Vec::new(),
