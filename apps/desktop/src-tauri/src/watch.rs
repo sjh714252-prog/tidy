@@ -113,6 +113,7 @@ pub fn signal_stop(app: &AppHandle) {
 /// main-thread APIs (tray text, window show), so joining it from the main
 /// thread could deadlock.
 pub fn restart(app: &AppHandle) {
+    crate::overview::invalidate();
     let app = app.clone();
     std::thread::spawn(move || {
         let _guard = RESTART_LOCK.lock().unwrap_or_else(|e| e.into_inner());

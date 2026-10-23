@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Listener};
 use tiny_http::{Header, Method, Request, Response, Server};
 
-use crate::{commands, context_cmds, onboarding, report_cmds, security_cmds};
+use crate::{about, commands, context_cmds, onboarding, overview, report_cmds, security_cmds};
 
 pub const PORT: u16 = 1421;
 
@@ -32,6 +32,7 @@ const EVENTS: &[&str] = &[
     crate::watch::EV_PROGRESS,
     crate::windows::EV_NAVIGATE,
     crate::windows::EV_FOCUS_SEARCH,
+    crate::overview::EV_ORGANIZE,
 ];
 
 #[derive(Default)]
@@ -281,6 +282,7 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "extract_context" => ok(context_cmds::extract_context(app).await?),
         "context_groups" => ok(context_cmds::context_groups(app).await?),
         "report_roots" => ok(report_cmds::report_roots(app).await?),
+        "organize_target" => ok(report_cmds::organize_target(app, arg(&args, "path")?).await?),
         "build_report" => {
             ok(
                 report_cmds::build_report(app, arg(&args, "path")?, arg(&args, "duplicates")?)
@@ -312,6 +314,17 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "list_batches" => ok(report_cmds::list_batches(app, arg(&args, "limit")?).await?),
         "batch_moves" => ok(report_cmds::batch_moves(app, arg(&args, "batchId")?).await?),
         "undo_batch" => ok(report_cmds::undo_batch(app, arg(&args, "batchId")?).await?),
+        "watch_overview" => ok(overview::watch_overview(
+            app,
+            arg::<Option<bool>>(&args, "refresh")?.unwrap_or(false),
+        )
+        .await?),
+        "about_info" => ok(about::about_info(app).await?),
+        "open_url" => ok(about::open_url(app, arg(&args, "url")?).await?),
+        "open_folder" => ok(about::open_folder(app, arg(&args, "path")?).await?),
+        "check_update" => ok(about::check_update(app).await?),
+        // Test-only: what open_url / open_folder recorded (TIDY_E2E_NO_OPEN).
+        "debug_opened" => ok(about::opened()),
         other => Err(format!("unknown command {other}")),
     }
 }
