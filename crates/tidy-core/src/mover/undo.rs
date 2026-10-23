@@ -48,6 +48,18 @@ impl Mover {
         Ok(report)
     }
 
+    /// Undo every finished move since `since` (unix seconds), newest first;
+    /// `auto_only` = only rule/AI moves (watch-time automation), not the
+    /// user's own confirmations. One report for all of them.
+    pub fn undo_since(&self, since: i64, auto_only: bool) -> Result<UndoReport, MoverError> {
+        let entries = self.store.active_moves_since(since, auto_only)?;
+        let mut report = UndoReport::default();
+        for e in entries {
+            self.undo_entry(e, &mut report)?;
+        }
+        Ok(report)
+    }
+
     /// Undo a single `move_log` row.
     pub fn undo_one(&self, log_id: i64) -> Result<UndoReport, MoverError> {
         let mut report = UndoReport::default();

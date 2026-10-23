@@ -286,3 +286,4 @@ button.update-dot { background: none; border: none; padding: 0; font-size: 12px;
 .ignored-files ul { list-style: none; padding: 0; margin: 4px 0; }
 .ignored-files li { font-size: 13px; padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .confirm .hint { margin: 6px 0 0; }
+.history .bulk-undo { padding: 6px 8px; border-bottom: 1px solid var(--line); }

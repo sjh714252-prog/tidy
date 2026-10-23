@@ -18,6 +18,25 @@ export function HistoryView() {
     if (open) void ipc.batchMoves(open).then(setMoves);
   }, [open]);
 
+  // Bulk undo: everything rule/AI moved in the last N hours (one click after
+  // an automatic run went wrong, e.g. a project folder split file by file).
+  const [bulkHours, setBulkHours] = useState(1);
+  const [bulkCount, setBulkCount] = useState<number | null>(null);
+  useEffect(() => {
+    void ipc.countMovesSince(bulkHours * 3600, true).then(setBulkCount).catch(() => setBulkCount(null));
+  }, [bulkHours, batches]);
+  const undoBulk = async () => {
+    if (!bulkCount) return;
+    if (!window.confirm(`최근 ${bulkHours}시간 동안 규칙·AI가 자동으로 옮긴 ${bulkCount}개를 전부 원래 자리로 되돌릴까요? (직접 확인해서 옮긴 것은 그대로 둡니다)`)) return;
+    try {
+      const r = await ipc.undoSince(bulkHours * 3600, true);
+      setMsg(`${r.restored.length}개 되돌림` + (r.conflicts.length ? ` · 충돌 ${r.conflicts.length}개: ${r.conflicts.slice(0, 3).join("; ")}` : ""));
+      refresh();
+    } catch (e) {
+      setMsg(String(e));
+    }
+  };
+
   const undo = async (b: BatchSummary) => {
     if (!window.confirm(`${BY[b.decided_by] ?? b.decided_by} 이동 ${b.moves - b.undone}개를 원래 자리로 되돌릴까요?`)) return;
     try {
@@ -40,6 +59,19 @@ export function HistoryView() {
         <button className="link" onClick={refresh}>
           새로고침
         </button>
+      </div>
+      <div className="bulk-undo" data-testid="bulk-undo">
+        <span>자동 이동 한꺼번에 되돌리기:</span>{" "}
+        <select value={bulkHours} onChange={(e) => setBulkHours(Number(e.target.value))} aria-label="되돌릴 기간">
+          <option value={1}>최근 1시간</option>
+          <option value={3}>최근 3시간</option>
+          <option value={24}>최근 24시간</option>
+          <option value={24 * 7}>최근 7일</option>
+        </select>{" "}
+        <button disabled={!bulkCount} onClick={() => void undoBulk()}>
+          {bulkCount == null ? "…" : `규칙·AI 이동 ${bulkCount}개 되돌리기`}
+        </button>
+        <span className="muted small"> — 직접 확인해서 옮긴 것은 건드리지 않습니다</span>
       </div>
       {msg && <div className="notice">{msg}</div>}
       {batches.length === 0 ? (
