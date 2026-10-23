@@ -254,3 +254,32 @@ fieldset:disabled { opacity: 0.55; }
 .suggestions ul { list-style: none; padding: 0; margin: 4px 0; }
 .exclude-row .chip { margin: 0 4px 0 0; }
 .exclude-row button.small { font-size: 12px; padding: 1px 8px; }
+
+/* M11: status bar summary, help menu, about window, home cards */
+.statusbar { align-items: center; gap: 10px; }
+.sb-group { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40vw; }
+.sb-sep { color: var(--line); }
+button.sb-summary { background: none; border: none; padding: 0; font-size: 12px; color: var(--fg); cursor: pointer; }
+button.sb-summary:hover { color: var(--accent); text-decoration: underline; }
+.sb-err { max-width: 30vw; }
+button.update-dot { background: none; border: none; padding: 0; font-size: 12px; color: var(--accent); cursor: pointer; }
+.help-menu { position: relative; }
+.help-menu .menu { position: absolute; right: 0; top: 100%; margin-top: 4px; z-index: 30; display: flex; flex-direction: column;
+  min-width: 160px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.15); padding: 4px; }
+.help-menu .menu button { background: none; border: none; text-align: left; padding: 6px 10px; border-radius: 4px; }
+.help-menu .menu button:hover { background: var(--bg2); }
+.modal-back { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 50; }
+.modal { background: var(--bg); color: var(--fg); border-radius: 10px; padding: 14px 18px; width: min(560px, 92vw); max-height: 90vh; overflow: auto; box-shadow: 0 8px 30px rgba(0,0,0,.3); }
+.modal header { gap: 12px; display: flex; align-items: center; }
+.modal h2 { margin: 0; font-size: 18px; }
+.grid.kv th { width: 90px; white-space: nowrap; }
+.grid.kv td.path { max-width: 380px; white-space: normal; word-break: break-all; }
+.update-box { margin-top: 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.home-card { margin: 10px 16px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg2); }
+.home-card p { margin: 0 0 6px; }
+.backlog-list { list-style: none; padding: 0; margin: 0; }
+.backlog-list li { display: flex; align-items: center; gap: 6px; margin: 4px 0; flex-wrap: wrap; }
+.backlog-list .path { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.watch-panel .grid td.path { max-width: 280px; }
+.no-move { margin: 6px 0; }
+.abs-dest { margin: 4px 0; }

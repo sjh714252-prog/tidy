@@ -1,6 +1,9 @@
 // Typed wrappers for every Tauri command (src-tauri/src/commands.rs).
 import { inTauri, invoke } from "./transport";
 import type {
+  AboutInfo,
+  Overview,
+  UpdateResult,
   AiSettings,
   ApplyResult,
   BatchResult,
@@ -94,6 +97,8 @@ export const acceptLearn = (key: string) => invoke<void>("accept_learn", { key }
 export const dismissLearn = (key: string) => invoke<void>("dismiss_learn", { key });
 
 export const reportRoots = () => invoke<string[]>("report_roots");
+/** (M11) The "모으기" root `path` is in (organizing there re-moves results). */
+export const organizeTarget = (path: string) => invoke<string | null>("organize_target", { path });
 export const buildReport = (path: string, duplicates: boolean) =>
   invoke<Report>("build_report", { path, duplicates });
 export const planRules = (path: string, recursive: boolean, protect: string[]) =>
@@ -141,3 +146,10 @@ export const fsRoots = () => invoke<FsRoot[]>("fs_roots");
 export const listDirs = (path: string) => invoke<DirEntry[]>("list_dirs", { path });
 export const makeDir = (parent: string, name: string) => invoke<string>("make_dir", { parent, name });
 export const openWizard = () => invoke<void>("open_wizard");
+
+// ── M11 home / help ──
+export const watchOverview = (refresh = false) => invoke<Overview>("watch_overview", { refresh });
+export const aboutInfo = () => invoke<AboutInfo>("about_info");
+export const openUrl = (url: string) => invoke<void>("open_url", { url });
+export const openFolder = (path: string) => invoke<void>("open_folder", { path });
+export const checkUpdate = () => invoke<UpdateResult>("check_update");

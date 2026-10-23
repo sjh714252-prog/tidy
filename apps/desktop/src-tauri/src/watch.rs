@@ -113,6 +113,7 @@ pub fn signal_stop(app: &AppHandle) {
 /// main-thread APIs (tray text, window show), so joining it from the main
 /// thread could deadlock.
 pub fn restart(app: &AppHandle) {
+    crate::overview::invalidate();
     let app = app.clone();
     std::thread::spawn(move || {
         let _guard = RESTART_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -203,7 +204,11 @@ fn on_event(app: &AppHandle, ev: WatchEvent<'_>) {
                     &r.path,
                     format!(
                         "다시 연결됨 — 끊긴 동안 바뀐 파일을 처리합니다{}",
-                        if r.events { "" } else { " (폴링만 사용)" }
+                        if r.events {
+                            ""
+                        } else {
+                            " (주기 확인만 사용)"
+                        }
                     ),
                 );
             } else {

@@ -27,6 +27,73 @@ export interface Status {
   semanticState: "off" | "ready" | "unavailable";
   /** Embedding model when on, the reason otherwise. */
   semanticDetail: string | null;
+  /** (M11) Configured watch folders (also while paused). */
+  watchTotal: number;
+  watchPaths: string[];
+  /** (M11) Watch folders organized in place, and distinct "모으기" roots. */
+  organizeInPlace: number;
+  organizeRoots: string[];
+  /** (M11) Newer release found by the last update check. */
+  update: UpdateInfo | null;
+}
+
+/** (M11) Latest release vs. this version (core `update::UpdateInfo`). */
+export interface UpdateInfo {
+  current: string;
+  latest: string;
+  newer: boolean;
+  /** Installer for this OS, or the release page. */
+  url: string;
+  page: string;
+}
+
+export interface UpdateResult {
+  current: string;
+  info: UpdateInfo | null;
+  error: string | null;
+  checkedAt: number;
+}
+
+export interface AboutInfo {
+  version: string;
+  gitSha: string;
+  repo: string;
+  license: string;
+  os: string;
+  configPath: string;
+  configDir: string;
+  dbPath: string;
+  dbDir: string;
+  logDir: string;
+  checkUpdates: boolean;
+}
+
+/** (M11) 홈 탭: 감시 현황 + 기존 파일 미정리 수. */
+export interface Backlog {
+  toMove: number;
+  noRule: number;
+  total: number;
+  capped: boolean;
+}
+export interface FolderOverview {
+  path: string;
+  mode: "in_place" | "collect";
+  organizeRoot: string | null;
+  network: boolean;
+  recursive: boolean;
+  state: "ok" | "offline" | "paused" | "idle";
+  exclude: number;
+  /** null while counting, or for network folders. */
+  backlog: Backlog | null;
+}
+export interface Overview {
+  folders: FolderOverview[];
+  computing: boolean;
+  total: number;
+  capped: boolean;
+  /** AI on + customers in the context dictionary. */
+  canCurate: boolean;
+  cap: number;
 }
 
 /** "semantic" = found by meaning only (no word matched). */
@@ -170,6 +237,8 @@ export interface Settings {
   quietMode: boolean;
   hotkey: string;
   autostart: Autostart;
+  /** (M11) `[general] check_updates`. */
+  checkUpdates: boolean;
 }
 
 export interface SaveSettingsArgs {
@@ -179,6 +248,7 @@ export interface SaveSettingsArgs {
   hotkey: string;
   rulesText: string;
   startOnLogin: boolean;
+  checkUpdates: boolean;
 }
 
 export interface RulesCheck {

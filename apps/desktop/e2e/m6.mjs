@@ -67,7 +67,7 @@ const evStart = (await events(1e9)).next;
   const idx = await row.locator("input[type=checkbox]").nth(1).isChecked();
   ok("A", "NAS는 본문 인덱싱 기본 꺼짐 (메타만)", idx === false);
   await sub.locator("input[type=number]").fill("5");
-  await sub.locator("label", { hasText: "폴링만 사용" }).locator("input").check();
+  await sub.locator("label", { hasText: "주기 확인만 사용" }).locator("input").check();
   await openAdvanced(main);
   const ta = main.locator("textarea.rules");
   await ta.fill(
@@ -84,7 +84,7 @@ const evStart = (await events(1e9)).next;
 
 // B. polling picks up a new pdf; copy-verify move with progress for a big file
 {
-  await main.getByRole("button", { name: "활동" }).click();
+  await main.locator(".topbar nav").getByRole("button", { name: "홈" }).click();
   fs.writeFileSync(path.join(NAS, "nas-small.pdf"), "small");
   const movedSmall = await waitFor(() => fs.existsSync(path.join(LOCAL, "nas-small.pdf")), 20000);
   ok("B", "폴링으로 새 파일 감지 → 규칙대로 이동 (≤20 s)", movedSmall);
@@ -149,7 +149,7 @@ const evStart = (await events(1e9)).next;
 
 // E. undo of a copy-verify move restores the file to the NAS folder
 {
-  await main.getByRole("button", { name: "이동 기록" }).click();
+  await main.locator(".topbar nav").getByRole("button", { name: "되돌리기" }).click();
   await sleep(1200);
   const row = main.locator(".history tbody tr", { hasText: "after-reconnect" }).first();
   await row.getByRole("button", { name: "되돌리기", exact: true }).click();

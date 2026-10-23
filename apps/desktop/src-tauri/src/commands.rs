@@ -81,6 +81,15 @@ pub struct StatusDto {
     pub semantic_state: &'static str,
     /// Model when on, why not otherwise.
     pub semantic_detail: Option<String>,
+    /// (M11) Configured watch folders (also when not running).
+    pub watch_total: usize,
+    pub watch_paths: Vec<String>,
+    /// (M11) Watch folders organized in place, and the distinct
+    /// "지정 위치로 모으기" roots — the status bar's "정리 위치".
+    pub organize_in_place: usize,
+    pub organize_roots: Vec<String>,
+    /// (M11) A newer release found by the last update check.
+    pub update: Option<tidy_core::update::UpdateInfo>,
 }
 
 pub fn status(app: &AppHandle) -> StatusDto {
@@ -162,6 +171,11 @@ pub fn status(app: &AppHandle) -> StatusDto {
         onboarded: inner.cfg.onboarded(),
         semantic_state,
         semantic_detail,
+        watch_total: inner.cfg.watches.len(),
+        watch_paths: inner.cfg.watches.iter().map(|w| s(&w.path)).collect(),
+        organize_in_place: crate::overview::organize_summary(&inner.cfg.watches).0,
+        organize_roots: crate::overview::organize_summary(&inner.cfg.watches).1,
+        update: crate::about::available(),
     }
 }
 
@@ -802,6 +816,8 @@ pub struct SettingsDto {
     pub hotkey: String,
     /// `general.start_on_login` and the OS login item state.
     pub autostart: autostart::AutostartDto,
+    /// (M11) Daily background update check.
+    pub check_updates: bool,
 }
 
 /// Shown when there is no rules.toml yet: explanations only, no rules
@@ -837,6 +853,7 @@ pub async fn get_settings(app: AppHandle) -> CmdResult<SettingsDto> {
             quiet_mode: cfg.general.quiet_mode,
             hotkey: cfg.general.hotkey.clone(),
             autostart: autostart::state(&app, cfg.general.start_on_login),
+            check_updates: cfg.general.check_updates,
         })
     })
     .await
@@ -876,6 +893,9 @@ pub struct SaveSettingsArgs {
     pub rules_text: String,
     #[serde(default = "default_true")]
     pub start_on_login: bool,
+    /// (M11) `[general] check_updates`.
+    #[serde(default = "default_true")]
+    pub check_updates: bool,
 }
 
 fn default_true() -> bool {
@@ -908,6 +928,7 @@ pub async fn save_settings(app: AppHandle, args: SaveSettingsArgs) -> CmdResult<
             start_on_login: args.start_on_login,
             // Configuring folders here by hand is an explicit setup (SPEC §14.1).
             onboarded: (!args.watches.is_empty()).then_some(true),
+            check_updates: args.check_updates,
         };
         write_settings(&state.config_path, &patch).map_err(|e| e.to_string())?;
         // Rules path comes from the (re)loaded config.

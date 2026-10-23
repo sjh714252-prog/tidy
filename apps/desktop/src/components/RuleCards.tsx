@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { PreviewReport, RuleCard } from "../ipc/types";
 import { FolderTree } from "./FolderTree";
+import { destFolder, isAbsoluteDest, relativeSuggestion } from "./destPaths";
 
 const EXT_PRESETS: { label: string; ext: string[] }[] = [
   { label: "문서", ext: ["pdf", "hwp", "hwpx", "doc", "docx", "xls", "xlsx", "ppt", "pptx"] },
@@ -51,6 +52,7 @@ export function RuleCards({
   cards,
   preview,
   anchors,
+  collectRoots = [],
   readOnly,
   aiMarked,
   onChange,
@@ -59,6 +61,8 @@ export function RuleCards({
   preview: PreviewReport | null;
   /** Watch folders' anchors (relative destinations resolve against them). */
   anchors: string[];
+  /** (M11) "지정 위치로 모으기" roots: absolute destinations ignore them. */
+  collectRoots?: string[];
   readOnly: boolean;
   /** Card indexes that came from "AI로 규칙 만들기" (badge only). */
   aiMarked?: Set<number>;
@@ -269,8 +273,26 @@ export function RuleCards({
                   ))}
                 </div>
                 {pv?.sample_dest && <p className="muted small">→ 예: {pv.sample_dest}</p>}
-                {outside(c.dest, anchors) && (
-                  <p className="warn small">⚠ 감시 폴더(기준 폴더) 밖으로 옮깁니다</p>
+                {collectRoots.length > 0 && isAbsoluteDest(c.dest) ? (
+                  <div className="warn small abs-dest" data-testid="abs-dest-warning">
+                    <span className="tag warn">정리 위치 무시</span> 이 규칙은 기준 폴더({collectRoots.join(", ")})를 무시하고{" "}
+                    <code>{destFolder(c.dest)}</code> 로 보냅니다.
+                    {relativeSuggestion(c.dest) && (
+                      <>
+                        {" "}
+                        상대 경로(<code>{relativeSuggestion(c.dest)}</code>)로 바꾸면 기준 폴더 아래로 갑니다.{" "}
+                        <button
+                          className="link"
+                          data-testid="make-relative"
+                          onClick={() => set(i, { dest: relativeSuggestion(c.dest) })}
+                        >
+                          상대 경로로 바꾸기
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  outside(c.dest, anchors) && <p className="warn small">⚠ 감시 폴더(기준 폴더) 밖으로 옮깁니다</p>
                 )}
                 {treeFor === i && (
                   <FolderTree

@@ -3,7 +3,7 @@ import * as ipc from "../ipc/commands";
 import type { BatchSummary, MoveLogEntry } from "../ipc/types";
 import { formatTime } from "../components/format";
 
-const BY: Record<string, string> = { rule: "규칙", ai: "AI", user: "확인", restructure: "재구성" };
+const BY: Record<string, string> = { rule: "규칙", ai: "AI", user: "확인", restructure: "정리 제안" };
 
 /** Move history (SPEC §9.6): one row per batch, undo per batch, expand for files. */
 export function HistoryView() {
@@ -35,7 +35,7 @@ export function HistoryView() {
   return (
     <div className="history">
       <div className="toolbar">
-        <span>이동 기록 (보관 기간: 설정의 undo_retention_days)</span>
+        <span>이동 기록 — 묶음마다 되돌릴 수 있습니다 (보관 기간: 설정의 undo_retention_days)</span>
         <div className="spacer" />
         <button className="link" onClick={refresh}>
           새로고침

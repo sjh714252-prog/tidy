@@ -37,7 +37,7 @@ export function ContextSection() {
     <div className="context-section" data-testid="context-section">
       <p className="muted small">
         파일 이름·날짜·본문 앞부분을 AI에 보내 "어느 고객사의 어느 이슈" 자료인지 판단해{" "}
-        <code>고객사/날짜_이슈/종류</code>로 묶습니다. 리포트 탭의 "업무 맥락으로 정리"에서 미리보기를 보고 승인해야
+        <code>고객사/날짜_이슈/종류</code>로 묶습니다. 정리하기 탭의 "업무 맥락으로 정리"에서 미리보기를 보고 승인해야
         옮깁니다. 지금까지 분석한 파일 {draft.analysed}개(다시 묻지 않음).
       </p>
       <fieldset disabled={!aiOn}>

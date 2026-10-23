@@ -1,5 +1,5 @@
-//! Tray icon + menu (SPEC §9.1): 검색 열기 / 대기 N건 / 일시정지 / 지금 인덱싱 /
-//! 설정 / 종료.
+//! Tray icon + menu (SPEC §9.1, §14.6): 검색 열기 / 확인 대기 N건 / 일시정지 /
+//! 지금 인덱싱 / 정리하기 / 설정 / 정보… / 종료.
 
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
@@ -21,18 +21,19 @@ pub struct TrayItems {
 
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let search = MenuItem::with_id(app, "search", "검색 열기", true, None::<&str>)?;
-    let pending = MenuItem::with_id(app, "pending", "대기 0건", true, None::<&str>)?;
+    let pending = MenuItem::with_id(app, "pending", "확인 대기 0건", true, None::<&str>)?;
     let pause = MenuItem::with_id(app, "pause", "일시정지", true, None::<&str>)?;
     let index = MenuItem::with_id(app, "index", "지금 인덱싱", true, None::<&str>)?;
-    let report = MenuItem::with_id(app, "report", "리포트", true, None::<&str>)?;
+    let report = MenuItem::with_id(app, "report", "정리하기", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "설정", true, None::<&str>)?;
+    let about = MenuItem::with_id(app, "about", "정보…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(
         app,
         &[
-            &search, &pending, &sep, &pause, &index, &report, &settings, &sep2, &quit,
+            &search, &pending, &sep, &pause, &index, &report, &settings, &about, &sep2, &quit,
         ],
     )?;
 
@@ -47,6 +48,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             "index" => watch::spawn_index(app),
             "report" => windows::show_main(app, "report"),
             "settings" => windows::show_main(app, "settings"),
+            "about" => windows::show_main(app, "activity?about=1"),
             "quit" => {
                 watch::signal_stop(app);
                 app.exit(0);
@@ -101,6 +103,6 @@ pub fn set_paused(app: &AppHandle, paused: bool) {
 pub fn set_pending(app: &AppHandle, count: u64) {
     if let Some(items) = app.try_state::<Mutex<TrayItems>>() {
         let items = items.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = items.pending.set_text(format!("대기 {count}건"));
+        let _ = items.pending.set_text(format!("확인 대기 {count}건"));
     }
 }

@@ -1,8 +1,11 @@
 name: Release
-# Installers for a version tag (v0.1.0 …): Windows .msi/.exe (NSIS),
-# macOS .dmg, Linux .deb/.AppImage, attached to a draft GitHub release.
-# Can also be run by hand (Actions → Release → Run workflow) to get the
-# installers as workflow artifacts without a release.
+# Installers: Windows .msi/.exe (NSIS), macOS .dmg, Linux .deb/.AppImage.
+# - Pushing a version tag (v0.4.0 …) attaches them to a *draft* release.
+# - Running it by hand on main (Actions → Release → Run workflow) makes a
+#   *public* release (SPEC §14.6): the tag v<apps/desktop/package.json
+#   version> is created here if missing (an existing release gets its files
+#   replaced), and the notes list the PRs merged since the previous release.
+# - Running it by hand on another branch only uploads workflow artifacts.
 on:
   push:
     tags: ["v*"]
@@ -12,7 +15,42 @@ permissions:
   contents: write
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      public: ${{ steps.tag.outputs.public }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: tag
+        name: Release tag
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "public=false" >> "$GITHUB_OUTPUT"
+          elif [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ] && [ "${GITHUB_REF}" = refs/heads/main ]; then
+            v="v$(node -p "require('./apps/desktop/package.json').version")"
+            if git ls-remote --exit-code --tags origin "refs/tags/$v" >/dev/null; then
+              echo "tag $v exists: its release gets the new files"
+            else
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git tag "$v" "$GITHUB_SHA"
+              # Pushed with GITHUB_TOKEN: this does not start another run.
+              git push origin "refs/tags/$v"
+            fi
+            echo "tag=$v" >> "$GITHUB_OUTPUT"
+            echo "public=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "public=false" >> "$GITHUB_OUTPUT"
+          fi
+
   bundle:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -56,6 +94,10 @@ jobs:
             libjavascriptcoregtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev libxdo-dev \
             patchelf file
       - run: npm ci
+      # "정보" shows the commit a build came from (about.rs, option_env!).
+      - name: Build commit
+        shell: bash
+        run: echo "TIDY_GIT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
       - name: Build installers
         run: npx tauri build --bundles ${{ matrix.bundles }} ${{ matrix.args }}
       # The dev test bridge (src-tauri/src/devbridge.rs, HTTP on 127.0.0.1:1421)
@@ -83,12 +125,18 @@ jobs:
             apps/desktop/src-tauri/target/**/release/bundle/deb/*.deb
             apps/desktop/src-tauri/target/**/release/bundle/appimage/*.AppImage
           if-no-files-found: error
-      - name: Attach to draft release
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Attach to release
+        if: needs.prepare.outputs.tag != ''
         uses: softprops/action-gh-release@v2
         with:
-          draft: true
-          name: Tidy ${{ github.ref_name }}
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: Tidy ${{ needs.prepare.outputs.tag }}
+          # Tag push: draft (publish by hand). Run by hand on main: public.
+          draft: ${{ needs.prepare.outputs.public != 'true' }}
+          make_latest: ${{ needs.prepare.outputs.public == 'true' }}
+          # Notes = PR titles merged since the previous release.
+          generate_release_notes: true
+          overwrite_files: true
           files: |
             apps/desktop/src-tauri/target/**/release/bundle/msi/*.msi
             apps/desktop/src-tauri/target/**/release/bundle/nsis/*.exe
