@@ -151,7 +151,7 @@ pub async fn plan_rules(
             &root,
             &rules,
             recursive,
-            &cfg.classify.ignore_globs,
+            &cfg.ignore_filter().map_err(|e| e.to_string())?,
             &protected(&cfg, &protect),
             Some(anchors.for_path(&canon).unwrap_or(&canon)),
         )

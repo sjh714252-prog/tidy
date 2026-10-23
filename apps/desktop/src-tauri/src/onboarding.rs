@@ -17,6 +17,7 @@ use tidy_core::classify::{
     append_cards, apply_cards, parse_cards, AiClassifier, RuleCard, RuleSet,
 };
 use tidy_core::config::{write_settings, SettingsPatch, WatchRoot};
+use tidy_core::watcher::IgnoreFilter;
 
 use crate::commands::{
     blocking, status, watches_from_dtos, CmdResult, StatusDto, WatchDto, RULES_HEADER,
@@ -36,6 +37,16 @@ static SAMPLE: Mutex<Option<(String, Instant, FileSample)>> = Mutex::new(None);
 const SAMPLE_TTL: Duration = Duration::from_secs(10);
 
 fn sample_for(watches: &[WatchRoot], globs: &[String]) -> FileSample {
+    // Watch `exclude` folders are part of `watches`, so the cache key
+    // covers them too.
+    let filter = IgnoreFilter::new(globs)
+        .unwrap_or_else(|_| IgnoreFilter::new(&[]).unwrap())
+        .with_dirs(
+            watches
+                .iter()
+                .flat_map(|w| w.exclude.iter().cloned())
+                .collect(),
+        );
     let key = format!("{watches:?}|{globs:?}");
     let mut guard = SAMPLE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((k, at, sample)) = guard.as_ref() {
@@ -43,7 +54,7 @@ fn sample_for(watches: &[WatchRoot], globs: &[String]) -> FileSample {
             return sample.clone();
         }
     }
-    let sample = collect_files(watches, globs);
+    let sample = collect_files(watches, &filter);
     *guard = Some((key, Instant::now(), sample.clone()));
     sample
 }

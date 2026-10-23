@@ -62,7 +62,7 @@ const evStart = (await events(1e9)).next;
   const row = main.locator(".settings tbody tr").first();
   await row.locator("select").first().selectOption("network"); // kind (2nd select = M8 정리 방식)
   await sleep(300);
-  const sub = main.locator(".settings tbody tr.subrow");
+  const sub = main.locator(".settings tbody tr.subrow:not(.exclude-row)");
   ok("A", "네트워크 선택 → 폴링/시간대 하위 행 표시", (await sub.count()) === 1);
   const idx = await row.locator("input[type=checkbox]").nth(1).isChecked();
   ok("A", "NAS는 본문 인덱싱 기본 꺼짐 (메타만)", idx === false);

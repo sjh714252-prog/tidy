@@ -14,6 +14,7 @@ use tidy_core::curate::{
 };
 use tidy_core::report::restructure;
 use tidy_core::store::Store;
+use tidy_core::watcher::IgnoreFilter;
 use tidy_core::Config;
 
 use crate::commands::{blocking, CmdResult};
@@ -111,7 +112,10 @@ fn inputs_for(
     recursive: bool,
 ) -> Vec<CurateInput> {
     let protected: Vec<PathBuf> = cfg.report.protected.clone();
-    Curator::files_in(root, recursive, &cfg.classify.ignore_globs, &protected)
+    let filter = cfg
+        .ignore_filter()
+        .unwrap_or_else(|_| IgnoreFilter::new(&[]).unwrap());
+    Curator::files_in(root, recursive, &filter, &protected)
         .iter()
         .filter_map(|p| cur.input(p, Some(store)).ok())
         .collect()
@@ -167,7 +171,7 @@ pub async fn plan_context(
                 &root,
                 &anchor,
                 recursive,
-                &cfg.classify.ignore_globs,
+                &cfg.ignore_filter().map_err(|e| e.to_string())?,
                 &protected,
             )
             .map_err(err)?;

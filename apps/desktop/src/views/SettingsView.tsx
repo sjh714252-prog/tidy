@@ -171,6 +171,35 @@ export function SettingsView() {
                     </td>
                   </tr>
                 )}
+                <tr className="subrow exclude-row" data-testid="exclude-row">
+                  <td colSpan={6}>
+                    <span className="muted">
+                      제외 폴더 <Help id="exclude" />
+                    </span>{" "}
+                    {w.exclude.length === 0 && <span className="muted small">없음 — 이 폴더 전체를 정리합니다.</span>}
+                    {w.exclude.map((x) => (
+                      <span key={x} className="chip" title={x}>
+                        {x.startsWith(w.path) ? x.slice(w.path.length).replace(/^[\\/]+/, "") || x : x}
+                        <button
+                          className="link"
+                          aria-label={`제외 해제 ${x}`}
+                          onClick={() => s.setWatch(i, { exclude: w.exclude.filter((y) => y !== x) })}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                    <button
+                      className="small"
+                      onClick={async () => {
+                        const dir = await ipc.pickFolder(w.path);
+                        if (dir && !w.exclude.includes(dir)) s.setWatch(i, { exclude: [...w.exclude, dir] });
+                      }}
+                    >
+                      제외 폴더 추가…
+                    </button>
+                  </td>
+                </tr>
               </Fragment>
             ))}
           </tbody>

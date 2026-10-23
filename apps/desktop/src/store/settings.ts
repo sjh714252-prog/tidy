@@ -89,6 +89,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
       contentIndexWindow: null,
       mode: "in_place",
       organizeRoot: null,
+      exclude: [],
     };
     set({ draft: { ...d, watches: [...d.watches, w] }, message: null });
   },

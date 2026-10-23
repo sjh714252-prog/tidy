@@ -252,3 +252,5 @@ fieldset:disabled { opacity: 0.55; }
 .tag.ok { color: var(--ok); }
 .suggestions { margin: 8px 0; }
 .suggestions ul { list-style: none; padding: 0; margin: 4px 0; }
+.exclude-row .chip { margin: 0 4px 0 0; }
+.exclude-row button.small { font-size: 12px; padding: 1px 8px; }
