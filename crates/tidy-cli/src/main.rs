@@ -1464,7 +1464,7 @@ fn cmd_rules(config: Option<PathBuf>, cmd: RulesCmd) -> Result<()> {
             if cfg.watches.is_empty() {
                 bail!("no [[watch]] folders configured");
             }
-            let r = preview::preview(&rules, &cfg.watches, &cfg.classify.ignore_globs, !each);
+            let r = preview::preview(&rules, &cfg.watches, &cfg.ignore_filter()?, !each);
             match format {
                 Format::Json => println!("{}", serde_json::to_string_pretty(&r)?),
                 Format::Text => {
@@ -1958,7 +1958,7 @@ fn cmd_restructure(config: Option<PathBuf>, args: RestructureArgs) -> Result<()>
             &root,
             &rules,
             args.recursive,
-            &cfg.classify.ignore_globs,
+            &cfg.ignore_filter()?,
             &protected,
             Some(anchors.for_path(&canon).unwrap_or(&canon)),
         )?
@@ -2336,7 +2336,7 @@ fn cmd_curate(config: Option<PathBuf>, cmd: CurateCmd) -> Result<()> {
                 .with_context(|| format!("no such folder: {}", root.display()))?;
             let cur = Curator::from_config(&cfg)?;
             let protected = protected_dirs(&cfg, &[]);
-            let files = Curator::files_in(&root, recursive, &cfg.classify.ignore_globs, &protected);
+            let files = Curator::files_in(&root, recursive, &cfg.ignore_filter()?, &protected);
             let inputs: Vec<_> = files
                 .iter()
                 .filter_map(|p| cur.input(p, Some(&store)).ok())
@@ -2374,7 +2374,7 @@ fn cmd_curate(config: Option<PathBuf>, cmd: CurateCmd) -> Result<()> {
                 &root,
                 &anchor,
                 recursive,
-                &cfg.classify.ignore_globs,
+                &cfg.ignore_filter()?,
                 &protected,
             )?;
             let plan = restructure::save(&store, plan)?;

@@ -54,9 +54,7 @@ pub struct FileSample {
 /// List the files of `watches` as the watcher would see them (recursion
 /// and ignore globs as configured), at most [`MAX_FILES`]. Network folders
 /// are skipped (slow); missing folders are reported.
-pub fn collect_files(watches: &[WatchRoot], ignore_globs: &[String]) -> FileSample {
-    let filter =
-        IgnoreFilter::new(ignore_globs).unwrap_or_else(|_| IgnoreFilter::new(&[]).unwrap());
+pub fn collect_files(watches: &[WatchRoot], filter: &IgnoreFilter) -> FileSample {
     let anchors = Anchors::from_watches(watches);
     let mut out = FileSample::default();
     'roots: for w in watches {
@@ -74,7 +72,10 @@ pub fn collect_files(watches: &[WatchRoot], ignore_globs: &[String]) -> FileSamp
             .max_depth(depth)
             .sort_by_file_name()
             .into_iter()
-            .filter_entry(|e| !e.file_name().to_string_lossy().starts_with('.'));
+            .filter_entry(|e| {
+                !e.file_name().to_string_lossy().starts_with('.')
+                    && !filter.in_excluded_dir(e.path())
+            });
         for e in walker.filter_map(Result::ok) {
             if !e.file_type().is_file() || filter.is_ignored(e.path()) {
                 continue;
@@ -148,15 +149,19 @@ pub fn match_files(rules: &RuleSet, sample: &FileSample, exclusive: bool) -> Pre
 pub fn preview(
     rules: &RuleSet,
     watches: &[WatchRoot],
-    ignore_globs: &[String],
+    filter: &IgnoreFilter,
     exclusive: bool,
 ) -> PreviewReport {
-    match_files(rules, &collect_files(watches, ignore_globs), exclusive)
+    match_files(rules, &collect_files(watches, filter), exclusive)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn nofilter() -> IgnoreFilter {
+        IgnoreFilter::new(&[]).unwrap()
+    }
     use crate::config::OrganizeMode;
 
     #[test]
@@ -197,11 +202,11 @@ dest = "문서"
             path: desk.clone(),
             ..Default::default()
         };
-        let all = preview(&rules, std::slice::from_ref(&w), &[], false);
+        let all = preview(&rules, std::slice::from_ref(&w), &nofilter(), false);
         assert_eq!(all.scanned, 4, "not recursive: subfolder skipped");
         let counts: Vec<(usize, usize)> = all.rules.iter().map(|r| (r.index, r.count)).collect();
         assert_eq!(counts, [(0, 1), (2, 2), (3, 1)]);
-        let first = preview(&rules, std::slice::from_ref(&w), &[], true);
+        let first = preview(&rules, std::slice::from_ref(&w), &nofilter(), true);
         assert_eq!(first.rules[1].count, 1, "the screenshot went to rule 0");
         assert_eq!(first.unmatched, 1);
         // in_place: relative destinations under the watch folder.
@@ -213,7 +218,7 @@ dest = "문서"
             organize_root: Some(tmp.path().join("정리")),
             ..w
         };
-        let c = preview(&rules, &[w2], &[], true);
+        let c = preview(&rules, &[w2], &nofilter(), true);
         assert_eq!(c.scanned, 5);
         assert_eq!(c.rules[2].count, 2);
         assert_eq!(

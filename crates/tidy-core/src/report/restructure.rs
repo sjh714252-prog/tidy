@@ -197,10 +197,10 @@ pub fn plan_from_rules(
     root: &Path,
     rules: &RuleSet,
     recursive: bool,
-    ignore_globs: &[String],
+    filter: &IgnoreFilter,
     protected: &[PathBuf],
 ) -> Result<Plan, PlanError> {
-    plan_from_rules_in(root, rules, recursive, ignore_globs, protected, None)
+    plan_from_rules_in(root, rules, recursive, filter, protected, None)
 }
 
 /// [`plan_from_rules`] with relative rule destinations and `{root}`
@@ -210,21 +210,21 @@ pub fn plan_from_rules_in(
     root: &Path,
     rules: &RuleSet,
     recursive: bool,
-    ignore_globs: &[String],
+    filter: &IgnoreFilter,
     protected: &[PathBuf],
     anchor: Option<&Path>,
 ) -> Result<Plan, PlanError> {
     let root =
         dunce::canonicalize(root).map_err(|_| ScanError::NotADirectory(root.to_path_buf()))?;
-    let filter =
-        IgnoreFilter::new(ignore_globs).unwrap_or_else(|_| IgnoreFilter::new(&[]).unwrap());
     let mut moves = Vec::new();
     let walker = walkdir::WalkDir::new(&root)
         .min_depth(1)
         .max_depth(if recursive { usize::MAX } else { 1 })
         .sort_by_file_name()
         .into_iter()
-        .filter_entry(|e| !e.file_name().to_string_lossy().starts_with('.'));
+        .filter_entry(|e| {
+            !e.file_name().to_string_lossy().starts_with('.') && !filter.in_excluded_dir(e.path())
+        });
     for e in walker.filter_map(Result::ok) {
         let path = e.path();
         if !e.file_type().is_file()
@@ -914,7 +914,8 @@ mod tests {
             root.display().to_string().replace('\\', "/")
         ))
         .unwrap();
-        let plan = plan_from_rules(&root, &rules, false, &[], &[]).unwrap();
+        let plan =
+            plan_from_rules(&root, &rules, false, &IgnoreFilter::new(&[]).unwrap(), &[]).unwrap();
         assert_eq!(plan.moves.len(), 3);
         assert!(plan.moves.iter().any(|m| m.reason == "엑셀 (확인 규칙)"));
         let png = plan.moves.iter().find(|m| m.reason == "스크린샷").unwrap();

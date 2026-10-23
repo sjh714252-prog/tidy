@@ -687,6 +687,9 @@ pub struct WatchDto {
     /// `collect`: folder the category folders go under.
     #[serde(default)]
     pub organize_root: Option<String>,
+    /// Sub-folders left alone (SPEC §14.5).
+    #[serde(default)]
+    pub exclude: Vec<String>,
 }
 
 fn in_place() -> String {
@@ -708,6 +711,7 @@ impl From<&WatchRoot> for WatchDto {
             content_index_window: w.content_index_window.clone(),
             mode: w.mode.as_str().into(),
             organize_root: w.organize_root.as_deref().map(s),
+            exclude: w.exclude.iter().map(|p| s(p)).collect(),
         }
     }
 }
@@ -745,8 +749,26 @@ pub fn watches_from_dtos(rows: &[WatchDto]) -> CmdResult<Vec<WatchRoot>> {
                 "{path}: '지정 위치로 모으기'는 기준 폴더를 골라야 합니다"
             ));
         }
+        let root = tidy_core::config::expand_home(Path::new(path));
+        let mut exclude: Vec<PathBuf> = Vec::new();
+        for e in w.exclude.iter().map(|e| e.trim()).filter(|e| !e.is_empty()) {
+            let x = tidy_core::config::expand_home(Path::new(e));
+            let x = if x.is_relative() { root.join(x) } else { x };
+            if !x.starts_with(&root) {
+                return Err(format!(
+                    "{path}: 제외 폴더 {}는 이 감시 폴더 안에 있어야 합니다",
+                    x.display()
+                ));
+            }
+            if x == root {
+                return Err(format!("{path}: 감시 폴더 자체를 제외할 수는 없습니다"));
+            }
+            if !exclude.contains(&x) {
+                exclude.push(x);
+            }
+        }
         watches.push(WatchRoot {
-            path: tidy_core::config::expand_home(Path::new(path)),
+            path: root,
             kind: if network {
                 RootKind::Network
             } else {
@@ -759,6 +781,7 @@ pub fn watches_from_dtos(rows: &[WatchDto]) -> CmdResult<Vec<WatchRoot>> {
             poll_only: network && w.poll_only,
             mode,
             organize_root: organize_root.filter(|_| mode == OrganizeMode::Collect),
+            exclude,
         });
     }
     Ok(watches)

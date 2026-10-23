@@ -91,6 +91,8 @@ impl WatchOptions {
 #[derive(Debug, Clone)]
 pub struct IgnoreFilter {
     globs: GlobSet,
+    /// Folders whose whole subtree is left alone (watch `exclude`).
+    dirs: Vec<PathBuf>,
 }
 
 impl IgnoreFilter {
@@ -112,15 +114,58 @@ impl IgnoreFilter {
                 glob: globs.join(", "),
                 source,
             })?,
+            dirs: Vec::new(),
         })
+    }
+
+    /// Also ignore everything inside `dirs` (and the folders themselves).
+    pub fn with_dirs(mut self, dirs: Vec<PathBuf>) -> Self {
+        self.dirs = dirs
+            .into_iter()
+            .filter(|d| !d.as_os_str().is_empty())
+            .collect();
+        self
+    }
+
+    pub fn dirs(&self) -> &[PathBuf] {
+        &self.dirs
     }
 
     pub fn is_ignored(&self, path: &Path) -> bool {
         match path.file_name() {
-            Some(name) => name.to_string_lossy().contains(TMP_MARKER) || self.globs.is_match(name),
+            Some(name) => {
+                name.to_string_lossy().contains(TMP_MARKER)
+                    || self.globs.is_match(name)
+                    || self.in_excluded_dir(path)
+            }
             None => true,
         }
     }
+
+    /// `path` is one of the excluded folders or lies below one. Compared
+    /// component-wise, case-insensitively on Windows (`D:\정리` vs
+    /// `d:\정리`), so the watcher's event paths match configured ones.
+    pub fn in_excluded_dir(&self, path: &Path) -> bool {
+        self.dirs.iter().any(|d| under(path, d))
+    }
+}
+
+fn under(path: &Path, dir: &Path) -> bool {
+    let mut p = path.components();
+    for dc in dir.components() {
+        match p.next() {
+            Some(pc) if same_component(pc.as_os_str(), dc.as_os_str()) => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
+fn same_component(a: &std::ffi::OsStr, b: &std::ffi::OsStr) -> bool {
+    if a == b {
+        return true;
+    }
+    cfg!(windows) && a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
 }
 
 /// Regular, non-ignored files currently in `root` (used for
@@ -132,6 +177,7 @@ pub fn existing_files(root: &WatchRoot, filter: &IgnoreFilter) -> Vec<PathBuf> {
         .max_depth(depth)
         .sort_by_file_name()
         .into_iter()
+        .filter_entry(|e| !filter.in_excluded_dir(e.path()))
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file() && !filter.is_ignored(e.path()))
         .map(|e| e.into_path())

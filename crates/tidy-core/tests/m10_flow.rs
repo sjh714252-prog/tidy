@@ -17,6 +17,11 @@ use tidy_core::curate::{ContextDict, ContextSuggestion, Curator, MoveEdit};
 use tidy_core::mover::Mover;
 use tidy_core::report::restructure::{self, Plan};
 use tidy_core::store::Store;
+use tidy_core::watcher::IgnoreFilter;
+
+fn nofilter() -> IgnoreFilter {
+    IgnoreFilter::new(&[]).unwrap()
+}
 use tidy_core::Config;
 
 /// What the fake model says per file name:
@@ -222,7 +227,7 @@ fn curate_plan_layout_merge_cache_edit_apply_undo() {
     let store = mover.store();
 
     // Cost first: nothing cached yet.
-    let inputs: Vec<_> = Curator::files_in(&desk, false, &[], &[])
+    let inputs: Vec<_> = Curator::files_in(&desk, false, &nofilter(), &[])
         .iter()
         .map(|p| cur.input(p, Some(store)).unwrap())
         .collect();
@@ -230,7 +235,9 @@ fn curate_plan_layout_merge_cache_edit_apply_undo() {
     assert_eq!((est.files, est.to_analyze, est.requests), (10, 10, 1));
     assert!(est.input_tokens > 0 && est.cost_usd == Some(0.0));
 
-    let plan = cur.plan(&ai, store, &desk, &desk, false, &[], &[]).unwrap();
+    let plan = cur
+        .plan(&ai, store, &desk, &desk, false, &nofilter(), &[])
+        .unwrap();
     assert_eq!(provider.prompts().len(), 1, "one batch for 10 files");
     let r = |n: &str| rel(&to_of(&plan, n), &desk);
     assert_eq!(
@@ -282,7 +289,9 @@ fn curate_plan_layout_merge_cache_edit_apply_undo() {
     assert!(note.ends_with("SKY_전환대상.csv"));
 
     // Cache: the same files cost nothing the second time.
-    let mut plan = cur.plan(&ai, store, &desk, &desk, false, &[], &[]).unwrap();
+    let mut plan = cur
+        .plan(&ai, store, &desk, &desk, false, &nofilter(), &[])
+        .unwrap();
     assert_eq!(
         provider.prompts().len(),
         1,
@@ -347,7 +356,9 @@ fn curate_plan_layout_merge_cache_edit_apply_undo() {
     }));
     assert!(rel(&to_of(&plan, "보안 정책 v2.txt"), &desk).starts_with("구름소프트/"));
     // The correction is remembered for the next analysis.
-    let again = cur.plan(&ai, store, &desk, &desk, false, &[], &[]).unwrap();
+    let again = cur
+        .plan(&ai, store, &desk, &desk, false, &nofilter(), &[])
+        .unwrap();
     assert!(rel(&to_of(&again, "메모.txt"), &desk).starts_with("하늘통신/"));
 
     // Apply (one batch) → files in place; undo → all back.
@@ -400,7 +411,7 @@ fn watch_time_placement_auto_into_existing_folder_or_ask() {
     // Organise what is there first (plan → apply), as the user would.
     let ai = AiClassifier::with_provider(mock(), &cfg, &RuleSet::default()).unwrap();
     let plan = cur
-        .plan(&ai, mover.store(), &desk, &desk, false, &[], &[])
+        .plan(&ai, mover.store(), &desk, &desk, false, &nofilter(), &[])
         .unwrap();
     let plan = restructure::save(mover.store(), plan).unwrap();
     restructure::apply(&mover, &plan, None, &[], None).unwrap();
@@ -470,7 +481,7 @@ fn collect_anchor_and_custom_template() {
     let cur = Curator::new(dict(), cfg.curate.clone(), false).unwrap();
     let store = Store::open_in_memory().unwrap();
     let plan = cur
-        .plan(&ai, &store, &desk, &root, false, &[], &[])
+        .plan(&ai, &store, &desk, &root, false, &nofilter(), &[])
         .unwrap();
     assert_eq!(
         rel(&to_of(&plan, "GARA_장애로그_20261105.log"), &root),
@@ -495,7 +506,7 @@ fn ai_failure_is_an_error_not_a_move() {
     let cur = Curator::new(dict(), cfg.curate.clone(), true).unwrap();
     let store = Store::open_in_memory().unwrap();
     assert!(cur
-        .plan(&ai, &store, &desk, &desk, false, &[], &[])
+        .plan(&ai, &store, &desk, &desk, false, &nofilter(), &[])
         .is_err());
     assert_eq!(fs::read_dir(&desk).unwrap().count(), 10, "nothing moved");
     let _unused: Option<Value> = None;
@@ -515,7 +526,7 @@ fn truncated_batch_is_split_and_retried() {
     let cur = Curator::new(dict(), cfg.curate.clone(), true).unwrap();
     let store = Store::open_in_memory().unwrap();
     let plan = cur
-        .plan(&ai, &store, &desk, &desk, false, &[], &[])
+        .plan(&ai, &store, &desk, &desk, false, &nofilter(), &[])
         .expect("truncation is retried, not an error");
     let calls = provider.prompts();
     assert!(
@@ -544,7 +555,7 @@ fn truncated_single_file_is_left_unclassified() {
     let cur = Curator::new(dict(), cfg.curate.clone(), true).unwrap();
     let store = Store::open_in_memory().unwrap();
     let plan = cur
-        .plan(&ai, &store, &desk, &desk, false, &[], &[])
+        .plan(&ai, &store, &desk, &desk, false, &nofilter(), &[])
         .unwrap();
     assert!(!plan
         .moves
@@ -568,7 +579,7 @@ fn timed_out_batch_is_split_and_retried() {
     let ai = AiClassifier::with_provider(provider.clone(), &cfg, &RuleSet::default()).unwrap();
     let cur = Curator::new(dict(), cfg.curate.clone(), true).unwrap();
     let store = Store::open_in_memory().unwrap();
-    cur.plan(&ai, &store, &desk, &desk, false, &[], &[])
+    cur.plan(&ai, &store, &desk, &desk, false, &nofilter(), &[])
         .expect("timeout is retried in halves, not an error");
     assert!(provider.prompts().len() > 2);
     assert_eq!(store.curation_count().unwrap(), answers().len() as u64);
