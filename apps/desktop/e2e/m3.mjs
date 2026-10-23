@@ -204,6 +204,30 @@ let movedPath = null;
   ok(7, "1건 건너뜀 → 대기열 비움", (await main.locator(".pending tbody tr").count()) === 0);
 }
 
+// 7b. bulk undo of recent automatic moves (user-confirmed ones stay)
+{
+  // two files the txt rule moves automatically
+  fs.writeFileSync(path.join(DESK, "tidy-test 자동1.txt"), "x");
+  fs.writeFileSync(path.join(DESK, "tidy-test 자동2.txt"), "x");
+  await sleep(5000);
+  ok("7b", "규칙으로 자동 이동됨", !fs.existsSync(path.join(DESK, "tidy-test 자동1.txt")) && !fs.existsSync(path.join(DESK, "tidy-test 자동2.txt")));
+  const userMoved = fs.existsSync(path.join(T, "설치 파일", "setup 5.exe"));
+  await main.locator(".topbar nav").getByRole("button", { name: "되돌리기" }).click();
+  await sleep(1200);
+  const bulk = main.locator("[data-testid=bulk-undo]");
+  const btn = bulk.getByRole("button");
+  const label = await btn.innerText();
+  ok("7b", "최근 1시간 규칙·AI 이동 개수 표시", /규칙·AI 이동 \d+개 되돌리기/.test(label) && Number(label.match(/(\d+)개/)[1]) >= 2, label);
+  await btn.click();
+  await sleep(3000);
+  const back = fs.existsSync(path.join(DESK, "tidy-test 자동1.txt")) && fs.existsSync(path.join(DESK, "tidy-test 자동2.txt"));
+  ok("7b", "자동 이동 전부 되돌림", back);
+  ok("7b", "직접 확인한 이동은 그대로", userMoved === fs.existsSync(path.join(T, "설치 파일", "setup 5.exe")));
+  const after = await bulk.getByRole("button").innerText();
+  ok("7b", "되돌린 뒤 개수 0", /0개/.test(after) || (await bulk.getByRole("button").isDisabled()), after);
+  await main.screenshot({ path: `${SHOT}/07b-bulk-undo.png` });
+}
+
 // 8. undo last
 {
   await main.locator(".topbar nav").getByRole("button", { name: "홈" }).click();

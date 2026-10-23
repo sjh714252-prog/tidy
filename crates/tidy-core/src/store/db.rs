@@ -542,6 +542,26 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// Finished, not-undone moves made at or after `since` (unix seconds),
+    /// newest first — what "최근 이동 전부 되돌리기" unwinds. `auto_only`
+    /// keeps rule/AI moves and leaves the user's own decisions alone.
+    pub fn active_moves_since(
+        &self,
+        since: i64,
+        auto_only: bool,
+    ) -> Result<Vec<MoveLogEntry>, StoreError> {
+        let mut stmt = self.conn.prepare(&format!(
+            "{SELECT_MOVE} WHERE moved_at >= ?1 AND undone_at IS NULL AND state = 'done' \
+             ORDER BY id DESC"
+        ))?;
+        let rows = stmt.query_map([since], move_from_row)?;
+        let all: Vec<MoveLogEntry> = rows.collect::<Result<_, _>>()?;
+        Ok(all
+            .into_iter()
+            .filter(|e| !auto_only || matches!(e.decided_by, DecidedBy::Rule | DecidedBy::Ai))
+            .collect())
+    }
+
     pub fn recent_moves(&self, limit: usize) -> Result<Vec<MoveLogEntry>, StoreError> {
         let mut stmt = self
             .conn

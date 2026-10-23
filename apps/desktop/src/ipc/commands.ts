@@ -129,6 +129,11 @@ export const openPlan = (id: number) => invoke<PlanResult>("open_plan", { id });
 export const listBatches = (limit = 100) => invoke<BatchSummary[]>("list_batches", { limit });
 export const batchMoves = (batchId: string) => invoke<MoveLogEntry[]>("batch_moves", { batchId });
 export const undoBatch = (batchId: string) => invoke<UndoResult>("undo_batch", { batchId });
+/** Bulk undo of the last N seconds (autoOnly = rule/AI moves only). */
+export const countMovesSince = (sinceSecsAgo: number, autoOnly: boolean) =>
+  invoke<number>("count_moves_since", { sinceSecsAgo, autoOnly });
+export const undoSince = (sinceSecsAgo: number, autoOnly: boolean) =>
+  invoke<UndoResult>("undo_since", { sinceSecsAgo, autoOnly });
 
 // M8: wizard, rule editor, folder tree.
 export const wizardInfo = () => invoke<WizardInfo>("wizard_info");

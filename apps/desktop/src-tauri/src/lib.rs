@@ -180,6 +180,8 @@ pub fn run() {
             report_cmds::list_batches,
             report_cmds::batch_moves,
             report_cmds::undo_batch,
+            report_cmds::count_moves_since,
+            report_cmds::undo_since,
             overview::watch_overview,
             about::about_info,
             about::open_url,
