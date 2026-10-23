@@ -49,6 +49,13 @@ pub struct SettingsPatch {
     /// explicit save in the settings tab); `None` leaves the key alone.
     #[serde(default)]
     pub onboarded: Option<bool>,
+    /// (M11) `[general] check_updates`.
+    #[serde(default = "yes")]
+    pub check_updates: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// Apply `patch` to the config file at `path` (created if missing), keeping
@@ -80,6 +87,7 @@ pub fn write_settings(path: &Path, patch: &SettingsPatch) -> Result<(), ConfigEr
     general.insert("quiet_mode", value(patch.quiet_mode));
     general.insert("hotkey", value(patch.hotkey.clone()));
     general.insert("start_on_login", value(patch.start_on_login));
+    general.insert("check_updates", value(patch.check_updates));
     if let Some(o) = patch.onboarded {
         general.insert("onboarded", value(o));
     }
@@ -547,6 +555,8 @@ pub struct General {
     /// before M8: see [`Config::onboarded`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub onboarded: Option<bool>,
+    /// (M11) Look for a new release once a day in the background.
+    pub check_updates: bool,
 }
 
 impl Default for General {
@@ -557,6 +567,7 @@ impl Default for General {
             quiet_mode: false,
             start_on_login: true,
             onboarded: None,
+            check_updates: true,
         }
     }
 }
@@ -1425,6 +1436,7 @@ path = "~/Desktop"
             hotkey: "CmdOrCtrl+Alt+K".into(),
             start_on_login: false,
             onboarded: Some(true),
+            check_updates: true,
         };
         write_settings(&path, &patch).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
@@ -1591,6 +1603,7 @@ send_content = false
             hotkey: "CmdOrCtrl+Shift+Space".into(),
             start_on_login: true,
             onboarded: Some(true),
+            check_updates: true,
         };
         write_settings(&path, &patch).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
@@ -1611,6 +1624,7 @@ send_content = false
             &path,
             &SettingsPatch {
                 onboarded: None,
+                check_updates: true,
                 ..patch
             },
         )
