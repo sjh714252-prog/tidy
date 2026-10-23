@@ -13,6 +13,8 @@
 //! rules 1, 3, 6); new files in watch folders go through the engine.
 
 pub mod context;
+pub mod customers;
+pub mod folder;
 pub mod template;
 
 use std::collections::HashMap;
@@ -25,6 +27,8 @@ use serde_json::Value;
 use thiserror::Error;
 
 pub use context::{ContextDict, ContextError, ContextSuggestion, DocKind, Entity, IssueType};
+pub use customers::{customer_dirs, customer_names, customer_overview, CustomerStat};
+pub use folder::{FolderUnit, FOLDER_SCAN_CAP};
 pub use template::{clean, FolderTemplate, TemplateVals};
 
 use crate::ai::{estimate_cost_usd, prompts, AiError, Usage};
@@ -92,10 +96,14 @@ pub struct CurateInput {
     pub key: String,
     pub name: String,
     pub ext: String,
-    pub folder: String,
+    /// (M12) Folder relative to the folder being organized
+    /// ("가온누리원 로그/tools/go"; "." directly in it) — path context.
+    pub rel_dir: String,
     pub size: u64,
     pub modified: NaiveDate,
     pub excerpt: Option<String>,
+    /// (M12) Set for a folder item (moved as a whole).
+    pub unit: Option<FolderUnit>,
 }
 
 /// Biggest file hashed for the cache key (bigger ones use name/size/mtime).
@@ -124,6 +132,7 @@ impl CurateInput {
     /// it is current (hash, text), reads the file otherwise. Read-only.
     pub fn from_path(
         path: &Path,
+        root: Option<&Path>,
         store: Option<&Store>,
         excerpt_chars: usize,
         max_bytes: u64,
@@ -176,15 +185,78 @@ impl CurateInput {
             key,
             name,
             ext: crate::paths::ext_lower(path),
-            folder: path
-                .parent()
-                .and_then(|p| p.file_name())
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default(),
+            rel_dir: rel_dir(path, root),
             size,
             modified,
             excerpt,
+            unit: None,
         })
+    }
+
+    /// (M12) A folder item.
+    pub fn from_unit(u: FolderUnit) -> Self {
+        Self {
+            path: u.path.clone(),
+            key: u.key.clone(),
+            name: u.name.clone(),
+            ext: String::new(),
+            rel_dir: u.rel.clone(),
+            size: u.bytes,
+            modified: u.newest_date(),
+            excerpt: u.doc.clone(),
+            unit: Some(u),
+        }
+    }
+
+    pub fn is_folder(&self) -> bool {
+        self.unit.is_some()
+    }
+}
+
+/// (M12) Folders that are organized results, never folder items: rule
+/// destinations (resolved against `anchor`) and every "모으기" root.
+pub fn skip_dirs(cfg: &Config, rules: &crate::classify::RuleSet, anchor: &Path) -> Vec<PathBuf> {
+    let mut out = rules.dest_roots_for(&[anchor.to_path_buf()]);
+    for r in crate::report::backlog::organize_roots(&cfg.watches) {
+        if !out.contains(&r) {
+            out.push(r);
+        }
+    }
+    out
+}
+
+fn same_path(a: &Path, b: &Path) -> bool {
+    a == b || matches!((dunce::canonicalize(a), dunce::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
+}
+
+/// `path`'s folder relative to `root` ("." directly in it); without a
+/// root, just the parent folder's name.
+fn rel_dir(path: &Path, root: Option<&Path>) -> String {
+    let parent = path.parent().unwrap_or(Path::new(""));
+    if let Some(r) = root {
+        if let Ok(rel) = parent.strip_prefix(r) {
+            let s = rel.to_string_lossy().replace('\\', "/");
+            return if s.is_empty() { ".".into() } else { s };
+        }
+    }
+    parent
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| ".".into())
+}
+
+/// What a work-context run looks at in one folder (SPEC §14.7): the files
+/// directly in it and its sub-folders as whole items.
+#[derive(Debug, Default)]
+pub struct Items {
+    pub inputs: Vec<CurateInput>,
+    /// Sub-folders still changing (copy / unpack in progress): left out.
+    pub unsettled: Vec<PathBuf>,
+}
+
+impl Items {
+    pub fn folders(&self) -> usize {
+        self.inputs.iter().filter(|i| i.is_folder()).count()
     }
 }
 
@@ -311,7 +383,146 @@ impl Curator {
     }
 
     pub fn input(&self, path: &Path, store: Option<&Store>) -> std::io::Result<CurateInput> {
-        CurateInput::from_path(path, store, self.excerpt_chars(), self.max_bytes)
+        CurateInput::from_path(path, None, store, self.excerpt_chars(), self.max_bytes)
+    }
+
+    /// (M12) Like [`Curator::input`], with the folder relative to `root`
+    /// (the watch folder / the folder being organized) as path context.
+    pub fn input_in(
+        &self,
+        path: &Path,
+        root: &Path,
+        store: Option<&Store>,
+    ) -> std::io::Result<CurateInput> {
+        CurateInput::from_path(
+            path,
+            Some(root),
+            store,
+            self.excerpt_chars(),
+            self.max_bytes,
+        )
+    }
+
+    /// Settle time for folder items.
+    pub fn settle(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.cfg.folder_settle_secs)
+    }
+
+    /// Folder names results of work-context organizing get directly in an
+    /// `in_place` watch folder: customers (dictionary + cache) and the
+    /// fixed first part of the "no customer" layout ("기타").
+    pub fn output_names(&self, store: Option<&Store>) -> Vec<String> {
+        let mut out: Vec<String> = self.dict.entities.iter().map(|e| clean(&e.name)).collect();
+        if let Some(s) = store {
+            for (e, _) in s.curation_groups().unwrap_or_default() {
+                let c = clean(&e);
+                if !out.contains(&c) {
+                    out.push(c);
+                }
+            }
+        }
+        if let Some(first) = self.cfg.other_template.split(['/', '\\']).next() {
+            if !first.contains('{') && !first.trim().is_empty() {
+                out.push(clean(first));
+            }
+        }
+        out
+    }
+
+    /// (M12) Sub-folders of `root` that are organizing candidates: not
+    /// hidden / excluded / protected / in `skip`, not an organized result
+    /// (Tidy moved files into it, or — when results land in `root` itself —
+    /// named like a customer or "기타"), not empty. Unsettled ones come
+    /// back separately.
+    #[allow(clippy::too_many_arguments)]
+    pub fn folder_units(
+        &self,
+        root: &Path,
+        anchor: &Path,
+        filter: &IgnoreFilter,
+        protected: &[PathBuf],
+        skip: &[PathBuf],
+        store: Option<&Store>,
+        now: std::time::SystemTime,
+    ) -> (Vec<FolderUnit>, Vec<PathBuf>) {
+        let names = if same_path(root, anchor) {
+            self.output_names(store)
+        } else {
+            Vec::new()
+        };
+        let mut units = Vec::new();
+        let mut unsettled = Vec::new();
+        let Ok(rd) = std::fs::read_dir(root) else {
+            return (units, unsettled);
+        };
+        let mut dirs: Vec<PathBuf> = rd
+            .filter_map(Result::ok)
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .map(|e| e.path())
+            .collect();
+        dirs.sort();
+        for d in dirs {
+            let name = d
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if name.starts_with('.')
+                || name.contains(TMP_MARKER)
+                || filter.in_excluded_dir(&d)
+                || filter.is_ignored(&d)
+                || protected
+                    .iter()
+                    .chain(skip)
+                    .any(|p| d.starts_with(p) || p.starts_with(&d))
+                || names.iter().any(|n| n == &name)
+                || store.is_some_and(|s| s.has_moves_into(&d).unwrap_or(false))
+            {
+                continue;
+            }
+            let doc = if self.send_content { 300 } else { 0 };
+            let Ok(u) = FolderUnit::scan(&d, root, filter, doc) else {
+                continue;
+            };
+            if u.files == 0 {
+                continue;
+            }
+            if !u.is_settled(self.settle(), now) {
+                unsettled.push(d);
+                continue;
+            }
+            units.push(u);
+        }
+        (units, unsettled)
+    }
+
+    /// (M12) Everything a work-context run looks at in `root`: files
+    /// directly in it, and its sub-folders as whole items.
+    #[allow(clippy::too_many_arguments)]
+    pub fn items_in(
+        &self,
+        root: &Path,
+        anchor: &Path,
+        filter: &IgnoreFilter,
+        protected: &[PathBuf],
+        skip: &[PathBuf],
+        store: &Store,
+    ) -> Items {
+        let mut inputs: Vec<CurateInput> = Self::files_in(root, false, filter, protected)
+            .iter()
+            .filter(|p| !store.get_file(p).ok().flatten().is_some_and(|f| f.vault))
+            .filter_map(|p| self.input_in(p, root, Some(store)).ok())
+            .collect();
+        let (units, unsettled) = self.folder_units(
+            root,
+            anchor,
+            filter,
+            protected,
+            skip,
+            Some(store),
+            std::time::SystemTime::now(),
+        );
+        inputs.extend(units.into_iter().map(CurateInput::from_unit));
+        Items { inputs, unsettled }
     }
 
     /// Files directly in `root` (and below with `recursive`), skipping
@@ -342,10 +553,11 @@ impl Curator {
         prompts::CurateFileLine {
             id,
             name: i.name.clone(),
-            folder: i.folder.clone(),
+            rel_dir: i.rel_dir.clone(),
             size: i.size,
             modified: i.modified.format("%Y-%m-%d").to_string(),
             excerpt: i.excerpt.clone(),
+            folder: i.unit.as_ref().map(FolderUnit::line),
         }
     }
 
@@ -520,31 +732,52 @@ impl Curator {
     }
 
     pub fn dest_dir(&self, c: &Curation, date: NaiveDate, anchor: &Path) -> PathBuf {
-        match c.entity.as_deref().filter(|e| !e.trim().is_empty()) {
-            Some(e) => self.template.render(
-                &TemplateVals {
+        self.dest_for(c, date, anchor, None)
+    }
+
+    /// Where an item goes: a file's folder, or (M12) a folder item's new
+    /// path — `{folder}` in the layout, else the folder name appended.
+    pub fn dest_for(
+        &self,
+        c: &Curation,
+        date: NaiveDate,
+        anchor: &Path,
+        folder: Option<&str>,
+    ) -> PathBuf {
+        let (t, vals) = match c.entity.as_deref().filter(|e| !e.trim().is_empty()) {
+            Some(e) => (
+                &self.template,
+                TemplateVals {
                     entity: Some(e),
                     issue: &c.issue,
                     doc_kind: &c.doc_kind,
                     topic: None,
                     date: Some(date),
+                    folder,
                 },
-                anchor,
             ),
-            None => self.other.render(
-                &TemplateVals {
+            None => (
+                &self.other,
+                TemplateVals {
                     entity: None,
                     issue: &c.issue,
                     doc_kind: &c.doc_kind,
                     topic: c.topic.as_deref(),
                     date: Some(date),
+                    folder,
                 },
-                anchor,
             ),
+        };
+        let dir = t.render(&vals, anchor);
+        match folder {
+            Some(f) if !t.uses("folder") => dir.join(clean(f)),
+            _ => dir,
         }
     }
 
-    /// A work-context plan for the files in `root` (nothing moves).
+    /// A work-context plan for `root` (nothing moves): the files directly
+    /// in it and (M12) its sub-folders as whole items. `skip`: folders that
+    /// are organized results (rule destinations, organize roots).
     #[allow(clippy::too_many_arguments)]
     pub fn plan(
         &self,
@@ -552,50 +785,31 @@ impl Curator {
         store: &Store,
         root: &Path,
         anchor: &Path,
-        recursive: bool,
         filter: &IgnoreFilter,
         protected: &[PathBuf],
+        skip: &[PathBuf],
     ) -> Result<Plan, CurateError> {
         let root = dunce::canonicalize(root)
             .map_err(|_| CurateError::NotADirectory(root.to_path_buf()))?;
-        let inputs: Vec<CurateInput> = Self::files_in(&root, recursive, filter, protected)
-            .iter()
-            .filter(|p| !store.get_file(p).ok().flatten().is_some_and(|f| f.vault))
-            .filter_map(|p| self.input(p, Some(store)).ok())
-            .collect();
+        let items = self.items_in(&root, anchor, filter, protected, skip, store);
+        let unsettled = items.unsettled.len();
+        let inputs = items.inputs;
         let judged = self.analyze(ai, store, &inputs)?;
         let mut moves = Vec::new();
         for (i, c) in inputs.iter().zip(judged) {
             let note = match c {
                 Some(c) => note_for(i, &c, !self.is_classified(&c)),
-                None => ContextNote {
-                    issue: String::new(),
-                    own_date: i.modified.format("%Y-%m-%d").to_string(),
-                    reason: "AI 응답에 이 파일이 없었습니다".into(),
-                    unclassified: true,
-                    key: i.key.clone(),
-                    ..Default::default()
-                },
+                None => unanswered(i),
             };
-            let encrypt = self.vault_mode
+            let encrypt = !i.is_folder()
+                && self.vault_mode
                 && store
                     .get_file(&i.path)
                     .ok()
                     .flatten()
                     .and_then(|f| f.pii_flags)
                     .is_some_and(|f| f != 0);
-            moves.push(PlannedMove {
-                id: moves.len() as u32 + 1,
-                from: i.path.clone(),
-                to: i.path.clone(),
-                is_dir: false,
-                files: 1,
-                bytes: i.size,
-                reason: note.reason.clone(),
-                warnings: Vec::new(),
-                context: Some(note),
-                encrypt,
-            });
+            moves.push(planned(moves.len() as u32 + 1, i, note, encrypt));
         }
         let mut plan = Plan {
             id: 0,
@@ -610,7 +824,47 @@ impl Curator {
             anchor: Some(anchor.to_path_buf()),
         };
         self.relayout(&mut plan, Some(store));
+        if unsettled > 0 {
+            plan.summary.push_str(&format!(
+                " 아직 바뀌는 중인 폴더 {unsettled}개(복사·압축 해제 중)는 뺐습니다."
+            ));
+        }
         Ok(plan)
+    }
+
+    /// (M12) "파일별로 나누기": replace folder item `id` by its files (all
+    /// of them, any depth), each judged on its own with its path inside
+    /// the organized folder as context.
+    pub fn split_folder(
+        &self,
+        ai: &AiClassifier,
+        store: &Store,
+        plan: &mut Plan,
+        id: u32,
+        filter: &IgnoreFilter,
+    ) -> Result<usize, CurateError> {
+        let pos = plan
+            .moves
+            .iter()
+            .position(|m| m.id == id && m.is_dir)
+            .ok_or(CurateError::NoSuchMove(id))?;
+        let dir = plan.moves[pos].from.clone();
+        let inputs: Vec<CurateInput> = Self::files_in(&dir, true, filter, &[])
+            .iter()
+            .filter_map(|p| self.input_in(p, &plan.root, Some(store)).ok())
+            .collect();
+        let judged = self.analyze(ai, store, &inputs)?;
+        plan.moves.remove(pos);
+        let first = plan.moves.iter().map(|m| m.id).max().unwrap_or(0) + 1;
+        for (next, (i, c)) in (first..).zip(inputs.iter().zip(judged)) {
+            let note = match c {
+                Some(c) => note_for(i, &c, !self.is_classified(&c)),
+                None => unanswered(i),
+            };
+            plan.moves.push(planned(next, i, note, false));
+        }
+        self.relayout(plan, Some(store));
+        Ok(inputs.len())
     }
 
     /// Recompute folder dates and destinations of every work-context item
@@ -680,18 +934,26 @@ impl Curator {
                 reason: n.reason.clone(),
                 source: CurationSource::Ai,
             };
-            let dir = self.dest_dir(&c, date, &anchor);
             let name = m
                 .from
                 .file_name()
                 .map(|x| x.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            m.to = dir.join(if m.encrypt { zip_name_for(&name) } else { name });
+            m.to = if m.is_dir {
+                self.dest_for(&c, date, &anchor, Some(&name))
+            } else {
+                let dir = self.dest_dir(&c, date, &anchor);
+                dir.join(if m.encrypt { zip_name_for(&name) } else { name })
+            };
             m.reason = n.reason.clone();
             m.warnings.clear();
             if m.to.exists() && m.to != m.from {
-                m.warnings
-                    .push("목적지에 같은 이름이 있어 '(1)'처럼 번호가 붙습니다".into());
+                m.warnings.push(if m.is_dir {
+                    "목적지에 같은 이름의 폴더가 있어 그 안에 합칩니다(같은 이름 파일은 '(1)')"
+                        .into()
+                } else {
+                    "목적지에 같은 이름이 있어 '(1)'처럼 번호가 붙습니다".into()
+                });
             }
             if m.encrypt {
                 m.warnings
@@ -704,8 +966,9 @@ impl Curator {
                 placed += 1;
             }
         }
+        let folders = plan.moves.iter().filter(|m| m.is_dir).count();
         plan.summary = format!(
-            "파일 {}개 중 {placed}개를 고객사 {}곳 · 이슈 {}건과 기타 주제로 묶습니다. 미분류 {unclassified}개는 그대로 둡니다.",
+            "항목 {}개(폴더 {folders}개 통째 포함) 중 {placed}개를 고객사 {}곳 · 이슈 {}건과 기타 주제로 묶습니다. 미분류 {unclassified}개는 그대로 둡니다.",
             plan.moves.len(),
             entities.len(),
             issues.len(),
@@ -756,11 +1019,14 @@ impl Curator {
             n.doc_kind = k.to_string();
         }
         if n.doc_kind.is_empty() {
-            n.doc_kind = self
-                .dict
-                .doc_kind_for_ext(&crate::paths::ext_lower(&m.from))
-                .unwrap_or("기타 자료")
-                .to_string();
+            n.doc_kind = if m.is_dir {
+                "자료".to_string()
+            } else {
+                self.dict
+                    .doc_kind_for_ext(&crate::paths::ext_lower(&m.from))
+                    .unwrap_or("기타 자료")
+                    .to_string()
+            };
         }
         if let Some(t) = edit
             .topic
@@ -772,6 +1038,13 @@ impl Curator {
         }
         if n.entity.is_none() && n.topic.is_none() {
             n.topic = Some("미분류".into());
+        }
+        if let Some(d) = edit
+            .date
+            .as_deref()
+            .and_then(|d| NaiveDate::parse_from_str(d.trim(), "%Y-%m-%d").ok())
+        {
+            n.own_date = d.format("%Y-%m-%d").to_string();
         }
         n.unclassified = false;
         n.edited = true;
@@ -841,6 +1114,7 @@ impl Curator {
         ai: &AiClassifier,
         store: &Store,
         inputs: &[CurateInput],
+        top_folders: &[String],
     ) -> Result<ContextCandidates, CurateError> {
         let lines: Vec<prompts::CurateFileLine> = inputs
             .iter()
@@ -852,7 +1126,7 @@ impl Curator {
                 l
             })
             .collect();
-        let user = prompts::curate_user(&self.dict.prompt_text(), &lines);
+        let user = prompts::context_user(&self.dict.prompt_text(), top_folders, &lines);
         let call = AiCall {
             purpose: "context",
             system: prompts::CONTEXT_SYSTEM,
@@ -881,6 +1155,8 @@ pub struct MoveEdit {
     pub issue: Option<String>,
     pub doc_kind: Option<String>,
     pub topic: Option<String>,
+    /// (M12) The item's own date, YYYY-MM-DD (a folder's newest file by default).
+    pub date: Option<String>,
 }
 
 fn note_for(i: &CurateInput, c: &Curation, unclassified: bool) -> ContextNote {
@@ -898,6 +1174,55 @@ fn note_for(i: &CurateInput, c: &Curation, unclassified: bool) -> ContextNote {
         unclassified,
         edited: c.source == CurationSource::User,
         key: i.key.clone(),
+        tree: i.unit.as_ref().map(|u| inner_tree(&u.path)),
+    }
+}
+
+/// No answer for this item (left in place).
+fn unanswered(i: &CurateInput) -> ContextNote {
+    ContextNote {
+        issue: String::new(),
+        own_date: i.modified.format("%Y-%m-%d").to_string(),
+        reason: "AI 응답에 이 항목이 없었습니다".into(),
+        unclassified: true,
+        key: i.key.clone(),
+        tree: i.unit.as_ref().map(|u| inner_tree(&u.path)),
+        ..Default::default()
+    }
+}
+
+fn planned(id: u32, i: &CurateInput, note: ContextNote, encrypt: bool) -> PlannedMove {
+    PlannedMove {
+        id,
+        from: i.path.clone(),
+        to: i.path.clone(),
+        is_dir: i.is_folder(),
+        files: i.unit.as_ref().map_or(1, |u| u.files as u64),
+        bytes: i.size,
+        reason: note.reason.clone(),
+        warnings: Vec::new(),
+        context: Some(note),
+        encrypt,
+    }
+}
+
+/// A folder item's inside, three levels deep (preview "펼치기").
+fn inner_tree(dir: &Path) -> String {
+    let opts = crate::report::ScanOptions {
+        max_depth: Some(3),
+        ..Default::default()
+    };
+    match crate::report::scan(dir, &opts) {
+        Ok(r) => crate::report::render_tree(
+            &r.tree,
+            &crate::report::TreeOptions {
+                max_depth: Some(3),
+                show_files: true,
+                show_size: false,
+                max_files_per_dir: 6,
+            },
+        ),
+        Err(e) => e.to_string(),
     }
 }
 

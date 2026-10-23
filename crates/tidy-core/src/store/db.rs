@@ -399,6 +399,23 @@ impl Store {
 
     /// Record a move that is about to happen (the mover writes the row
     /// first, then moves, then [`Store::complete_move`]s it).
+    /// (M12) Tidy moved a file into `dir` (or below) and it was not undone:
+    /// the folder is an organized result, not a new folder to organize.
+    pub fn has_moves_into(&self, dir: &Path) -> Result<bool, StoreError> {
+        let mut prefix = path_str(dir)?.trim_end_matches(['/', '\\']).to_string();
+        prefix.push(std::path::MAIN_SEPARATOR);
+        let n = prefix.chars().count() as i64;
+        let found: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM move_log WHERE undone_at IS NULL AND substr(dst_path, 1, ?2) = ?1 LIMIT 1",
+                params![prefix, n],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(found.is_some())
+    }
+
     pub(crate) fn begin_move(&self, m: &NewMove) -> Result<i64, StoreError> {
         self.insert_move_state(m, "moving")
     }

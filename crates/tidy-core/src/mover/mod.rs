@@ -19,6 +19,7 @@
 //!   the unchanged original; decrypted "open" copies under
 //!   `<temp>/tidy-open` (see `vault.rs`).
 
+mod dir;
 mod recover;
 mod transfer;
 mod undo;
@@ -33,6 +34,7 @@ use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
+pub use dir::{DirMoveReport, DirMoveRequest};
 pub use recover::{RecoveryReport, DEFAULT_RECOVERY_GRACE};
 pub use transfer::{ProgressFn, TransferProgress};
 pub use undo::{UndoConflict, UndoReport};
@@ -92,6 +94,10 @@ pub enum MoverError {
     Store(#[from] StoreError),
     #[error("not a regular file: {0}")]
     NotAFile(PathBuf),
+    #[error("not a folder: {0}")]
+    NotAFolder(PathBuf),
+    #[error("cannot move {src} into itself ({dest})")]
+    DestinationInside { src: PathBuf, dest: PathBuf },
     #[error("destination already exists: {0}")]
     DestinationExists(PathBuf),
     #[error("copy verification failed for {0} (size or hash mismatch); source left untouched")]

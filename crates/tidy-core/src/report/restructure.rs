@@ -20,7 +20,7 @@ use crate::ai::{prompts, AiError};
 use crate::classify::{AiCall, AiClassifier, FileFacts, RuleSet};
 use crate::engine::{new_batch_id, reindex_for, Action};
 use crate::index::IndexOptions;
-use crate::mover::{MoveOutcome, MoveRequest, Mover, TMP_MARKER};
+use crate::mover::{DirMoveRequest, MoveOutcome, MoveRequest, Mover, TMP_MARKER};
 use crate::paths::normalize_lexical;
 use crate::store::{DecidedBy, Store, StoreError};
 use crate::watcher::IgnoreFilter;
@@ -108,6 +108,9 @@ pub struct ContextNote {
     pub edited: bool,
     /// `curation.key` of the file.
     pub key: String,
+    /// (M12) A folder item: its inner tree (a few levels) for the preview.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -606,19 +609,24 @@ fn expand(plan: &Plan, ids: Option<&[u32]>) -> Vec<FileMove> {
                 });
             }
         } else {
-            let new = name_of(&m.to);
-            // An encrypted move's `to` ends in ".zip"; the mover names it.
-            let renamed = !m.encrypt && new != name_of(&m.from);
-            out.push(FileMove {
-                src: m.from.clone(),
-                dest_dir: m.to.parent().unwrap_or(&plan.root).to_path_buf(),
-                new_name: renamed.then_some(new),
-                encrypt: m.encrypt,
-                context: m.context.clone(),
-            });
+            out.push(file_move(plan, m));
         }
     }
     out
+}
+
+/// One planned file move as a mover request's parts.
+fn file_move(plan: &Plan, m: &PlannedMove) -> FileMove {
+    let new = name_of(&m.to);
+    // An encrypted move's `to` ends in ".zip"; the mover names it.
+    let renamed = !m.encrypt && new != name_of(&m.from);
+    FileMove {
+        src: m.from.clone(),
+        dest_dir: m.to.parent().unwrap_or(&plan.root).to_path_buf(),
+        new_name: renamed.then_some(new),
+        encrypt: m.encrypt,
+        context: m.context.clone(),
+    }
 }
 
 /// Before/after folder trees for the selected moves (`None` = all).
@@ -674,13 +682,24 @@ pub fn preview(plan: &Plan, ids: Option<&[u32]>) -> Result<Preview, PlanError> {
             emptied.push(dir.to_string());
         }
     });
-    // Report only the top-most emptied folders.
+    // Folders moved as a whole go with their contents (M12): not "left
+    // empty". Report only the top-most remaining ones.
+    let moved_dirs: Vec<String> = selected(plan, ids)
+        .filter(|m| m.is_dir && m.from != m.to)
+        .filter_map(|m| m.from.strip_prefix(&res.root).ok())
+        .map(|r| r.to_string_lossy().replace('\\', "/"))
+        .collect();
     let tops: Vec<String> = emptied
         .iter()
         .filter(|d| {
             !emptied
                 .iter()
                 .any(|o| *d != o && d.starts_with(&format!("{o}/")))
+        })
+        .filter(|d| {
+            !moved_dirs
+                .iter()
+                .any(|m| *d == m || d.starts_with(&format!("{m}/")))
         })
         .cloned()
         .collect();
@@ -718,14 +737,96 @@ pub fn apply(
         batch_id: batch_id.clone(),
         ..Default::default()
     };
-    for fm in expand(plan, ids) {
-        if protected
-            .iter()
-            .any(|p| within(&fm.src, p) || within(&fm.dest_dir, p))
-        {
-            report.skipped.push((fm.src, "건드리지 말 폴더".into()));
+    let record = |report: &mut ApplyReport,
+                  out: Result<MoveOutcome, String>,
+                  src: &Path,
+                  note: Option<&ContextNote>,
+                  encrypted: bool| match out {
+        Ok(MoveOutcome::Moved { log_id, src, dst }) => {
+            if let Some(note) = note {
+                // Remember the folder date this group got, so new files
+                // of the same issue join it (SPEC §14.3).
+                crate::curate::remember_applied(store, note, &dst);
+            }
+            if let Some(opts) = index {
+                reindex_for(
+                    store,
+                    &Action::Moved {
+                        src: src.clone(),
+                        dst: dst.clone(),
+                        rule: label.clone(),
+                        batch_id: batch_id.clone(),
+                        log_id,
+                        by: DecidedBy::Restructure,
+                        confidence: None,
+                        encrypted,
+                    },
+                    opts,
+                );
+            }
+            report.moved.push((src, dst));
+        }
+        Ok(MoveOutcome::SkippedDuplicate { src, existing }) => report.skipped.push((
+            src,
+            format!("같은 내용이 이미 있음: {}", existing.display()),
+        )),
+        Ok(MoveOutcome::AlreadyInPlace(p)) => report.skipped.push((p, "이미 그 자리".into())),
+        Err(e) => report.errors.push((src.to_path_buf(), e)),
+    };
+    for m in selected(plan, ids) {
+        // Unclassified work-context items stay where they are.
+        if m.from == m.to {
             continue;
         }
+        if protected
+            .iter()
+            .any(|p| within(&m.from, p) || within(&m.to, p))
+        {
+            report
+                .skipped
+                .push((m.from.clone(), "건드리지 말 폴더".into()));
+            continue;
+        }
+        if m.is_dir {
+            // (M12) A folder moves as one unit: every file in the batch,
+            // emptied source folders cleaned up (SPEC §14.7).
+            if !m.from.is_dir() {
+                report.skipped.push((
+                    m.from.clone(),
+                    "폴더가 없음 (이미 옮겨졌거나 지워짐)".into(),
+                ));
+                continue;
+            }
+            let req = DirMoveRequest {
+                src: m.from.clone(),
+                dest: m.to.clone(),
+                batch_id: batch_id.clone(),
+                decided_by: DecidedBy::Restructure,
+                rule_name: Some(label.clone()),
+                ai_confidence: m.context.as_ref().map(|c| c.confidence),
+            };
+            match mover.move_dir(&req) {
+                Ok(r) => {
+                    for o in r.outcomes {
+                        let src = match &o {
+                            MoveOutcome::Moved { src, .. }
+                            | MoveOutcome::SkippedDuplicate { src, .. } => src.clone(),
+                            MoveOutcome::AlreadyInPlace(p) => p.clone(),
+                        };
+                        record(&mut report, Ok(o), &src, None, false);
+                    }
+                    for (f, e) in r.errors {
+                        report.errors.push((f, e));
+                    }
+                    if let Some(note) = &m.context {
+                        crate::curate::remember_applied(store, note, &m.to);
+                    }
+                }
+                Err(e) => report.errors.push((m.from.clone(), e.to_string())),
+            }
+            continue;
+        }
+        let fm = file_move(plan, m);
         if !fm.src.is_file() {
             report
                 .skipped
@@ -747,38 +848,8 @@ pub fn apply(
                 crate::engine::prepare_vault_index(store, &fm.src, opts);
             }
         }
-        match mover.move_file(&req) {
-            Ok(MoveOutcome::Moved { log_id, src, dst }) => {
-                if let Some(note) = &fm.context {
-                    // Remember the folder date this group got, so new files
-                    // of the same issue join it (SPEC §14.3).
-                    crate::curate::remember_applied(store, note, &dst);
-                }
-                if let Some(opts) = index {
-                    reindex_for(
-                        store,
-                        &Action::Moved {
-                            src: src.clone(),
-                            dst: dst.clone(),
-                            rule: label.clone(),
-                            batch_id: batch_id.clone(),
-                            log_id,
-                            by: DecidedBy::Restructure,
-                            confidence: None,
-                            encrypted: fm.encrypt,
-                        },
-                        opts,
-                    );
-                }
-                report.moved.push((src, dst));
-            }
-            Ok(MoveOutcome::SkippedDuplicate { src, existing }) => report.skipped.push((
-                src,
-                format!("같은 내용이 이미 있음: {}", existing.display()),
-            )),
-            Ok(MoveOutcome::AlreadyInPlace(p)) => report.skipped.push((p, "이미 그 자리".into())),
-            Err(e) => report.errors.push((fm.src, e.to_string())),
-        }
+        let out = mover.move_file(&req).map_err(|e| e.to_string());
+        record(&mut report, out, &fm.src, fm.context.as_ref(), fm.encrypt);
     }
     if plan.id > 0 && !report.moved.is_empty() {
         store.mark_plan_applied(plan.id, &batch_id)?;
@@ -865,10 +936,8 @@ mod tests {
         assert!(p.after.contains("KT"), "{}", p.after);
         assert!(p.outside.is_empty());
         assert!(p.emptied.is_empty());
-        assert_eq!(
-            preview(&plan, None).unwrap().emptied,
-            vec!["옛 자료".to_string()]
-        );
+        // "옛 자료" moves as a whole (M12): it is not "left empty".
+        assert_eq!(preview(&plan, None).unwrap().emptied, Vec::<String>::new());
 
         // Apply everything except nothing is auto: explicit call.
         let mover = Mover::new(store, DuplicatePolicy::Skip);
@@ -885,8 +954,9 @@ mod tests {
             .join("2024")
             .join("b.txt")
             .is_file());
-        // Emptied folders are left (no deletion).
-        assert!(root.join("옛 자료").is_dir());
+        // (M12) A folder moved as a whole leaves no empty shell behind
+        // (only empty folders are removed; SPEC §14.7).
+        assert!(!root.join("옛 자료").exists());
         let e = mover.store().moves_in_batch(&r.batch_id).unwrap();
         assert_eq!(e.len(), 4);
         assert!(e.iter().all(|m| m.decided_by == DecidedBy::Restructure));
