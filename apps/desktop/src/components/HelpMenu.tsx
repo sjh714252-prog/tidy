@@ -4,6 +4,8 @@ import { useHome } from "../store/home";
 
 export const REPO = "https://github.com/sjh714252-prog/tidy";
 export const MANUAL_URL = `${REPO}/blob/main/docs/manual.md`;
+/** (M12) docs/manual.md "### 고객사 자료는 어디 있나요?" (GitHub heading anchor). */
+export const CUSTOMER_HELP_URL = `${MANUAL_URL}#고객사-자료는-어디-있나요`;
 
 /** "문의·버그 신고": a new issue with version / OS / config path filled in. */
 export async function issueUrl(): Promise<string> {
@@ -56,6 +58,9 @@ export function HelpMenu() {
         <div className="menu" role="menu" data-testid="help-menu">
           <button role="menuitem" onClick={() => void go(() => ipc.openUrl(MANUAL_URL))}>
             사용 설명서
+          </button>
+          <button role="menuitem" onClick={() => void go(() => ipc.openUrl(CUSTOMER_HELP_URL))}>
+            고객사 자료는 어디 있나요?
           </button>
           <button role="menuitem" onClick={() => void go(async () => ipc.openUrl(await issueUrl()))}>
             문의·버그 신고

@@ -16,6 +16,11 @@ interface SearchState {
   note: string | null;
   semantic: SemanticStatus | null;
   error: string | null;
+  /** (M12) Only this customer's folders ("" = everywhere). */
+  customer: string;
+  customers: string[];
+  setCustomer: (c: string) => void;
+  loadCustomers: () => Promise<void>;
   setQuery: (q: string) => void;
   move: (delta: number) => void;
   select: (i: number) => void;
@@ -41,7 +46,23 @@ export const useSearch = create<SearchState>((set, get) => ({
   note: null,
   semantic: null,
   error: null,
+  customer: "",
+  customers: [],
+  setCustomer: (customer) => {
+    set({ customer });
+    get().setQuery(get().query);
+  },
+  loadCustomers: async () => {
+    try {
+      const customers = await ipc.customerNames();
+      set({ customers });
+      if (get().customer && !customers.includes(get().customer)) get().setCustomer("");
+    } catch {
+      // No dictionary / store: no filter offered.
+    }
+  },
   setQuery: (query) => {
+    const customer = get().customer || null;
     set({ query });
     clearTimeout(ftsTimer);
     clearTimeout(semTimer);
@@ -56,7 +77,7 @@ export const useSearch = create<SearchState>((set, get) => ({
     ftsTimer = setTimeout(async () => {
       set({ loading: true });
       try {
-        const hits = await ipc.search(query, 50);
+        const hits = await ipc.search(query, 50, customer);
         if (gen === generation && !merged) set({ hits, selected: 0, loading: false, error: null, mode: "fts" });
       } catch (e) {
         if (gen === generation && !merged) set({ hits: [], loading: false, error: String(e) });
@@ -66,7 +87,7 @@ export const useSearch = create<SearchState>((set, get) => ({
     semTimer = setTimeout(async () => {
       set({ semanticLoading: true });
       try {
-        const r = await ipc.searchSemantic(query, 50);
+        const r = await ipc.searchSemantic(query, 50, customer);
         if (gen !== generation) return;
         merged = true;
         const keep = get().hits[get().selected]?.path;

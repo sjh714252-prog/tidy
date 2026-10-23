@@ -3,13 +3,16 @@ import * as ipc from "../ipc/commands";
 import type { ContextSuggestion, Plan, PlannedMove } from "../ipc/types";
 import { useCurate } from "../store/curate";
 import { useReport } from "../store/report";
+import { formatSize } from "./format";
 
 const NONE = "";
 
 /**
  * Work-context plan rows (SPEC §14.3): per item the AI's judgement and its
- * reason, with customer / issue / kind editable. An edit re-lays out the plan
- * (nothing moves) and may suggest dictionary additions.
+ * reason, with customer / issue / kind / date editable. An edit re-lays out
+ * the plan (nothing moves) and may suggest dictionary additions. (M12,
+ * §14.7) A sub-folder is one row (📁, moved as a whole): its inner tree
+ * opens below it, and "파일별로 나누기" re-analyzes its files instead.
  */
 export function ContextTable({ plan, rel }: { plan: Plan; rel: (p: string) => string }) {
   const r = useReport();
@@ -95,8 +98,10 @@ function Row({
   const stays = m.from === m.to;
   const [issue, setIssue] = useState(c?.entity ? c.issue : (c?.topic ?? ""));
   useEffect(() => setIssue(c?.entity ? c.issue : (c?.topic ?? "")), [c?.entity, c?.issue, c?.topic]);
+  const [open, setOpen] = useState(false);
   if (!c) return null;
-  const busy = r.editing === m.id;
+  const busy = r.editing === m.id || r.splitting === m.id;
+  const name = m.from.split(/[\\/]/).pop() ?? m.from;
   const base = { entity: c.entity, issue: c.issue, docKind: c.doc_kind, topic: c.topic };
   const commitIssue = () => {
     const v = issue.trim();
@@ -105,9 +110,22 @@ function Row({
   };
   const pct = Math.round(c.confidence * 100);
   const merged = !!c.date && !!c.own_date && c.own_date !== c.date;
+  const split = () => {
+    if (
+      window.confirm(
+        `"${name}" 폴더를 통째로 옮기지 않고, 안의 파일 ${m.files}개를 하나씩 다시 분석합니다(AI 요청). 진행할까요?`,
+      )
+    )
+      void r.splitFolder(m.id);
+  };
 
-  return (
-    <tr className={stays ? "stays" : undefined} data-testid="context-row" data-name={m.from.split(/[\\/]/).pop()}>
+  const row = (
+    <tr
+      className={[stays ? "stays" : "", m.is_dir ? "folder-item" : ""].join(" ").trim() || undefined}
+      data-testid="context-row"
+      data-name={name}
+      data-kind={m.is_dir ? "folder" : "file"}
+    >
       <td>
         <input
           type="checkbox"
@@ -118,7 +136,35 @@ function Row({
       </td>
       <td className="muted">{m.id}</td>
       <td className="path" title={m.from}>
-        {rel(m.from)}
+        {m.is_dir ? (
+          <>
+            <button
+              className="link"
+              data-testid="folder-toggle"
+              title="안의 폴더 구조 보기"
+              aria-expanded={open}
+              onClick={() => setOpen(!open)}
+            >
+              {open ? "▾" : "▸"} 📁 {rel(m.from)}
+            </button>
+            <div className="muted small" data-testid="folder-count">
+              파일 {m.files.toLocaleString()}개 · {formatSize(m.bytes)}
+            </div>
+            {!locked && (
+              <button
+                className="link small"
+                data-testid="folder-split"
+                disabled={busy}
+                title="폴더를 통째로 옮기지 않고 안의 파일을 하나씩 분석합니다"
+                onClick={split}
+              >
+                {r.splitting === m.id ? "파일별로 분석 중…" : "이 폴더는 파일별로 나눠서"}
+              </button>
+            )}
+          </>
+        ) : (
+          rel(m.from)
+        )}
       </td>
       <td>
         <select
@@ -149,9 +195,27 @@ function Row({
           onKeyDown={(e) => e.key === "Enter" && commitIssue()}
         />
       </td>
-      <td className="small" title={merged ? `파일 날짜 ${c.own_date} → 가까운 날짜의 같은 이슈로 묶음` : ""}>
-        {(c.date || c.own_date).replaceAll("-", "")}
-        {merged && <span className="muted"> (묶음)</span>}
+      <td
+        className="small"
+        title={
+          (merged ? `${m.is_dir ? "폴더" : "파일"} 날짜 ${c.own_date} → 가까운 날짜의 같은 이슈로 묶음. ` : "") +
+          (m.is_dir ? "폴더 날짜 = 안의 가장 최근 파일 날짜. 고칠 수 있습니다." : "날짜를 고칠 수 있습니다.")
+        }
+      >
+        {locked ? (
+          (c.date || c.own_date).replaceAll("-", "")
+        ) : (
+          <input
+            type="date"
+            className="date-edit"
+            aria-label="날짜"
+            data-testid="ctx-date"
+            disabled={busy}
+            value={c.own_date}
+            onChange={(e) => e.target.value && void r.editMove(m.id, { ...base, date: e.target.value })}
+          />
+        )}
+        {merged && <div className="muted">→ {c.date.replaceAll("-", "")} (묶음)</div>}
       </td>
       <td>
         <select
@@ -186,6 +250,18 @@ function Row({
         ))}
       </td>
     </tr>
+  );
+  if (!m.is_dir || !open) return row;
+  return (
+    <>
+      {row}
+      <tr className="folder-inner" data-testid="folder-inner">
+        <td />
+        <td colSpan={8}>
+          <pre className="item-tree">{c.tree || "(안의 구조를 아직 모릅니다)"}</pre>
+        </td>
+      </tr>
+    </>
   );
 }
 
