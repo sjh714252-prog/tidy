@@ -10,6 +10,26 @@ use crate::config::WatchRoot;
 use crate::mover::TMP_MARKER;
 use crate::watcher::IgnoreFilter;
 
+/// `p` with its nearest existing ancestor canonicalized (symlinks such as
+/// macOS `/var` → `/private/var` resolved) and the missing rest appended,
+/// so a folder that does not exist yet still compares with real ones.
+fn canon(p: &Path) -> PathBuf {
+    let mut rest = Vec::new();
+    let mut cur = p;
+    loop {
+        if let Ok(c) = dunce::canonicalize(cur) {
+            return rest.iter().rev().fold(c, |acc, part| acc.join(part));
+        }
+        match (cur.parent(), cur.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_os_string());
+                cur = parent;
+            }
+            _ => return p.to_path_buf(),
+        }
+    }
+}
+
 /// Files looked at per folder at most ("20,000+" beyond).
 pub const BACKLOG_CAP: usize = 20_000;
 
@@ -44,11 +64,11 @@ pub fn backlog(
     skip: &[PathBuf],
     cap: usize,
 ) -> Backlog {
-    let root = dunce::canonicalize(&w.path).unwrap_or_else(|_| w.path.clone());
-    let anchor = dunce::canonicalize(w.anchor()).unwrap_or_else(|_| w.anchor().to_path_buf());
+    let root = canon(&w.path);
+    let anchor = canon(w.anchor());
     let skip: Vec<PathBuf> = skip
         .iter()
-        .map(|p| dunce::canonicalize(p).unwrap_or_else(|_| p.clone()))
+        .map(|p| canon(p))
         .filter(|p| p != &root)
         .collect();
     let mut out = Backlog::default();
@@ -101,13 +121,10 @@ pub fn organize_roots(watches: &[WatchRoot]) -> Vec<PathBuf> {
 
 /// The watch folder whose `organize_root` is `p` or holds it.
 pub fn organize_root_of<'a>(watches: &'a [WatchRoot], p: &Path) -> Option<&'a WatchRoot> {
-    let p = dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    watches.iter().find(|w| {
-        w.anchor() != w.path.as_path() && {
-            let a = dunce::canonicalize(w.anchor()).unwrap_or_else(|_| w.anchor().to_path_buf());
-            p.starts_with(&a)
-        }
-    })
+    let p = canon(p);
+    watches
+        .iter()
+        .find(|w| w.anchor() != w.path.as_path() && p.starts_with(canon(w.anchor())))
 }
 
 #[cfg(test)]
@@ -164,5 +181,29 @@ mod tests {
         assert_eq!(b.scanned, 3);
         assert!(organize_root_of(&[c.clone()], &root.join("문서").join("2026")).is_some());
         assert!(organize_root_of(&[c], root).is_none());
+    }
+
+    /// macOS: the temp dir is `/var/…`, a symlink to `/private/var/…`. A
+    /// folder that does not exist yet must still match its organize root.
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_parents_and_missing_folders_compare() {
+        let d = tempfile::tempdir().unwrap();
+        let real = d.path().join("real");
+        std::fs::create_dir_all(real.join("정리")).unwrap();
+        let link = d.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert_eq!(
+            canon(&link.join("정리").join("없음")),
+            canon(&real).join("정리").join("없음")
+        );
+        let mut w = watch(&link);
+        w.mode = OrganizeMode::Collect;
+        w.organize_root = Some(link.join("정리"));
+        assert!(
+            organize_root_of(std::slice::from_ref(&w), &link.join("정리").join("2026")).is_some()
+        );
+        assert!(organize_root_of(std::slice::from_ref(&w), &real.join("정리")).is_some());
+        assert!(organize_root_of(&[w], &link.join("다른")).is_none());
     }
 }
