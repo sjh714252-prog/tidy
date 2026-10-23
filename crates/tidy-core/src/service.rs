@@ -18,7 +18,7 @@ use crate::index::IndexOptions;
 use crate::mover::{ExpectedMoves, Mover, ProgressFn, RecoveryReport, DEFAULT_RECOVERY_GRACE};
 use crate::search::{EmbedReport, SemanticSearch};
 use crate::store::{Store, StoreError};
-use crate::watcher::{existing_files, IgnoreFilter, RootState, WatchError, WatchOptions, Watcher};
+use crate::watcher::{existing_files, RootState, WatchError, WatchOptions, Watcher};
 
 /// How often a locked/busy file is retried before giving up.
 pub const MAX_RETRIES: u32 = 5;
@@ -144,7 +144,7 @@ pub fn run_watch(
         Err(e) => on_event(WatchEvent::Warning(format!("중단된 이동 복구 실패: {e}"))),
     };
     recover(&mover, &mut on_event);
-    let filter = IgnoreFilter::new(&cfg.classify.ignore_globs)?;
+    let filter = cfg.ignore_filter()?;
     let mut engine = Engine::new(rules, mover, filter.clone())
         .dry_run(opts.dry_run)
         .with_anchors(crate::classify::Anchors::from_config(cfg))

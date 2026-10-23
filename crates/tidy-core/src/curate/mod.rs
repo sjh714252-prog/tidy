@@ -319,11 +319,9 @@ impl Curator {
     pub fn files_in(
         root: &Path,
         recursive: bool,
-        ignore_globs: &[String],
+        filter: &IgnoreFilter,
         protected: &[PathBuf],
     ) -> Vec<PathBuf> {
-        let filter =
-            IgnoreFilter::new(ignore_globs).unwrap_or_else(|_| IgnoreFilter::new(&[]).unwrap());
         walkdir::WalkDir::new(root)
             .min_depth(1)
             .max_depth(if recursive { usize::MAX } else { 1 })
@@ -331,7 +329,7 @@ impl Curator {
             .into_iter()
             .filter_entry(|e| {
                 let n = e.file_name().to_string_lossy();
-                !n.starts_with('.') && !n.contains(TMP_MARKER)
+                !n.starts_with('.') && !n.contains(TMP_MARKER) && !filter.in_excluded_dir(e.path())
             })
             .filter_map(Result::ok)
             .filter(|e| e.file_type().is_file())
@@ -555,12 +553,12 @@ impl Curator {
         root: &Path,
         anchor: &Path,
         recursive: bool,
-        ignore_globs: &[String],
+        filter: &IgnoreFilter,
         protected: &[PathBuf],
     ) -> Result<Plan, CurateError> {
         let root = dunce::canonicalize(root)
             .map_err(|_| CurateError::NotADirectory(root.to_path_buf()))?;
-        let inputs: Vec<CurateInput> = Self::files_in(&root, recursive, ignore_globs, protected)
+        let inputs: Vec<CurateInput> = Self::files_in(&root, recursive, filter, protected)
             .iter()
             .filter(|p| !store.get_file(p).ok().flatten().is_some_and(|f| f.vault))
             .filter_map(|p| self.input(p, Some(store)).ok())

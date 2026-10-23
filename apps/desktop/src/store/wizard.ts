@@ -43,6 +43,7 @@ const folder = (path: string, label: string, checked: boolean, network = false):
   contentIndexWindow: null,
   mode: "in_place",
   organizeRoot: null,
+  exclude: [],
 });
 
 let countTimer: ReturnType<typeof setTimeout> | undefined;

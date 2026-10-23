@@ -150,6 +150,8 @@ export interface WatchFolder {
   mode: OrganizeMode;
   /** collect: folder the category folders go under. */
   organizeRoot: string | null;
+  /** Sub-folders Tidy leaves alone (absolute paths inside this folder). */
+  exclude: string[];
 }
 
 export type OrganizeMode = "in_place" | "collect";
