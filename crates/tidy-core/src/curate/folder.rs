@@ -15,8 +15,14 @@ use crate::ai::prompts::FolderLine;
 use crate::mover::TMP_MARKER;
 use crate::watcher::IgnoreFilter;
 
-/// Files looked at per folder at most (big toolchains / node_modules).
+/// Files whose names feed the summary (samples, README candidates) at
+/// most (big toolchains / node_modules). Files past it still count for
+/// the file count, size, cache key and settling.
 pub const FOLDER_SCAN_CAP: usize = 20_000;
+/// Modified times further in the future than this (unpacked archives,
+/// a NAS with a wrong clock) are ignored for settling and the folder's
+/// date — otherwise the folder would look "still changing" forever.
+const FUTURE_SKEW: Duration = Duration::from_secs(120);
 const SAMPLES: usize = 10;
 const SUBDIRS: usize = 10;
 const TOP_EXTS: usize = 5;
@@ -43,7 +49,7 @@ pub struct FolderUnit {
     pub doc: Option<String>,
     /// `curation.key`: "folder:<blake3 of the file list>|<name>".
     pub key: String,
-    /// Stopped at [`FOLDER_SCAN_CAP`].
+    /// More than [`FOLDER_SCAN_CAP`] files: samples come from the first ones.
     pub capped: bool,
 }
 
@@ -79,7 +85,7 @@ impl FolderUnit {
             subdirs: Vec::new(),
             largest: None,
             newest: None,
-            last_change: meta.modified().unwrap_or(UNIX_EPOCH),
+            last_change: UNIX_EPOCH,
             doc: None,
             key: String::new(),
             capped: false,
@@ -88,7 +94,14 @@ impl FolderUnit {
         // (depth, rel) for samples; (depth, rel) for doc candidates.
         let mut shallow: Vec<(usize, String)> = Vec::new();
         let mut docs: Vec<(usize, String, PathBuf)> = Vec::new();
-        let mut listing: Vec<String> = Vec::new();
+        // The walk is sorted, so the file list hashes the same every time
+        // without keeping it in memory.
+        let mut listing = blake3::Hasher::new();
+        let horizon = SystemTime::now() + FUTURE_SKEW;
+        let plausible = |t: SystemTime| t <= horizon;
+        if let Some(t) = meta.modified().ok().filter(|t| plausible(*t)) {
+            u.last_change = t;
+        }
         for e in walkdir::WalkDir::new(path)
             .min_depth(1)
             .sort_by_file_name()
@@ -101,7 +114,7 @@ impl FolderUnit {
         {
             let Ok(m) = e.metadata() else { continue };
             let mtime = m.modified().unwrap_or(UNIX_EPOCH);
-            if mtime > u.last_change {
+            if mtime > u.last_change && plausible(mtime) {
                 u.last_change = mtime;
             }
             let rel = e
@@ -120,7 +133,6 @@ impl FolderUnit {
             }
             if u.files >= FOLDER_SCAN_CAP {
                 u.capped = true;
-                break;
             }
             u.files += 1;
             u.bytes += m.len();
@@ -135,18 +147,21 @@ impl FolderUnit {
             if u.largest.as_ref().is_none_or(|(_, s)| m.len() > *s) {
                 u.largest = Some((rel.clone(), m.len()));
             }
-            if u.newest.as_ref().is_none_or(|(_, t)| mtime > *t) {
+            if plausible(mtime) && u.newest.as_ref().is_none_or(|(_, t)| mtime > *t) {
                 u.newest = Some((rel.clone(), mtime));
-            }
-            let lower = e.file_name().to_string_lossy().to_lowercase();
-            if lower.starts_with("readme") || ext == "md" || ext == "txt" {
-                docs.push((e.depth(), rel.clone(), e.path().to_path_buf()));
             }
             let secs = mtime
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
-            listing.push(format!("{rel}|{}|{secs}", m.len()));
+            listing.update(format!("{rel}|{}|{secs}\n", m.len()).as_bytes());
+            if u.capped {
+                continue;
+            }
+            let lower = e.file_name().to_string_lossy().to_lowercase();
+            if lower.starts_with("readme") || ext == "md" || ext == "txt" {
+                docs.push((e.depth(), rel.clone(), e.path().to_path_buf()));
+            }
             shallow.push((e.depth(), rel));
         }
         let mut ex: Vec<(String, usize)> = exts.into_iter().collect();
@@ -162,19 +177,19 @@ impl FolderUnit {
                 u.doc = read_start(p, doc_chars);
             }
         }
-        listing.sort();
-        let digest = blake3::hash(listing.join("\n").as_bytes());
+        let digest = listing.finalize();
         u.key = format!("folder:{}|{}", digest.to_hex(), name.to_lowercase());
         Ok(u)
     }
 
-    /// Date of the newest file (the folder item's own date).
+    /// Date of the newest file (the folder item's own date); today when
+    /// no file has a believable date.
     pub fn newest_date(&self) -> NaiveDate {
-        let t = self
-            .newest
-            .as_ref()
-            .map(|(_, t)| *t)
-            .unwrap_or(self.last_change);
+        let t = match self.newest.as_ref() {
+            Some((_, t)) => *t,
+            None if self.last_change > UNIX_EPOCH => self.last_change,
+            None => SystemTime::now(),
+        };
         DateTime::<Local>::from(t).date_naive()
     }
 
@@ -278,5 +293,35 @@ mod tests {
         let now = SystemTime::now();
         assert!(!u2.is_settled(Duration::from_secs(60), now));
         assert!(u2.is_settled(Duration::from_secs(60), now + Duration::from_secs(61)));
+    }
+
+    /// A file dated in the future (unpacked archive, NAS clock) must not
+    /// keep the folder "still changing" forever.
+    #[test]
+    fn future_dated_files_do_not_block_settling() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("바탕 화면");
+        let unit = root.join("미래 날짜");
+        fs::create_dir_all(&unit).unwrap();
+        let old = SystemTime::now() - Duration::from_secs(3600);
+        let future = SystemTime::now() + Duration::from_secs(30 * 24 * 3600);
+        for (name, t) in [("a.txt", old), ("b.txt", future)] {
+            let p = unit.join(name);
+            fs::write(&p, name).unwrap();
+            fs::File::options()
+                .write(true)
+                .open(&p)
+                .unwrap()
+                .set_modified(t)
+                .unwrap();
+        }
+        let filter = IgnoreFilter::new(&[]).unwrap();
+        let u = FolderUnit::scan(&unit, &root, &filter, 0).unwrap();
+        assert_eq!(u.files, 2);
+        assert_eq!(u.newest.as_ref().unwrap().0, "a.txt", "future date ignored");
+        // The folder's own mtime is "now" (files just written), so it
+        // settles a minute later — not 30 days later.
+        let later = SystemTime::now() + Duration::from_secs(61);
+        assert!(u.is_settled(Duration::from_secs(60), later));
     }
 }
