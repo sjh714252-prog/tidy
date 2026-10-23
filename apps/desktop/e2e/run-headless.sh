@@ -2,7 +2,7 @@
 # Headless GUI test (Linux/cloud): runs the dev app under Xvfb with a
 # throw-away config/DB, Vite on :1420, then drives the UI with Playwright
 # through the dev bridge. Needs: libwebkit2gtk-4.1-dev, xvfb, `npm i --no-save playwright`.
-#   S=/tmp/tidy-e2e bash e2e/run-headless.sh [m3|…|m11]   (default m3)
+#   S=/tmp/tidy-e2e bash e2e/run-headless.sh [m3|…|m12]   (default m3)
 # Each run starts from a fresh config/DB. APP_ENV adds environment for the
 # app, e.g. APP_ENV="TIDY_DEV_AUTOSTART=1" (m7 does this itself).
 set -euo pipefail
@@ -10,6 +10,8 @@ SCRIPT="${1:-m3}"
 [ "$SCRIPT" = m7 ] && APP_ENV="${APP_ENV:-TIDY_DEV_AUTOSTART=1}"
 # m11: fake GitHub releases API (in m11.mjs) and record links instead of opening a browser.
 [ "$SCRIPT" = m11 ] && APP_ENV="${APP_ENV:-TIDY_UPDATE_URL=http://127.0.0.1:18097/repos/sjh714252-prog/tidy/releases/latest TIDY_E2E_NO_OPEN=1}"
+# m12: record "open folder" (고객사별 보기) and links instead of opening them.
+[ "$SCRIPT" = m12 ] && APP_ENV="${APP_ENV:-TIDY_E2E_NO_OPEN=1}"
 S="${S:-/tmp/tidy-e2e}"; T="$S/t"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 pkill -9 -x tidy-desktop 2>/dev/null || true; sleep 1

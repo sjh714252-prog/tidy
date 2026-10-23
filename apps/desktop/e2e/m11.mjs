@@ -270,7 +270,8 @@ const save = async () => {
   ok("E", "탭: 홈 / 확인 대기 / 정리하기 / 되돌리기 / 설정", names.map((n) => n.replace(/\d+$/, "").trim()).join(",") === "홈,확인 대기,정리하기,되돌리기,설정", names.join(","));
   await main.getByRole("button", { name: "도움말 ▾" }).click();
   const items = await main.locator("[data-testid=help-menu] [role=menuitem]").allInnerTexts();
-  ok("E", "도움말 메뉴 4개", items.join(",") === "사용 설명서,문의·버그 신고,업데이트 확인,정보", items.join(","));
+  // (M12) + "고객사 자료는 어디 있나요?" after the manual.
+  ok("E", "도움말 메뉴: 설명서·문의·업데이트·정보", ["사용 설명서", "문의·버그 신고", "업데이트 확인", "정보"].every((i) => items.includes(i)), items.join(","));
   await main.getByRole("menuitem", { name: "사용 설명서" }).click();
   await sleep(500);
   let o = await opened();
