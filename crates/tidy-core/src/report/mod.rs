@@ -7,6 +7,7 @@
 //! [`restructure::apply`], which moves files exclusively through the
 //! [`crate::mover::Mover`] (logged in `move_log`).
 
+pub mod backlog;
 pub mod dup;
 pub mod html;
 pub mod restructure;
