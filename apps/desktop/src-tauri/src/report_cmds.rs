@@ -36,7 +36,8 @@ fn expand(p: &str) -> PathBuf {
     tidy_core::config::expand_home(Path::new(p.trim()))
 }
 
-/// Folders offered in the report picker: watch + index-only folders.
+/// Folders offered in the picker: the watch folders only (M11, SPEC
+/// §14.6); any other folder goes through "다른 폴더…".
 #[tauri::command]
 pub async fn report_roots(app: AppHandle) -> CmdResult<Vec<String>> {
     blocking(move || {
@@ -45,10 +46,24 @@ pub async fn report_roots(app: AppHandle) -> CmdResult<Vec<String>> {
             .watches
             .iter()
             .map(|w| w.path.display().to_string())
-            .chain(cfg.index_only.iter().map(|r| r.path.display().to_string()))
             .collect();
         out.dedup();
         Ok(out)
+    })
+    .await
+}
+
+/// (M11) The "지정 위치로 모으기" root `path` is (or lies in): organizing
+/// there would move already organized files again.
+#[tauri::command]
+pub async fn organize_target(app: AppHandle, path: String) -> CmdResult<Option<String>> {
+    blocking(move || {
+        let cfg = app.state::<AppState>().config();
+        let p = tidy_core::config::expand_home(std::path::Path::new(path.trim()));
+        Ok(
+            tidy_core::report::backlog::organize_root_of(&cfg.watches, &p)
+                .map(|w| w.anchor().display().to_string()),
+        )
     })
     .await
 }
@@ -223,6 +238,7 @@ pub async fn apply_plan(
     ids: Vec<u32>,
     protect: Vec<String>,
 ) -> CmdResult<ApplyDto> {
+    crate::overview::invalidate();
     blocking(move || {
         let state = app.state::<AppState>();
         let cfg = state.config();
@@ -324,6 +340,7 @@ pub async fn batch_moves(app: AppHandle, batch_id: String) -> CmdResult<Vec<Move
 
 #[tauri::command]
 pub async fn undo_batch(app: AppHandle, batch_id: String) -> CmdResult<UndoDto> {
+    crate::overview::invalidate();
     blocking(move || {
         let state = app.state::<AppState>();
         let inner = state.lock_inner();

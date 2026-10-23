@@ -207,6 +207,7 @@ pub async fn finish_onboarding(app: AppHandle, args: FinishArgs) -> CmdResult<Fi
             hotkey: cfg.general.hotkey.clone(),
             start_on_login: cfg.general.start_on_login,
             onboarded: Some(true),
+            check_updates: cfg.general.check_updates,
         };
         write_settings(&state.config_path, &patch).map_err(|e| e.to_string())?;
         state.reload();

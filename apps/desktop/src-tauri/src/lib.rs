@@ -2,12 +2,14 @@
 //! window, confirm popup, pending queue and settings. All logic lives in
 //! `tidy-core`; this crate only wires it to windows, tray and IPC.
 
+mod about;
 mod autostart;
 mod commands;
 mod context_cmds;
 #[cfg(debug_assertions)]
 mod devbridge;
 mod onboarding;
+mod overview;
 mod report_cmds;
 mod security_cmds;
 mod semantic;
@@ -24,10 +26,20 @@ use state::AppState;
 pub fn run() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .init();
+    // Console + `<local data>/tidy/logs/tidy.log` (M11: "로그 폴더 열기").
+    {
+        use tracing_subscriber::fmt::writer::MakeWriterExt;
+        let base = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_target(false);
+        match about::open_log_file() {
+            Some(f) => base
+                .with_ansi(false)
+                .with_writer(std::io::stdout.and(std::sync::Mutex::new(f)))
+                .init(),
+            None => base.init(),
+        }
+    }
 
     let config_path = state::config_path_from_env();
     tracing::info!(config = %config_path.display(), "starting");
@@ -77,6 +89,7 @@ pub fn run() {
             watch::spawn_index(&handle); // starts embedding when done
             watch::spawn_content_window_timer(&handle);
             security_cmds::spawn_open_sweeper(&handle);
+            about::spawn_daily_check(&handle);
             watch::pending_changed(&handle, true);
             #[cfg(debug_assertions)]
             devbridge::start(&handle);
@@ -154,6 +167,7 @@ pub fn run() {
             context_cmds::extract_context,
             context_cmds::context_groups,
             report_cmds::report_roots,
+            report_cmds::organize_target,
             report_cmds::build_report,
             report_cmds::plan_rules,
             report_cmds::plan_ai,
@@ -164,6 +178,11 @@ pub fn run() {
             report_cmds::list_batches,
             report_cmds::batch_moves,
             report_cmds::undo_batch,
+            overview::watch_overview,
+            about::about_info,
+            about::open_url,
+            about::open_folder,
+            about::check_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tidy");
