@@ -84,13 +84,28 @@ impl Mover {
                 files.push(e.into_path());
             }
         }
-        // Keep the shape, empty folders included.
+        // Keep the shape, empty folders included. Folders that did not
+        // exist yet are remembered so undo can tidy them away again.
+        let mut missing: Vec<PathBuf> = dest
+            .ancestors()
+            .take_while(|a| !a.as_os_str().is_empty() && !a.exists())
+            .map(Path::to_path_buf)
+            .collect();
+        missing.extend(
+            dirs.iter()
+                .filter_map(|d| d.strip_prefix(&src).ok())
+                .map(|rel| dest.join(rel))
+                .filter(|t| !t.exists()),
+        );
         fs::create_dir_all(&dest).map_err(MoverError::io("create dir", &dest))?;
         for d in &dirs {
             if let Ok(rel) = d.strip_prefix(&src) {
                 let t = dest.join(rel);
                 fs::create_dir_all(&t).map_err(MoverError::io("create dir", &t))?;
             }
+        }
+        for d in &missing {
+            self.store.record_created_dir(&req.batch_id, d)?;
         }
         let mut report = DirMoveReport::default();
         for f in files {
@@ -214,6 +229,33 @@ mod tests {
             .join("cmd")
             .join("run.go")
             .is_file());
+        // Folders the move created at the destination go away again.
+        assert!(!tmp.path().join("정리").exists(), "created folders removed");
+    }
+
+    #[test]
+    fn undo_keeps_destination_folders_that_existed_or_got_new_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("바탕 화면").join("로그");
+        tree(&src);
+        let customer = tmp.path().join("정리").join("가온누리원");
+        fs::create_dir_all(&customer).unwrap();
+        let issue = customer.join("20261023_로그분석");
+        let dest = issue.join("로그");
+        let m = Mover::new(Store::open_in_memory().unwrap(), DuplicatePolicy::Skip);
+        m.move_dir(&req(&src, &dest)).unwrap();
+        // Someone saves another file into the issue folder meanwhile.
+        fs::write(issue.join("메모.txt"), "나중에 넣은 파일").unwrap();
+        let u = m.undo_batch("dir1").unwrap();
+        assert_eq!(u.restored.len(), 4, "{:?}", u.conflicts);
+        assert!(!dest.exists(), "the moved folder's own copy is removed");
+        assert!(issue.join("메모.txt").is_file(), "non-empty folder kept");
+        assert!(customer.is_dir(), "a folder that existed before stays");
+        // Once the user's file is gone, a later undo of the batch tidies it.
+        fs::remove_file(issue.join("메모.txt")).unwrap();
+        m.undo_batch("dir1").unwrap();
+        assert!(!issue.exists());
+        assert!(customer.is_dir());
     }
 
     #[test]

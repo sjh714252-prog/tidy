@@ -284,6 +284,15 @@ CREATE TABLE curation (
 );
 CREATE INDEX idx_curation_group ON curation(entity, issue);
 "#,
+    // v9 (M12): folders a whole-folder move created at its destination, so
+    // undoing that batch can tidy them away again once they are empty.
+    r#"
+CREATE TABLE created_dirs (
+  batch_id TEXT NOT NULL,
+  path TEXT NOT NULL
+);
+CREATE INDEX idx_created_dirs_batch ON created_dirs(batch_id);
+"#,
 ];
 
 pub struct Store {
@@ -397,8 +406,6 @@ impl Store {
         self.insert_move_state(m, "done")
     }
 
-    /// Record a move that is about to happen (the mover writes the row
-    /// first, then moves, then [`Store::complete_move`]s it).
     /// (M12) Tidy moved a file into `dir` (or below) and it was not undone:
     /// the folder is an organized result, not a new folder to organize.
     pub fn has_moves_into(&self, dir: &Path) -> Result<bool, StoreError> {
@@ -416,6 +423,39 @@ impl Store {
         Ok(found.is_some())
     }
 
+    /// (M12) `dir` did not exist before batch `batch_id` created it.
+    pub(crate) fn record_created_dir(&self, batch_id: &str, dir: &Path) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO created_dirs (batch_id, path) VALUES (?1, ?2)",
+            params![batch_id, path_str(dir)?],
+        )?;
+        Ok(())
+    }
+
+    /// (M12) Folders batch `batch_id` created, deepest first.
+    pub(crate) fn created_dirs(&self, batch_id: &str) -> Result<Vec<PathBuf>, StoreError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT path FROM created_dirs WHERE batch_id = ?1")?;
+        let rows = stmt.query_map([batch_id], |r| r.get::<_, String>(0))?;
+        let mut out: Vec<PathBuf> = rows
+            .map(|r| r.map(PathBuf::from))
+            .collect::<Result<_, _>>()?;
+        out.sort_by_key(|d| std::cmp::Reverse(d.components().count()));
+        Ok(out)
+    }
+
+    /// (M12) Stop tracking a created folder (removed, or kept on purpose).
+    pub(crate) fn forget_created_dir(&self, batch_id: &str, dir: &Path) -> Result<(), StoreError> {
+        self.conn.execute(
+            "DELETE FROM created_dirs WHERE batch_id = ?1 AND path = ?2",
+            params![batch_id, path_str(dir)?],
+        )?;
+        Ok(())
+    }
+
+    /// Record a move that is about to happen (the mover writes the row
+    /// first, then moves, then [`Store::complete_move`]s it).
     pub(crate) fn begin_move(&self, m: &NewMove) -> Result<i64, StoreError> {
         self.insert_move_state(m, "moving")
     }
