@@ -28,6 +28,26 @@ pub enum PendingError {
     Store(#[from] StoreError),
 }
 
+impl PendingError {
+    /// Plain-Korean message for the popup/queue. A file still open in
+    /// another program is the common case: say so instead of showing the
+    /// OS error code.
+    pub fn user_message(&self) -> String {
+        match self {
+            PendingError::Mover(e) if e.is_transient() => format!(
+                "파일이 다른 프로그램에서 열려 있거나 잠겨 있어 옮길 수 없습니다. 그 프로그램에서 파일을 닫은 뒤 다시 '이동'을 누르세요. ({e})"
+            ),
+            PendingError::Mover(MoverError::DestinationExists(p)) => format!(
+                "옮길 곳에 같은 이름의 파일이 이미 있습니다: {}",
+                p.display()
+            ),
+            PendingError::NotFound(_) => "이미 처리된 항목입니다.".into(),
+            PendingError::NoDestination => "옮길 곳이 정해지지 않았습니다. '다른 곳…'으로 폴더를 고르세요.".into(),
+            other => format!("옮기지 못했습니다: {other}"),
+        }
+    }
+}
+
 /// What the user chose in the confirm popup / queue.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -378,5 +398,24 @@ mod tests {
             resolve(&m, 999, &Decision::Skip, "b", None),
             Err(PendingError::NotFound(999))
         ));
+    }
+}
+
+#[cfg(test)]
+mod user_message_tests {
+    use super::*;
+
+    #[test]
+    fn locked_file_gets_a_plain_korean_message() {
+        let locked = MoverError::Io {
+            op: "rename",
+            path: PathBuf::from("a.docx"),
+            source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        };
+        let m = PendingError::from(locked).user_message();
+        assert!(m.contains("다른 프로그램에서 열려"), "{m}");
+        assert!(m.contains("다시 '이동'"), "{m}");
+        let gone = PendingError::NotFound(3).user_message();
+        assert_eq!(gone, "이미 처리된 항목입니다.");
     }
 }

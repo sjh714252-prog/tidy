@@ -139,14 +139,43 @@ let movedPath = null;
   await c.getByRole("button", { name: "다른 곳…", exact: true }).click();
   await sleep(2500);
   ok(6, "다른 곳… → 다른 곳/setup 3.exe", fs.existsSync(path.join(T, "다른 곳", "setup 3.exe")));
+  // 옮길 수 없는 곳(파일인 경로) → 오류가 팝업에 남고 항목은 대기열에 그대로
+  fs.writeFileSync(path.join(DESK, "setup 3b.exe"), "");
+  await sleep(4000);
+  const blocker = path.join(T, "막힌 곳");
+  fs.writeFileSync(blocker, "not a dir");
+  process.env.PROMPT_ANSWER = blocker;
+  await c.getByRole("button", { name: "다른 곳…", exact: true }).click();
+  await sleep(2500);
+  const errTxt = await c.locator(".confirm .error").innerText().catch(() => "");
+  const stErr = await bridge("get_status");
+  ok(6, "이동 실패 → 팝업에 이유 표시 + 대기열 유지", /옮기지 못했습니다|옮길 수 없습니다/.test(errTxt) && stErr.pendingCount === 1 && fs.existsSync(path.join(DESK, "setup 3b.exe")), `err="${errTxt.slice(0, 80)}" pending=${stErr.pendingCount}`);
+  await c.screenshot({ path: `${SHOT}/06-confirm-error.png` });
+  await c.getByRole("button", { name: "건너뜀", exact: true }).click();
+  await sleep(2000);
   // 무시
   fs.writeFileSync(path.join(DESK, "setup 4.exe"), "");
   await sleep(4000);
+  const hint = await c.locator(".confirm .hint").innerText().catch(() => "");
+  ok(6, "팝업에 건너뜀/무시 차이 안내", /건너뜀 = 이번만/.test(hint) && /무시 = /.test(hint), hint);
   await c.getByRole("button", { name: "무시", exact: true }).click();
   await sleep(2000);
   const st2 = await bridge("get_status");
   ok(6, "무시 → 대기 0, 파일 제자리", st2.pendingCount === 0 && fs.existsSync(path.join(DESK, "setup 4.exe")), `pending=${st2.pendingCount}`);
   await c.close();
+  // 무시한 파일은 설정 ⑥에 보이고, 해제하면 다시 정리 대상
+  const ign = await bridge("list_ignored");
+  ok(6, "무시 목록에 setup 4.exe", ign.some((p) => p.endsWith("setup 4.exe")), JSON.stringify(ign));
+  await main.getByRole("button", { name: "설정", exact: true }).click();
+  await sleep(500);
+  const advHead = main.locator("section[data-section=advanced] button.fold-head");
+  if ((await advHead.getAttribute("aria-expanded")) !== "true") await advHead.click();
+  await sleep(500);
+  const box = main.locator("[data-testid=ignored-files]");
+  ok(6, "설정 ⑥ 무시한 파일 1개 표시", /1개/.test(await box.innerText()) && /setup 4\.exe/.test(await box.innerText()));
+  await box.getByRole("button", { name: "해제" }).first().click();
+  await sleep(500);
+  ok(6, "해제 → 목록 비움", /없음/.test(await box.innerText()) && (await bridge("list_ignored")).length === 0);
 }
 
 // 7. quiet mode + queue bulk actions
@@ -173,6 +202,30 @@ let movedPath = null;
   await main.locator(".pending tbody tr").first().getByRole("button", { name: "건너뜀", exact: true }).click();
   await sleep(1500);
   ok(7, "1건 건너뜀 → 대기열 비움", (await main.locator(".pending tbody tr").count()) === 0);
+}
+
+// 7b. bulk undo of recent automatic moves (user-confirmed ones stay)
+{
+  // two files the txt rule moves automatically
+  fs.writeFileSync(path.join(DESK, "tidy-test 자동1.txt"), "x");
+  fs.writeFileSync(path.join(DESK, "tidy-test 자동2.txt"), "x");
+  await sleep(5000);
+  ok("7b", "규칙으로 자동 이동됨", !fs.existsSync(path.join(DESK, "tidy-test 자동1.txt")) && !fs.existsSync(path.join(DESK, "tidy-test 자동2.txt")));
+  const userMoved = fs.existsSync(path.join(T, "설치 파일", "setup 5.exe"));
+  await main.locator(".topbar nav").getByRole("button", { name: "되돌리기" }).click();
+  await sleep(1200);
+  const bulk = main.locator("[data-testid=bulk-undo]");
+  const btn = bulk.getByRole("button");
+  const label = await btn.innerText();
+  ok("7b", "최근 1시간 규칙·AI 이동 개수 표시", /규칙·AI 이동 \d+개 되돌리기/.test(label) && Number(label.match(/(\d+)개/)[1]) >= 2, label);
+  await btn.click();
+  await sleep(3000);
+  const back = fs.existsSync(path.join(DESK, "tidy-test 자동1.txt")) && fs.existsSync(path.join(DESK, "tidy-test 자동2.txt"));
+  ok("7b", "자동 이동 전부 되돌림", back);
+  ok("7b", "직접 확인한 이동은 그대로", userMoved === fs.existsSync(path.join(T, "설치 파일", "setup 5.exe")));
+  const after = await bulk.getByRole("button").innerText();
+  ok("7b", "되돌린 뒤 개수 0", /0개/.test(after) || (await bulk.getByRole("button").isDisabled()), after);
+  await main.screenshot({ path: `${SHOT}/07b-bulk-undo.png` });
 }
 
 // 8. undo last

@@ -45,7 +45,7 @@ export const usePending = create<PendingState>((set, get) => ({
       const items = await ipc.listPending();
       const ids = new Set(items.map((i) => i.id));
       const checked = new Set([...get().checked].filter((id) => ids.has(id)));
-      set({ items, checked, error: null });
+      set({ items, checked });
     } catch (e) {
       set({ error: String(e) });
     }
@@ -67,7 +67,7 @@ export const usePending = create<PendingState>((set, get) => ({
       set({ lastResult: describe(r) });
       return r;
     } catch (e) {
-      set({ error: String(e) });
+      set({ error: String(e).replace(/^Error:\s*/, ""), lastResult: null });
       return null;
     } finally {
       set({ busy: false });

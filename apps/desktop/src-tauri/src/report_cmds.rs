@@ -338,6 +338,79 @@ pub async fn batch_moves(app: AppHandle, batch_id: String) -> CmdResult<Vec<Move
     .await
 }
 
+/// How many finished moves since `since_secs_ago` could be undone
+/// (preview for the "최근 이동 전부 되돌리기" button).
+#[tauri::command]
+pub async fn count_moves_since(
+    app: AppHandle,
+    since_secs_ago: i64,
+    auto_only: bool,
+) -> CmdResult<usize> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let inner = state.lock_inner();
+        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        let since = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0)
+            - since_secs_ago.max(0);
+        Ok(mover
+            .store()
+            .active_moves_since(since, auto_only)
+            .map_err(err)?
+            .len())
+    })
+    .await
+}
+
+/// Undo every finished move of the last `since_secs_ago` seconds in one go
+/// (auto_only = rule/AI moves only). Used after a watch-time run went
+/// wrong (e.g. a project folder split file by file).
+#[tauri::command]
+pub async fn undo_since(
+    app: AppHandle,
+    since_secs_ago: i64,
+    auto_only: bool,
+) -> CmdResult<UndoDto> {
+    crate::overview::invalidate();
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let inner = state.lock_inner();
+        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        let since = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0)
+            - since_secs_ago.max(0);
+        let report = mover.undo_since(since, auto_only).map_err(err)?;
+        reindex_undo(
+            mover.store(),
+            &report,
+            &IndexOptions::from_config(&inner.cfg),
+        );
+        watch::emit_activity(
+            &app,
+            "info",
+            Path::new(""),
+            format!("최근 이동 되돌림: {}개", report.restored.len()),
+        );
+        Ok(UndoDto {
+            restored: report
+                .restored
+                .iter()
+                .map(|(a, b)| (a.display().to_string(), b.display().to_string()))
+                .collect(),
+            conflicts: report
+                .conflicts
+                .iter()
+                .map(|c| format!("{}: {}", c.dst_path.display(), c.reason))
+                .collect(),
+        })
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn undo_batch(app: AppHandle, batch_id: String) -> CmdResult<UndoDto> {
     crate::overview::invalidate();

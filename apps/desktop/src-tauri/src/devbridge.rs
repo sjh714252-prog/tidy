@@ -223,6 +223,8 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
             Err("dev bridge: 폴더 선택 창을 열 수 없습니다 — 경로를 직접 입력하세요".into())
         }
         "get_settings" => ok(commands::get_settings(app).await?),
+        "list_ignored" => ok(commands::list_ignored(app).await?),
+        "unignore" => ok(commands::unignore(app, arg(&args, "path")?).await?),
         "check_rules" => ok(commands::check_rules(arg(&args, "text")?).await?),
         "save_settings" => ok(commands::save_settings(app, arg(&args, "args")?).await?),
         // M6: network folder detection for "폴더 추가".
@@ -314,6 +316,18 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "list_batches" => ok(report_cmds::list_batches(app, arg(&args, "limit")?).await?),
         "batch_moves" => ok(report_cmds::batch_moves(app, arg(&args, "batchId")?).await?),
         "undo_batch" => ok(report_cmds::undo_batch(app, arg(&args, "batchId")?).await?),
+        "count_moves_since" => ok(report_cmds::count_moves_since(
+            app,
+            arg(&args, "sinceSecsAgo")?,
+            arg(&args, "autoOnly")?,
+        )
+        .await?),
+        "undo_since" => {
+            ok(
+                report_cmds::undo_since(app, arg(&args, "sinceSecsAgo")?, arg(&args, "autoOnly")?)
+                    .await?,
+            )
+        }
         "watch_overview" => ok(overview::watch_overview(
             app,
             arg::<Option<bool>>(&args, "refresh")?.unwrap_or(false),

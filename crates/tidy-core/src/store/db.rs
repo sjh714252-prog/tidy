@@ -542,6 +542,26 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// Finished, not-undone moves made at or after `since` (unix seconds),
+    /// newest first — what "최근 이동 전부 되돌리기" unwinds. `auto_only`
+    /// keeps rule/AI moves and leaves the user's own decisions alone.
+    pub fn active_moves_since(
+        &self,
+        since: i64,
+        auto_only: bool,
+    ) -> Result<Vec<MoveLogEntry>, StoreError> {
+        let mut stmt = self.conn.prepare(&format!(
+            "{SELECT_MOVE} WHERE moved_at >= ?1 AND undone_at IS NULL AND state = 'done' \
+             ORDER BY id DESC"
+        ))?;
+        let rows = stmt.query_map([since], move_from_row)?;
+        let all: Vec<MoveLogEntry> = rows.collect::<Result<_, _>>()?;
+        Ok(all
+            .into_iter()
+            .filter(|e| !auto_only || matches!(e.decided_by, DecidedBy::Rule | DecidedBy::Ai))
+            .collect())
+    }
+
     pub fn recent_moves(&self, limit: usize) -> Result<Vec<MoveLogEntry>, StoreError> {
         let mut stmt = self
             .conn
@@ -703,6 +723,23 @@ impl Store {
             params![path_str(path)?, now()],
         )?;
         Ok(())
+    }
+
+    /// Every ignored path, newest first.
+    pub fn list_ignored(&self) -> Result<Vec<PathBuf>, StoreError> {
+        let mut st = self
+            .conn
+            .prepare("SELECT path FROM ignored ORDER BY added_at DESC, path")?;
+        let rows = st.query_map([], |r| r.get::<_, String>(0))?;
+        Ok(rows.filter_map(Result::ok).map(PathBuf::from).collect())
+    }
+
+    /// Organise this path again (settings "무시 해제").
+    pub fn remove_ignored(&self, path: &Path) -> Result<bool, StoreError> {
+        let n = self
+            .conn
+            .execute("DELETE FROM ignored WHERE path = ?1", [path_str(path)?])?;
+        Ok(n > 0)
     }
 
     pub fn is_ignored(&self, path: &Path) -> Result<bool, StoreError> {
