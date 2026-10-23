@@ -553,3 +553,67 @@ confirm = true
         );
     }
 }
+
+/// (M11, SPEC §14.6) A rule destination that ignores the watch folder's
+/// organize mode: an absolute path (`C:\…`, `D:/…`, `\\server\…`, `/…`) or
+/// a home path (`~/…`). Relative destinations and `{root}/…` follow it.
+pub fn is_absolute_dest(dest: &str) -> bool {
+    let d = dest.trim();
+    let b = d.as_bytes();
+    d.starts_with('/')
+        || d.starts_with('\\')
+        || d == "~"
+        || d.starts_with("~/")
+        || d.starts_with("~\\")
+        || (b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':')
+}
+
+/// Relative destination suggested for an absolute one: its last path
+/// component, or the last two when the last holds a `{variable}`
+/// (`~/Documents/Tidy/문서/{yyyy}-{mm}` → `문서/{yyyy}-{mm}`,
+/// `~/Downloads/Installers` → `Installers`).
+pub fn relative_suggestion(dest: &str) -> String {
+    let parts: Vec<&str> = dest
+        .split(['/', '\\'])
+        .map(str::trim)
+        .filter(|p| !p.is_empty() && *p != "~" && !(p.len() == 2 && p.ends_with(':')))
+        .collect();
+    let take = match parts.last() {
+        Some(l) if l.contains('{') && parts.len() >= 2 => 2,
+        Some(_) => 1,
+        None => return String::new(),
+    };
+    parts[parts.len() - take..].join("/")
+}
+
+#[cfg(test)]
+mod dest_tests {
+    use super::*;
+
+    #[test]
+    fn absolute_destinations_and_suggestions() {
+        for d in [
+            "C:\\Users\\me\\Documents",
+            "d:/정리",
+            "\\\\nas\\공유",
+            "/home/me",
+            "~/Downloads",
+            "~",
+        ] {
+            assert!(is_absolute_dest(d), "{d}");
+        }
+        for d in ["문서/{yyyy}-{mm}", "{root}/설치파일", "캡처", ""] {
+            assert!(!is_absolute_dest(d), "{d}");
+        }
+        assert_eq!(
+            relative_suggestion("~/Documents/Tidy/문서/{yyyy}-{mm}"),
+            "문서/{yyyy}-{mm}"
+        );
+        assert_eq!(relative_suggestion("~/Downloads/Installers"), "Installers");
+        assert_eq!(
+            relative_suggestion("C:\\Users\\me\\Pictures\\Screenshots\\{yyyy}"),
+            "Screenshots/{yyyy}"
+        );
+        assert_eq!(relative_suggestion("D:/"), "");
+    }
+}

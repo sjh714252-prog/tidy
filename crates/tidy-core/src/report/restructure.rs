@@ -712,7 +712,7 @@ pub fn apply(
     let batch_id = new_batch_id();
     let label = match plan.source {
         PlanSource::Context => format!("업무 맥락 #{}", plan.id),
-        _ => format!("재구성 #{}", plan.id),
+        _ => format!("정리 제안 #{}", plan.id),
     };
     let mut report = ApplyReport {
         batch_id: batch_id.clone(),

@@ -136,7 +136,7 @@ await sleep(1000);
   }, 40000);
   const s = await bridge("semantic_status");
   ok("B", "백그라운드 임베딩 완료", embedded, JSON.stringify(s));
-  await main.getByRole("button", { name: "활동", exact: true }).click();
+  await main.locator(".topbar nav").getByRole("button", { name: "홈" }).click();
   await sleep(800);
   const bar = await main.locator(".statusbar").innerText();
   ok("B", "상태바: 의미검색 켜짐", bar.includes("의미검색 켜짐"), bar.replace(/\n/g, " | "));
@@ -203,7 +203,7 @@ const query = async (q, wait = 2500) => {
   await rows.filter({ hasText: "키 이름" }).first().locator("input").fill("");
   await main.getByRole("button", { name: "저장", exact: true }).click(); // #8: unified save
   await sleep(3000);
-  await main.getByRole("button", { name: "활동", exact: true }).click();
+  await main.locator(".topbar nav").getByRole("button", { name: "홈" }).click();
   const ready = await waitFor(async () => (await bridge("get_status")).aiState === "ready", 15000);
   ok("E", "AI 분류 모델 준비됨 (상태바 AI 사용)", ready, (await bridge("get_status")).aiDetail ?? "");
 

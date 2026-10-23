@@ -13,6 +13,7 @@ import { Help } from "../components/Help";
 import { AiNeeded, useAiOn } from "../components/AiNeeded";
 import { ContextSection } from "../components/ContextSection";
 import { useCurate } from "../store/curate";
+import { isAbsoluteDest } from "../components/destPaths";
 
 /**
  * Settings (SPEC §14.4): six foldable sections — ① 감시 폴더 ② 규칙
@@ -61,6 +62,11 @@ export function SettingsView() {
   };
   const aiError = ai.error;
   const secBlock = sec.dirty() ? sec.invalid() : null;
+  // (M11) Rules whose absolute destination ignores "지정 위치로 모으기".
+  const collectRoots = [
+    ...new Set(draft.watches.filter((w) => w.mode === "collect" && w.organizeRoot).map((w) => w.organizeRoot as string)),
+  ];
+  const absRules = collectRoots.length ? (cards ?? []).filter((c) => isAbsoluteDest(c.dest)).length : 0;
   const dbChanged = (s.loaded?.dbPathCustom ?? "") !== (draft.dbPathCustom ?? "");
 
   return (
@@ -135,7 +141,7 @@ export function SettingsView() {
                   <tr className="subrow">
                     <td colSpan={6}>
                       <label>
-                        확인 간격(초, 폴링) <Help id="pollInterval" />{" "}
+                        확인 간격(초) <Help id="pollInterval" />{" "}
                         <input
                           type="number"
                           min={5}
@@ -153,7 +159,7 @@ export function SettingsView() {
                           checked={w.pollOnly}
                           onChange={(e) => s.setWatch(i, { pollOnly: e.target.checked })}
                         />{" "}
-                        폴링만 사용 (변경 알림 없이 주기적으로만 확인) <Help id="pollOnly" />
+                        주기 확인만 사용 (변경 알림 없이 주기적으로만 확인) <Help id="pollOnly" />
                       </label>
                       <label title="본문 인덱싱을 켰을 때, 백그라운드 인덱싱이 본문을 읽는 시간대. 비우면 항상">
                         본문 인덱싱 시간대 <Help id="contentWindow" />{" "}
@@ -222,6 +228,7 @@ export function SettingsView() {
             cards={cards}
             preview={editor?.preview ?? null}
             anchors={draft.watches.map(anchorOf)}
+            collectRoots={collectRoots}
             readOnly={!!editor && !editor.cards}
             aiMarked={s.aiMarked}
             onChange={s.setCards}
@@ -294,7 +301,7 @@ export function SettingsView() {
         </label>
         <p className="muted small">
           현재: {draft.dbPath}. 로컬 디스크 경로만 사용하세요(네트워크 드라이브의 SQLite는 깨질 수 있음).
-          {dbChanged && " 경로를 바꾸면 새 DB를 쓰며 기존 이동 기록·대기열·인덱스는 옮겨지지 않습니다."}
+          {dbChanged && " 경로를 바꾸면 새 DB를 쓰며 기존 이동 기록·확인 대기·인덱스는 옮겨지지 않습니다."}
         </p>
 
         <h3>기타</h3>
@@ -304,7 +311,16 @@ export function SettingsView() {
         </label>
         <label className="row">
           <input type="checkbox" checked={draft.quietMode} onChange={(e) => s.patch({ quietMode: e.target.checked })} />
-          <span>조용 모드 — 확인 팝업을 띄우지 않고 대기열에만 쌓기</span>
+          <span>조용 모드 — 확인 팝업을 띄우지 않고 확인 대기 탭에만 쌓기</span>
+        </label>
+        <label className="row">
+          <input
+            type="checkbox"
+            data-testid="check-updates"
+            checked={draft.checkUpdates}
+            onChange={(e) => s.patch({ checkUpdates: e.target.checked })}
+          />
+          <span>하루 한 번 새 버전 확인 — 새 버전이 있으면 상태줄에 "업데이트 있음" 표시(실패해도 아무것도 막지 않음)</span>
         </label>
         <label className="row">
           <input
@@ -333,9 +349,14 @@ export function SettingsView() {
         {!s.error && !aiError && !sec.error && secBlock && <span className="warn small">보안: {secBlock}</span>}
         {s.message && !s.error && !anyDirty() && <span className="ok">{s.message}</span>}
         {!s.error && anyDirty() && <span className="muted small">저장하지 않은 변경이 있습니다</span>}
+        {absRules > 0 && (
+          <span className="warn small" data-testid="abs-rules-warning">
+            규칙 {absRules}개가 정리 위치를 무시합니다(규칙 카드 참고)
+          </span>
+        )}
         <div className="spacer" />
         <button onClick={() => void revert()} disabled={s.saving || ai.busy || sec.busy || cur.busy}>
-          되돌리기
+          변경 취소
         </button>
         <button
           className="primary"

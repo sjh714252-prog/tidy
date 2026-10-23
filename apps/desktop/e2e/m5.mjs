@@ -68,7 +68,7 @@ await sleep(800);
 
 // B. report tab
 {
-  await main.getByRole("button", { name: "리포트" }).click();
+  await main.locator(".topbar nav").getByRole("button", { name: "정리하기" }).click();
   await sleep(800);
   const opts = await main.locator(".report .toolbar select option").allInnerTexts();
   ok("B", "리포트 폴더 목록에 감시 폴더", opts.some((o) => o.includes("바탕 화면")), opts.join(" | "));
@@ -111,7 +111,7 @@ await sleep(800);
   await panel.getByRole("button", { name: /선택한 2개 적용/ }).click();
   await sleep(4000);
   ok("C", "적용 전 확인 다이얼로그", dialogs.some((d) => d.includes("옮깁니다")), dialogs[0] ?? "");
-  const notice = await panel.locator(".notice").innerText().catch(() => "");
+  const notice = await panel.locator(".notice", { hasText: "옮겼습니다" }).innerText().catch(() => "");
   ok("C", "적용 결과 안내 (2개 파일 옮김 + batch)", /2개 파일을 옮겼습니다/.test(notice), notice.slice(0, 120));
   const st = await bridge("list_batches", { limit: 10 });
   const batch = st.find((b) => b.moves === 2);
@@ -121,7 +121,7 @@ await sleep(800);
 
 // D. history tab: batch listed → 되돌리기 → files back
 {
-  await main.getByRole("button", { name: "이동 기록" }).click();
+  await main.locator(".topbar nav").getByRole("button", { name: "되돌리기" }).click();
   await sleep(1500);
   const rows = main.locator(".history tbody tr");
   const txt = await main.locator(".history").innerText();
@@ -145,10 +145,10 @@ await sleep(800);
 
 // E. AI restructure button is disabled while AI is off (rule 6 guard)
 {
-  await main.getByRole("button", { name: "리포트" }).click();
+  await main.locator(".topbar nav").getByRole("button", { name: "정리하기" }).click();
   await sleep(500);
-  const aiBtn = main.locator(".restructure").getByRole("button", { name: "AI 재구성 제안" });
-  ok("E", "AI 꺼짐 → 'AI 재구성 제안' 비활성", await aiBtn.isDisabled());
+  const aiBtn = main.locator(".restructure").getByRole("button", { name: "AI 정리 제안" });
+  ok("E", "AI 꺼짐 → 'AI 정리 제안' 비활성", await aiBtn.isDisabled());
 }
 
 fs.writeFileSync(path.join(process.env.S, "m5-results.json"), JSON.stringify(results, null, 2));

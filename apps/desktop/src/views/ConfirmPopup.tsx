@@ -128,7 +128,7 @@ export function ConfirmPopup() {
       </div>
       <footer>
         <button className="link" onClick={() => void ipc.showWindow("main:pending")}>
-          대기열 전체 보기
+          확인 대기 전체 보기
         </button>
         <button className="link" onClick={() => void hideCurrentWindow()}>
           나중에

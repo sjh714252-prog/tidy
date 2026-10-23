@@ -148,7 +148,7 @@ const sec = main.locator("[data-testid=security-section]");
   ok("B", "팝업 파일명", (await c.locator(".confirm .c-file").innerText()).includes("직원 연락망.csv"));
   await c.screenshot({ path: `${SHOT}/m9-B-confirm.png` });
 
-  await main.getByRole("button", { name: /^대기열/ }).first().click();
+  await main.locator(".topbar nav").getByRole("button", { name: "확인 대기" }).click();
   await sleep(800);
   ok("B", "대기열 화면 배지", (await main.locator(".pending [data-testid=pii-badge]").first().innerText()).includes("이름+휴대전화 15"));
 
@@ -182,7 +182,7 @@ const sec = main.locator("[data-testid=security-section]");
 
 // E. undo → original back, not locked again
 {
-  await main.getByRole("button", { name: "활동", exact: true }).click();
+  await main.locator(".topbar nav").getByRole("button", { name: "홈" }).click();
   await main.getByRole("button", { name: "마지막 이동 되돌리기" }).click();
   const back = await waitFor(() => fs.existsSync(PII_FILE), 10000);
   ok("E", "되돌리기 → 원래 위치에 복원", back);
@@ -220,7 +220,7 @@ const sec = main.locator("[data-testid=security-section]");
 
 // G. report
 {
-  await main.getByRole("button", { name: "리포트", exact: true }).click();
+  await main.locator(".topbar nav").getByRole("button", { name: "정리하기" }).click();
   await sleep(800);
   await main.locator(".report .toolbar select").selectOption({ index: 0 });
   await main.getByRole("button", { name: "리포트 만들기" }).click();
