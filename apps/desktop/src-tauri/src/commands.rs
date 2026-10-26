@@ -486,6 +486,9 @@ pub async fn open_path(app: AppHandle, path: String) -> CmdResult<Option<String>
 
 #[tauri::command]
 pub async fn reveal_path(app: AppHandle, path: String) -> CmdResult<()> {
+    if crate::about::e2e_record(&format!("reveal:{path}")) {
+        return Ok(());
+    }
     app.opener()
         .reveal_item_in_dir(PathBuf::from(path))
         .map_err(|e| e.to_string())

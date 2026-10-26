@@ -114,8 +114,7 @@ pub async fn open_url(app: AppHandle, url: String) -> CmdResult<()> {
     {
         return Err(format!("열 수 없는 주소: {url}"));
     }
-    if cfg!(debug_assertions) && std::env::var_os("TIDY_E2E_NO_OPEN").is_some() {
-        OPENED.lock().unwrap_or_else(|e| e.into_inner()).push(url);
+    if e2e_record(&url) {
         return Ok(());
     }
     app.opener()
@@ -131,8 +130,7 @@ pub async fn open_folder(app: AppHandle, path: String) -> CmdResult<()> {
     if !p.is_dir() {
         return Err(format!("폴더가 없습니다: {path}"));
     }
-    if cfg!(debug_assertions) && std::env::var_os("TIDY_E2E_NO_OPEN").is_some() {
-        OPENED.lock().unwrap_or_else(|e| e.into_inner()).push(path);
+    if e2e_record(&path) {
         return Ok(());
     }
     app.opener()
@@ -140,7 +138,20 @@ pub async fn open_folder(app: AppHandle, path: String) -> CmdResult<()> {
         .map_err(|e| e.to_string())
 }
 
-/// Dev bridge only: what `open_url` / `open_folder` recorded.
+/// Dev builds with `TIDY_E2E_NO_OPEN=1`: record `what` instead of opening
+/// it (true = recorded, skip the real open).
+pub fn e2e_record(what: &str) -> bool {
+    if cfg!(debug_assertions) && std::env::var_os("TIDY_E2E_NO_OPEN").is_some() {
+        OPENED
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(what.to_string());
+        return true;
+    }
+    false
+}
+
+/// Dev bridge only: what `open_url` / `open_folder` / `reveal_path` recorded.
 #[cfg(debug_assertions)]
 pub fn opened() -> Vec<String> {
     OPENED.lock().unwrap_or_else(|e| e.into_inner()).clone()

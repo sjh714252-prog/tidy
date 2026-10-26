@@ -3,9 +3,10 @@ import * as ipc from "../ipc/commands";
 import type { StoredPlan } from "../ipc/types";
 import { guardTarget, useReport } from "../store/report";
 import { useStatus } from "../store/status";
-import { formatSize, formatTime } from "./format";
+import { formatTime } from "./format";
 import { AiNeeded, useAiOn } from "./AiNeeded";
 import { ContextTable, Suggestions } from "./ContextPlan";
+import { PlanMoves } from "./PlanMoves";
 
 const SOURCE: Record<string, string> = { ai: "AI", rules: "규칙", context: "업무 맥락" };
 
@@ -38,8 +39,11 @@ export function RestructurePanel() {
   };
 
   return (
-    <section className="restructure pad">
-      <h3>정리 제안</h3>
+    <section className="card restructure">
+      <div className="card-head">
+        <h2>정리 제안</h2>
+        <span className="sub">미리보기를 보고 고른 것만 옮깁니다</span>
+      </div>
       <div className="row">
         <button disabled={!r.path || !!r.planning} onClick={() => plan_("rules")}>
           {r.planning === "rules" ? "계산 중…" : "규칙으로 정리 미리보기"}
@@ -125,53 +129,7 @@ export function RestructurePanel() {
           ) : plan.source === "context" ? (
             <ContextTable plan={plan} rel={rel} />
           ) : (
-            <table className="grid">
-              <thead>
-                <tr>
-                  <th>
-                    <input
-                      type="checkbox"
-                      checked={r.selected.size === plan.moves.length}
-                      onChange={(e) => r.setAll(e.target.checked)}
-                    />
-                  </th>
-                  <th>#</th>
-                  <th>지금</th>
-                  <th>옮길 곳</th>
-                  <th>이유</th>
-                </tr>
-              </thead>
-              <tbody>
-                {plan.moves.map((m) => (
-                  <tr key={m.id}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        disabled={!!plan.applied_batch}
-                        checked={r.selected.has(m.id)}
-                        onChange={() => r.toggle(m.id)}
-                      />
-                    </td>
-                    <td className="muted">{m.id}</td>
-                    <td className="path" title={m.from}>
-                      {rel(m.from)}
-                      {m.is_dir && <span className="muted small"> 폴더 · {m.files}개 · {formatSize(m.bytes)}</span>}
-                    </td>
-                    <td className="path" title={m.to}>
-                      {rel(m.to)}
-                    </td>
-                    <td className="small">
-                      {m.reason}
-                      {m.warnings.map((w) => (
-                        <div key={w} className="warn">
-                          ⚠ {w}
-                        </div>
-                      ))}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <PlanMoves plan={plan} rel={rel} />
           )}
           {r.suggestions.length > 0 && <Suggestions />}
           {r.learnt && <p className="ok small">{r.learnt}</p>}
