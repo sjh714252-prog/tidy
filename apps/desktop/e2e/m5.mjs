@@ -14,6 +14,7 @@ const ok = (step, what, pass, note = "") => {
   console.log(`${pass ? "PASS" : "FAIL"} [${step}] ${what} ${note}`);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+import { addWatchFolder, gotoSettings, openToml, saveSettings, tab } from "./lib.mjs";
 const bridge = async (cmd, args = {}) =>
   (await (await fetch(`http://127.0.0.1:1421/invoke/${cmd}`, { method: "POST", body: JSON.stringify(args) })).json()).value;
 
@@ -33,10 +34,6 @@ fs.utimesSync(stale, past, past);
 
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1000, height: 820 } });
-// M10: settings sections are foldable; these older tests expect everything open.
-await ctx.addInitScript(() =>
-  localStorage.setItem("tidy.settings.sections", JSON.stringify({ watch: true, rules: true, context: true, ai: true, security: true, advanced: true })),
-);
 const main = await ctx.newPage();
 let dialogs = [];
 main.on("dialog", (d) => {
@@ -49,35 +46,28 @@ await sleep(800);
 
 // A. watch the folder (no process-existing: files above stay put)
 {
-  await main.getByRole("button", { name: "설정", exact: true }).click();
-  await sleep(500);
-  process.env.PROMPT_ANSWER = DESK;
-  await main.getByRole("button", { name: "폴더 추가…" }).click();
+  await gotoSettings(main, "watch");
+  await addWatchFolder(main, DESK);
   // M8: example rules are never applied implicitly any more — use them on purpose.
-  const d = main.locator("details.advanced");
-  if (!(await d.evaluate((e) => e.open))) await d.locator("summary").click();
-  await main
-    .locator("textarea.rules")
-    .fill(fs.readFileSync(new URL("../../../rules.example.toml", import.meta.url), "utf8"));
+  await (await openToml(main)).fill(fs.readFileSync(new URL("../../../rules.example.toml", import.meta.url), "utf8"));
   await sleep(800);
-  await main.getByRole("button", { name: "저장", exact: true }).click();
-  await sleep(3000);
+  await saveSettings(main, 3000);
   const untouched = ["report-a.pdf", "archive.zip", "notes.txt"].every((f) => fs.existsSync(path.join(DESK, f)));
   ok("A", "감시 시작 후 기존 파일은 그대로", untouched);
 }
 
 // B. report tab
 {
-  await main.locator(".topbar nav").getByRole("button", { name: "정리하기" }).click();
+  await tab(main, "정리하기").click();
   await sleep(800);
-  const opts = await main.locator(".report .toolbar select option").allInnerTexts();
-  ok("B", "리포트 폴더 목록에 감시 폴더", opts.some((o) => o.includes("바탕 화면")), opts.join(" | "));
-  await main.locator(".report .toolbar label", { hasText: "중복 찾기" }).locator("input").check();
+  const opts = await main.locator("[data-testid=report-folder] option").allInnerTexts();
+  ok("B", "폴더 목록에 감시 폴더 (별칭 — 경로)", opts.some((o) => o.startsWith("바탕화면 — ") && o.includes("바탕 화면")), opts.join(" | "));
+  await main.getByRole("checkbox", { name: /중복 찾기/ }).check();
   await main.getByRole("button", { name: "리포트 만들기" }).click();
   await sleep(6000);
   const txt = await main.locator(".report").innerText();
   const cards = Object.fromEntries(
-    (await main.locator(".cards .card, .cards > *").allInnerTexts()).map((t) => {
+    (await main.locator(".stat-cards .stat").allInnerTexts()).map((t) => {
       const [a, b] = t.split("\n");
       return [a?.trim(), b?.trim()];
     }),
@@ -95,7 +85,7 @@ await sleep(800);
   await main.getByRole("button", { name: "규칙으로 정리 미리보기" }).click();
   await sleep(5000);
   const panel = main.locator(".restructure");
-  const rows = panel.locator("tbody tr");
+  const rows = panel.locator("[data-testid=plan-item]");
   const n = await rows.count();
   const ptxt = await panel.innerText();
   ok("C", "재구성 제안 표시 (pdf·docx·zip 규칙 매치)", n >= 2, `rows=${n} ${ptxt.replace(/\n/g, " | ").slice(0, 200)}`);
@@ -104,9 +94,9 @@ await sleep(800);
   await main.screenshot({ path: `${SHOT}/m5-C-plan.png`, fullPage: true });
 
   // uncheck all, check the first two, apply (window.confirm accepted)
-  await panel.locator("thead input[type=checkbox]").uncheck();
-  await rows.nth(0).locator("input[type=checkbox]").check();
-  await rows.nth(1).locator("input[type=checkbox]").check();
+  await panel.getByRole("checkbox", { name: "모두 선택" }).uncheck();
+  await rows.nth(0).getByRole("checkbox", { name: "선택" }).check();
+  await rows.nth(1).getByRole("checkbox", { name: "선택" }).check();
   dialogs = [];
   await panel.getByRole("button", { name: /선택한 2개 적용/ }).click();
   await sleep(4000);
@@ -121,9 +111,9 @@ await sleep(800);
 
 // D. history tab: batch listed → 되돌리기 → files back
 {
-  await main.locator(".topbar nav").getByRole("button", { name: "되돌리기" }).click();
+  await tab(main, "되돌리기").click();
   await sleep(1500);
-  const rows = main.locator(".history tbody tr");
+  const rows = main.locator("[data-testid=batch-row]");
   const txt = await main.locator(".history").innerText();
   ok("D", "이동 기록에 배치 2개 표시", /2개/.test(txt), txt.replace(/\n/g, " | ").slice(0, 200));
   await rows.first().getByRole("button", { name: "파일 보기" }).click();
@@ -145,7 +135,7 @@ await sleep(800);
 
 // E. AI restructure button is disabled while AI is off (rule 6 guard)
 {
-  await main.locator(".topbar nav").getByRole("button", { name: "정리하기" }).click();
+  await tab(main, "정리하기").click();
   await sleep(500);
   const aiBtn = main.locator(".restructure").getByRole("button", { name: "AI 정리 제안" });
   ok("E", "AI 꺼짐 → 'AI 정리 제안' 비활성", await aiBtn.isDisabled());

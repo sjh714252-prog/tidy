@@ -2,8 +2,9 @@
 // driven through the dev bridge with a fake OpenAI-compatible server
 // (e2e/fake-embed.mjs: chat answers fixed per file name; no real API).
 //
-//   A. settings: ①② open, ③–⑥ folded by default; ⓘ help shows a line +
-//      example; folding is remembered across reloads
+//   A. settings (M13): left menu of 6 pages routed as #/main/settings/<key>,
+//      one save button, the page survives a reload; ⓘ help shows a line +
+//      example (in the watch folder edit panel, after B adds the folder)
 //   B. AI 연결 (fake chat) + watch folder, one save button
 //   C. ③ 업무 맥락: "바탕화면에서 뽑기" → candidates → pick → save →
 //      context.toml has 가람정보 [GARA] / 하늘통신 [SKY]
@@ -22,6 +23,7 @@ import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { addWatchFolder, gotoSettings, openWatchEdit, saveSettings, statusText, tab } from "./lib.mjs";
 
 const T = process.env.T;
 const S = process.env.S;
@@ -88,58 +90,42 @@ main.on("dialog", (d) => {
 await main.goto("http://localhost:1420/#/main");
 await main.waitForSelector(".topbar");
 await sleep(1000);
-const section = (id) => main.locator(`section.fold[data-section=${id}]`);
-const openSection = async (id) => {
-  const h = section(id).locator(".fold-head");
-  if ((await h.getAttribute("aria-expanded")) !== "true") await h.click();
-  await sleep(300);
-};
-const save = async () => {
-  await main.getByRole("button", { name: "저장", exact: true }).click();
-  await sleep(2500);
-};
+const save = () => saveSettings(main, 2500);
 
-// A. six foldable sections, ⓘ help, remembered state
+// A. settings pages: left menu, hash route, one save button
 {
-  await main.getByRole("button", { name: "설정", exact: true }).click();
-  await sleep(800);
-  const ids = ["watch", "rules", "context", "ai", "security", "advanced"];
-  const state = [];
-  for (const id of ids) state.push(await section(id).locator(".fold-head").getAttribute("aria-expanded"));
-  ok("A", "설정 6개 섹션, ①② 펼침 · 나머지 접힘", state.join(",") === "true,true,false,false,false,false", state.join(","));
-  const titles = await main.locator("section.fold .fold-head").allInnerTexts();
-  ok("A", "섹션 제목 (한국어)", titles.length === 6 && titles[2].includes("업무 맥락") && titles[3].includes("AI 연결"), titles.join(" | "));
+  await tab(main, "설정").click();
+  await main.waitForSelector(".settings-nav");
+  await sleep(500);
+  const labels = await main.locator(".settings-nav [data-testid^=settings-nav-]").allInnerTexts();
+  ok("A", "왼쪽 메뉴 6개 (한국어)", labels.length === 6 && labels[2].includes("업무 맥락") && labels[3].includes("AI 연결"), labels.join(" | ").replace(/\n/g, " "));
+  ok("A", "기본 페이지 = 감시 폴더 (#/main/settings/watch)", (await main.locator("[data-testid=settings-watch]").count()) === 1 && main.url().endsWith("#/main/settings/watch"), main.url());
   ok("A", "저장 버튼은 하나 (#8)", (await main.getByRole("button", { name: "저장", exact: true }).count()) === 1);
-  await section("advanced").locator(".fold-head").click();
-  await sleep(300);
-  ok("A", "⑥ 고급 펼치기 → 내용 표시", await section("advanced").locator("details.advanced").isVisible());
+  await gotoSettings(main, "advanced");
+  ok("A", "고급 → 주소 #/main/settings/advanced", main.url().endsWith("#/main/settings/advanced"), main.url());
   await main.reload();
   await main.waitForSelector(".topbar");
-  await main.getByRole("button", { name: "설정", exact: true }).click();
   await sleep(800);
-  ok("A", "접힘/펼침 상태 기억 (새로고침 후 ⑥ 펼침)", (await section("advanced").locator(".fold-head").getAttribute("aria-expanded")) === "true");
-  await section("advanced").locator(".fold-head").click();
-  await sleep(300);
-  ok("A", "다시 접기", (await section("advanced").locator("details.advanced").count()) === 0);
-  const help = section("watch").locator("[data-help=organizeMode] .help-i");
-  await help.click();
-  await sleep(200);
-  const pop = section("watch").locator("[data-help=organizeMode] .help-pop");
-  const line = await pop.innerText().catch(() => "");
-  await pop.locator("summary").click().catch(() => {});
-  await sleep(200);
-  const ex = await pop.locator(".help-ex").innerText().catch(() => "");
-  ok("A", "ⓘ 도움말: 한 줄 + 예시", line.includes("이 폴더 안에서 정리") && ex.includes("바탕 화면"), `${line.slice(0, 40)} / ${ex.slice(0, 40)}`);
-  await main.screenshot({ path: `${SHOT}/m10-A-settings-sections.png` });
-  await help.click();
+  ok("A", "새로고침해도 같은 페이지 (고급)", (await main.locator("[data-testid=settings-advanced]").count()) === 1);
+  await gotoSettings(main, "watch");
 }
 
 // B. AI connection (fake chat) + watch folder, one save
 {
-  process.env.PROMPT_ANSWER = DESK;
-  await main.getByRole("button", { name: "폴더 추가…" }).click();
-  await sleep(500);
-  await openSection("ai");
+  await addWatchFolder(main, DESK);
+  const card = await openWatchEdit(main, 0);
+  const help = card.locator("[data-help=organizeMode] .help-i");
+  await help.click();
+  await sleep(200);
+  const pop = card.locator("[data-help=organizeMode] .help-pop");
+  const line = await pop.innerText().catch(() => "");
+  await pop.locator("summary").click().catch(() => {});
+  await sleep(200);
+  const ex = await pop.locator(".help-ex").innerText().catch(() => "");
+  ok("A", "ⓘ 도움말: 한 줄 + 예시", line.includes("이 폴더 안에서") && ex.includes("바탕 화면"), `${line.slice(0, 40)} / ${ex.slice(0, 40)}`);
+  await main.screenshot({ path: `${SHOT}/m10-A-settings-sections.png` });
+  await help.click();
+  await gotoSettings(main, "ai");
   const ai = main.locator("[data-testid=ai-section]");
   await ai.locator("label.row", { hasText: "AI 사용" }).locator("input[type=checkbox]").check();
   await ai.locator("select").first().selectOption("openai");
@@ -152,14 +138,14 @@ const save = async () => {
   await save();
   const ready = await waitFor(async () => (await bridge("get_status")).aiState === "ready", 20000);
   ok("B", "AI 준비됨 (가짜 OpenAI 호환 서버)", ready, (await bridge("get_status")).aiDetail ?? "");
-  const bar = await main.locator(".statusbar").innerText();
-  ok("B", "감시 시작", bar.includes("바탕 화면"), bar.replace(/\n/g, " | "));
+  const bar = await statusText(main);
+  ok("B", "감시 시작", bar.includes("감시 1곳"), bar.replace(/\n/g, " | "));
   ok("B", "감시 시작해도 기존 파일은 그대로", Object.keys(FILES).every((n) => fs.existsSync(at(n))));
 }
 
 // C. dictionary from the desktop: candidates → pick → save
 {
-  await openSection("context");
+  await gotoSettings(main, "context");
   const cs = main.locator("[data-testid=context-section]");
   ok("C", "③ 업무 맥락 활성 (AI 켜짐)", await cs.locator("[data-testid=extract-context]").isEnabled());
   await cs.locator("[data-testid=extract-context]").click();
@@ -171,7 +157,7 @@ const save = async () => {
   await cs.getByRole("button", { name: "고른 것 사전에 넣기" }).click();
   await sleep(300);
   ok("C", "사전 표에 2개", (await cs.locator("[data-testid=dict-entity]").count()) === 2);
-  ok("C", "저장하지 않은 변경 표시", (await main.locator(".savebar").innerText()).includes("저장하지 않은 변경"));
+  ok("C", "저장하지 않은 변경 표시", (await main.locator("[data-testid=savebar]").innerText()).includes("저장하지 않은 변경"));
   await save();
   const t = fs.existsSync(CTX) ? fs.readFileSync(CTX, "utf8") : "";
   ok("C", "통합 저장 → context.toml: 가람정보[GARA], 하늘통신[SKY]", t.includes("가람정보") && t.includes("GARA") && t.includes("하늘통신") && t.includes("SKY"), t.split("\n").filter((l) => /name|aliases/.test(l)).join(" ; "));
@@ -180,7 +166,7 @@ const save = async () => {
 // D. 리포트 → 업무 맥락으로 정리: cost notice, then the preview
 let planId = null;
 {
-  await main.locator(".topbar nav").getByRole("button", { name: "정리하기" }).click();
+  await tab(main, "정리하기").click();
   await sleep(800);
   const panel = main.locator(".restructure");
   const btn = panel.locator("[data-testid=curate-plan]");
@@ -263,9 +249,7 @@ const DEST = {
 {
   await sleep(3000); // the restored files must not be re-sorted
   ok("G", "되돌린 파일은 다시 옮기지 않음", Object.keys(FILES).every((n) => fs.existsSync(at(n))));
-  await main.getByRole("button", { name: "설정", exact: true }).click();
-  await sleep(800);
-  await openSection("context");
+  await gotoSettings(main, "context");
   await main.locator("[data-testid=curate-enabled]").check();
   await save();
   ok("G", "config: [curate] enabled = true", /\[curate\][\s\S]*enabled = true/.test(fs.readFileSync(CFG, "utf8")));
@@ -279,12 +263,12 @@ const DEST = {
   const c = await ctx.newPage();
   await c.setViewportSize({ width: 480, height: 340 }); // about the real popup
   await c.goto("http://localhost:1420/#/confirm");
-  await c.waitForSelector(".confirm .c-file");
+  await c.waitForSelector(".confirm [data-testid=pending-name]");
   await sleep(500);
   const q = await c.locator("[data-testid=confirm-question]").innerText();
   ok("G", "확인 팝업: '새 이슈 … 폴더를 만들까요?'", q.includes("새 이슈") && q.includes("대체발송") && q.endsWith("까요?"), q);
-  const dest = await c.locator(".c-dest").innerText();
-  ok("G", "제안 위치: 가람정보/20261021_대체발송 중복", dest.includes("20261021_대체발송 중복"), dest.split("\n")[1] ?? "");
+  const dest = (await c.locator(".ic-dest [data-testid=path-text]").getAttribute("data-path")) ?? "";
+  ok("G", "제안 위치: 가람정보/20261021_대체발송 중복", dest.includes("20261021_대체발송 중복"), dest);
   await c.screenshot({ path: `${SHOT}/m10-G-confirm.png` });
   await c.getByRole("button", { name: "이동", exact: true }).click();
   const okMove = await waitFor(() => fs.existsSync(at("가람정보", "20261021_대체발송 중복", "안내문서", "가람정보_대체발송_20261021_문의.txt")), 10000);
@@ -294,9 +278,7 @@ const DEST = {
 
 // H. AI off → "AI 필요" everywhere, link to ④
 {
-  await main.getByRole("button", { name: "설정", exact: true }).click();
-  await sleep(800);
-  await openSection("ai");
+  await gotoSettings(main, "ai");
   const ai = main.locator("[data-testid=ai-section]");
   await ai.locator("label.row", { hasText: "AI 사용" }).locator("input[type=checkbox]").uncheck();
   await save();
@@ -304,23 +286,24 @@ const DEST = {
   ok("H", "AI 끔 → aiState off", off, (await bridge("get_status")).aiState);
   await sleep(500);
   const cs = main.locator("[data-testid=context-section]");
-  await openSection("context");
+  await gotoSettings(main, "context");
   const extractOff = await cs.locator("[data-testid=extract-context]").isDisabled();
-  const badges = await section("context").locator("[data-testid=ai-needed]").count();
-  ok("H", "③ 업무 맥락 비활성 + 'AI 필요' 배지", extractOff && badges >= 1, `extractDisabled=${extractOff} badges=${badges}`);
+  const badges = await main.locator("[data-testid=settings-context] [data-testid=ai-needed]").count();
+  ok("H", "업무 맥락 비활성 + 'AI 필요' 배지", extractOff && badges >= 1, `extractDisabled=${extractOff} badges=${badges}`);
+  await gotoSettings(main, "rules");
   ok("H", "규칙 'AI로 규칙 만들기' 비활성", await main.getByRole("button", { name: "AI로 규칙 만들기" }).isDisabled());
-  await main.locator(".topbar nav").getByRole("button", { name: "정리하기" }).click();
+  await tab(main, "정리하기").click();
   await sleep(800);
   const panel = main.locator(".restructure");
   if (await panel.getByRole("button", { name: "닫기" }).count()) await panel.getByRole("button", { name: "닫기" }).click();
-  await panel.locator("h3").scrollIntoViewIfNeeded();
+  await panel.locator("h2").first().scrollIntoViewIfNeeded();
   ok("H", "리포트: 업무 맥락으로 정리 비활성", await panel.locator("[data-testid=curate-plan]").isDisabled());
   const badge = panel.locator("[data-testid=ai-needed]");
   ok("H", "리포트: 'AI 필요' + 'AI 연결에서 켜기'", (await badge.count()) === 1 && (await badge.innerText()).includes("AI 연결에서 켜기"));
   await main.screenshot({ path: `${SHOT}/m10-H-ai-needed.png` });
   await badge.getByRole("button", { name: "AI 연결에서 켜기" }).click();
   await sleep(800);
-  ok("H", "링크 → 설정 ④ AI 연결 펼쳐짐", (await section("ai").locator(".fold-head").getAttribute("aria-expanded")) === "true" && (await main.locator("[data-testid=ai-section]").isVisible()));
+  ok("H", "링크 → 설정 → AI 연결 페이지", main.url().endsWith("#/main/settings/ai") && (await main.locator("[data-testid=ai-section]").isVisible()), main.url());
 }
 
 const failed = results.filter((r) => !r.pass);

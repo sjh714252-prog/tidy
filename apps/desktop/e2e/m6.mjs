@@ -22,11 +22,7 @@ const ok = (step, what, pass, note = "") => {
   console.log(`${pass ? "PASS" : "FAIL"} [${step}] ${what} ${note}`);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// M8: the rules TOML editor sits in the collapsed "고급" section.
-const openAdvanced = async (page) => {
-  const d = page.locator("details.advanced");
-  if (!(await d.evaluate((e) => e.open))) await d.locator("summary").click();
-};
+import { addWatchFolder, gotoSettings, openToml, openWatchEdit, saveSettings, statusText, tab } from "./lib.mjs";
 const bridge = async (cmd, args = {}) =>
   (await (await fetch(`http://127.0.0.1:1421/invoke/${cmd}`, { method: "POST", body: JSON.stringify(args) })).json()).value;
 const events = async (since) => (await (await fetch(`http://127.0.0.1:1421/events?since=${since}`)).json());
@@ -41,10 +37,6 @@ const waitFor = async (fn, ms, step = 1000) => {
 
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1000, height: 820 } });
-// M10: settings sections are foldable; these older tests expect everything open.
-await ctx.addInitScript(() =>
-  localStorage.setItem("tidy.settings.sections", JSON.stringify({ watch: true, rules: true, context: true, ai: true, security: true, advanced: true })),
-);
 const main = await ctx.newPage();
 main.on("dialog", (d) => d.accept(process.env.PROMPT_ANSWER ?? ""));
 await main.goto("http://localhost:1420/#/main");
@@ -54,43 +46,40 @@ const evStart = (await events(1e9)).next;
 
 // A. settings: add folder, switch kind to 네트워크(NAS) → sub-row, poll 5 s, polling only
 {
-  await main.getByRole("button", { name: "설정", exact: true }).click();
-  await sleep(500);
-  process.env.PROMPT_ANSWER = NAS;
-  await main.getByRole("button", { name: "폴더 추가…" }).click();
-  await sleep(500);
-  const row = main.locator(".settings tbody tr").first();
-  await row.locator("select").first().selectOption("network"); // kind (2nd select = M8 정리 방식)
+  await gotoSettings(main, "watch");
+  await addWatchFolder(main, NAS);
+  const row = await openWatchEdit(main, 0);
+  await row.getByRole("combobox", { name: "종류" }).selectOption("network");
   await sleep(300);
-  const sub = main.locator(".settings tbody tr.subrow:not(.exclude-row)");
-  ok("A", "네트워크 선택 → 폴링/시간대 하위 행 표시", (await sub.count()) === 1);
-  const idx = await row.locator("input[type=checkbox]").nth(1).isChecked();
+  const sub = row.locator("[data-testid=nas-options]");
+  ok("A", "네트워크(NAS) 선택 → 확인 간격/주기 확인만/시간대 줄 표시", (await sub.count()) === 1);
+  const idx = await row.getByRole("checkbox", { name: /파일 안의 글자까지 검색/ }).isChecked();
   ok("A", "NAS는 본문 인덱싱 기본 꺼짐 (메타만)", idx === false);
   await sub.locator("input[type=number]").fill("5");
-  await sub.locator("label", { hasText: "주기 확인만 사용" }).locator("input").check();
-  await openAdvanced(main);
-  const ta = main.locator("textarea.rules");
+  await sub.getByRole("checkbox", { name: /주기 확인만/ }).check();
+  await main.screenshot({ path: `${SHOT}/m6-A-settings.png`, fullPage: true });
+  const ta = await openToml(main);
   await ta.fill(
     `[[rule]]\nname = "NAS 문서"\nmatch = { ext = ["pdf"] }\ndest = '${LOCAL}'\n\n` + (await ta.inputValue()),
   );
-  await main.getByRole("button", { name: "저장", exact: true }).click();
-  await sleep(3000);
-  const bar = await main.locator(".statusbar").innerText();
-  ok("A", "저장 → 감시 중: nas", bar.includes("nas"), bar.replace(/\n/g, " | "));
+  await saveSettings(main, 3000);
+  const bar = await statusText(main);
+  const title = (await main.locator("[data-testid=watch-summary]").getAttribute("title")) ?? "";
+  ok("A", "저장 → 감시 1곳 (nas)", bar.includes("감시 1곳") && title.includes("nas"), bar.replace(/\n/g, " | "));
   const cfg = fs.readFileSync(path.join(T, "config.toml"), "utf8");
   ok("A", "config.toml에 network/poll 설정", /network/.test(cfg) && /poll_interval_s *= *5/.test(cfg) && /poll_only *= *true/.test(cfg), cfg.split("\n").filter((l) => /kind|poll/.test(l)).join(" | "));
-  await main.screenshot({ path: `${SHOT}/m6-A-settings.png`, fullPage: true });
 }
 
 // B. polling picks up a new pdf; copy-verify move with progress for a big file
 {
-  await main.locator(".topbar nav").getByRole("button", { name: "홈" }).click();
+  await tab(main, "홈").click();
+  await main.getByRole("button", { name: "전체 보기" }).click();
   fs.writeFileSync(path.join(NAS, "nas-small.pdf"), "small");
   const movedSmall = await waitFor(() => fs.existsSync(path.join(LOCAL, "nas-small.pdf")), 20000);
   ok("B", "폴링으로 새 파일 감지 → 규칙대로 이동 (≤20 s)", movedSmall);
   // The activity event reaches the page shortly after the file lands on disk.
   await waitFor(async () => /nas-small\.pdf/.test(await main.locator(".activity").innerText()), 5000, 300);
-  const feed = await main.locator(".activity").innerText();
+  const feed = await main.locator("[data-testid=activity-feed]").innerText();
   ok("B", "활동 탭에 이동 기록", /nas-small\.pdf/.test(feed) && /이동/.test(feed));
 
   // 1 GB so the copy outlasts the 250 ms first-report delay (tmpfs is fast)
@@ -131,10 +120,10 @@ const evStart = (await events(1e9)).next;
   const off = await waitFor(async () => (await bridge("get_status")).offline.length > 0, 30000);
   ok("D", "폴더 사라짐 → status.offline (≤30 s)", off, JSON.stringify((await bridge("get_status")).offline));
   await sleep(1500);
-  const bar = await main.locator(".statusbar").innerText();
+  const bar = await main.locator("[data-testid=statusbar]").innerText();
   ok("D", "상태바 '연결 끊김(일시정지)'", bar.includes("연결 끊김"), bar.replace(/\n/g, " | "));
-  const feed = await main.locator(".activity").innerText();
-  ok("D", "활동 탭에 끊김 알림", /(끊김|오프라인|unreachable|연결)/.test(feed));
+  const feed = await main.locator("[data-testid=activity-feed]").innerText();
+  ok("D", "전체 활동에 끊김 알림", /(끊김|오프라인|unreachable|연결)/.test(feed));
   await main.screenshot({ path: `${SHOT}/m6-D-offline.png` });
 
   fs.renameSync(NAS + ".offline", NAS);
@@ -143,15 +132,15 @@ const evStart = (await events(1e9)).next;
   fs.writeFileSync(path.join(NAS, "after-reconnect.pdf"), "back");
   const moved = await waitFor(() => fs.existsSync(path.join(LOCAL, "after-reconnect.pdf")), 30000);
   ok("D", "재연결 후 새 파일 다시 처리", moved);
-  const bar2 = await main.locator(".statusbar").innerText();
+  const bar2 = await main.locator("[data-testid=statusbar]").innerText();
   ok("D", "상태바 경고 사라짐", !bar2.includes("연결 끊김"), bar2.replace(/\n/g, " | "));
 }
 
 // E. undo of a copy-verify move restores the file to the NAS folder
 {
-  await main.locator(".topbar nav").getByRole("button", { name: "되돌리기" }).click();
+  await tab(main, "되돌리기").click();
   await sleep(1200);
-  const row = main.locator(".history tbody tr", { hasText: "after-reconnect" }).first();
+  const row = main.locator("[data-testid=batch-row]", { hasText: "after-reconnect" }).first();
   await row.getByRole("button", { name: "되돌리기", exact: true }).click();
   await sleep(3000);
   ok("E", "NAS로 되돌리기", fs.existsSync(path.join(NAS, "after-reconnect.pdf")) && !fs.existsSync(path.join(LOCAL, "after-reconnect.pdf")));
