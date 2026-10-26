@@ -65,10 +65,10 @@ cargo run -p tidy-cli -- recover [--grace-secs 0]        # 중단된 이동(복�
 cargo run -p tidy-cli -- pii scan <폴더> [--all] [--format json]   # 개인정보 의심 파일 (읽기만)
 cargo run -p tidy-cli -- vault password / status / lock <파일> [--to DIR] / unlock <zip>   # 암호화 보관(AES zip, 키체인 tidy/vault)
 cargo run -p tidy-cli -- context list / add <이름> [--alias A,B | --issue | --kind --ext log] / alias <고객사> <별칭>   # 맥락 사전 context.toml
-cargo run -p tidy-cli -- curate scan [폴더] [--dry-run] [--recursive]  → curate apply <plan-id> [--only 1,3]   # 업무 맥락 정리(AI, 승인 전 무이동)
+cargo run -p tidy-cli -- curate scan [폴더] [--dry-run]  → curate apply <plan-id> [--only 1,3]   # 업무 맥락 정리(AI, 승인 전 무이동). 하위 폴더는 통째로 한 항목(M12)
 cd apps/desktop && npm ci && npm run tauri dev   # 클라우드: npm run build + (src-tauri) cargo clippy 까지만
 cd apps/desktop && npx tauri build [--bundles deb,appimage]   # 설치 패키지 (docs/packaging.md), 태그 v*는 release.yml
-S=/tmp/tidy-e2e bash apps/desktop/e2e/run-headless.sh m11    # 헤드리스 GUI e2e (m3~m11, 가짜 OpenAI 호환 서버 e2e/fake-embed.mjs, 느린 가짜 LLM e2e/fake-llm.mjs)
+S=/tmp/tidy-e2e bash apps/desktop/e2e/run-headless.sh m12    # 헤드리스 GUI e2e (m3~m12, 가짜 OpenAI 호환 서버 e2e/fake-embed.mjs, 느린 가짜 LLM e2e/fake-llm.mjs)
 node apps/desktop/e2e/fake-llm.mjs 18095   # 느린·긴 가짜 Anthropic/OpenAI 호환 (파일당 1초, FAKE_MAX_TOKENS로 max_tokens 잘림 재현)
 ```
 
@@ -85,6 +85,7 @@ node apps/desktop/e2e/fake-llm.mjs 18095   # 느린·긴 가짜 Anthropic/OpenAI
 - [x] M9 개인정보 탐지 + 암호화 보관 (2026-10-19) — 정규식 탐지(주민번호·계좌·이름+휴대전화·이름+이메일, 오프라인), 보안 폴더 모으기/규칙 encrypt, 확인/자동 승인, ZIP+AES-256(검증 후 원본 정리·undo 복호화), 키체인 비밀번호(이전 목록), 🔒 검색·임시 열기. 실제 압축 프로그램(반디집·7-Zip)·Windows 자격 증명 관리자 확인은 로컬에서
 - [x] M10 업무 맥락 정리 + 설정 화면 정돈 + 사용 설명서 (2026-10-20) — context.toml 사전·바탕화면에서 뽑기, curate 배치 분석(해시+이름 캐시, store v8)·14일 날짜 묶기·폴더 틀, 리포트 미리보기 수정→사전 학습→한 배치 적용/undo, 감시 중 자동(기존 폴더+확신도)/확인 팝업, AI 필요 배지, 설정 6개 접는 섹션+ⓘ, docs/manual.md. 실제 AI 응답 품질·창 확인은 로컬에서
 - [x] M11 UI 단순화 + 도움말/정보 + 정리 현황 (2026-10-23, 0.4.0) — 탭 홈/확인 대기/정리하기/되돌리기/설정, 상태바 요약+감시 현황 패널, 정리 현황 카드(미정리 수 백그라운드·캐시·20,000 상한)→지금 정리, 정리 위치 경고(두 번 확인), 절대 경로 규칙 경고+상대 경로로 바꾸기, 도움말 메뉴·정보 창·업데이트 확인(하루 한 번, check_updates)·로그 파일, release.yml 수동 실행=공개 릴리스. 트레이 정보 메뉴·실제 릴리스·실제 브라우저 열기는 로컬에서
+- [x] M12 폴더 단위 업무 맥락 정리 + 경로 맥락 + 고객사별 찾기 (2026-10-23, 0.5.0) — 하위 폴더 = 한 항목(FolderUnit 요약·캐시 키, `{folder}`, Mover::move_dir 한 배치·빈 폴더 정리·undo), AI에 상대 경로(맨 위 폴더 = 고객사 단서), 감시 중 맥락 정리는 최상위 파일만·폴더는 미리보기 승인만, folder_settle_secs, 파일별로 나누기·날짜 수정, 홈 "새 폴더 N개"·고객사별 보기, 검색 고객사 필터, 팝업 "대기열에 두기". 실제 AI의 폴더 판단 품질·실제 NAS 폴더 이동·창 확인은 로컬에서
 
 - [x] 0.2.x 핫픽스 (2026-10-22~23) — 규칙 카드 정렬(#12), AI 응답 잘림 분할 재시도(#13), HTTP 타임아웃 상한(#14), 감시 폴더 제외 폴더(SPEC §14.5)
 

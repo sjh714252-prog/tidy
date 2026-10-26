@@ -104,41 +104,76 @@ pub async fn save_curate_settings(app: AppHandle, settings: CurateDto) -> CmdRes
     .await
 }
 
-fn inputs_for(
+fn filter_of(cfg: &Config) -> IgnoreFilter {
+    cfg.ignore_filter()
+        .unwrap_or_else(|_| IgnoreFilter::new(&[]).unwrap())
+}
+
+/// (M12) Files directly in `root` + its sub-folders as whole items.
+fn items_for(
+    cfg: &Config,
+    cur: &Curator,
+    store: &Store,
+    root: &Path,
+    protected: &[PathBuf],
+) -> tidy_core::curate::Items {
+    let anchors = Anchors::from_config(cfg);
+    let anchor = anchors.for_path(root).unwrap_or(root).to_path_buf();
+    let rules = RuleSet::load(&cfg.classify.rules).unwrap_or_default();
+    let skip = tidy_core::curate::skip_dirs(cfg, &rules, &anchor);
+    cur.items_in(root, &anchor, &filter_of(cfg), protected, &skip, store)
+}
+
+/// Files of a watch folder for "바탕화면에서 뽑기" (as watched).
+fn files_for(
     cfg: &Config,
     cur: &Curator,
     store: &Store,
     root: &Path,
     recursive: bool,
 ) -> Vec<CurateInput> {
-    let protected: Vec<PathBuf> = cfg.report.protected.clone();
-    let filter = cfg
-        .ignore_filter()
-        .unwrap_or_else(|_| IgnoreFilter::new(&[]).unwrap());
-    Curator::files_in(root, recursive, &filter, &protected)
+    Curator::files_in(root, recursive, &filter_of(cfg), &cfg.report.protected)
         .iter()
-        .filter_map(|p| cur.input(p, Some(store)).ok())
+        .filter_map(|p| cur.input_in(p, root, Some(store)).ok())
         .collect()
 }
 
 /// "파일 N개, 예상 토큰/비용" shown before analysing.
 #[tauri::command]
-pub async fn curate_estimate(app: AppHandle, path: String, recursive: bool) -> CmdResult<Estimate> {
+pub async fn curate_estimate(app: AppHandle, path: String) -> CmdResult<EstimateDto> {
     blocking(move || {
         let cfg = app.state::<AppState>().config();
         let cur = Curator::from_config(&cfg).map_err(err)?;
         let store = Store::open(&cfg.store.db_path()).map_err(err)?;
         let root = dunce::canonicalize(expand(&path)).map_err(err)?;
-        let inputs = inputs_for(&cfg, &cur, &store, &root, recursive);
+        let items = items_for(&cfg, &cur, &store, &root, &cfg.report.protected);
+        let folders = items.folders();
+        let unsettled = items.unsettled.len();
+        let inputs = items.inputs;
         let (provider, model) = cfg
             .ai
             .active()
             .and_then(|p| p.classify.as_ref())
             .map(|p| (p.provider.as_str().to_string(), p.model.clone()))
             .unwrap_or_default();
-        Ok(cur.estimate(&store, &inputs, &provider, &model))
+        Ok(EstimateDto {
+            estimate: cur.estimate(&store, &inputs, &provider, &model),
+            folders,
+            unsettled,
+        })
     })
     .await
+}
+
+/// The cost notice plus (M12) how many items are whole folders.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EstimateDto {
+    #[serde(flatten)]
+    pub estimate: Estimate,
+    pub folders: usize,
+    /// Sub-folders still changing (left out).
+    pub unsettled: usize,
 }
 
 /// Analyse the folder (AI) and save a work-context plan. Nothing moves.
@@ -146,7 +181,6 @@ pub async fn curate_estimate(app: AppHandle, path: String, recursive: bool) -> C
 pub async fn plan_context(
     app: AppHandle,
     path: String,
-    recursive: bool,
     protect: Vec<String>,
 ) -> CmdResult<PlanDto> {
     blocking(move || {
@@ -164,15 +198,17 @@ pub async fn plan_context(
                 .filter(|p| !p.trim().is_empty())
                 .map(|p| expand(p)),
         );
+        let rules = RuleSet::load(&cfg.classify.rules).unwrap_or_default();
+        let skip = tidy_core::curate::skip_dirs(&cfg, &rules, &anchor);
         let plan = cur
             .plan(
                 &ai,
                 &store,
                 &root,
                 &anchor,
-                recursive,
-                &cfg.ignore_filter().map_err(|e| e.to_string())?,
+                &filter_of(&cfg),
                 &protected,
+                &skip,
             )
             .map_err(err)?;
         let plan = restructure::save(&store, plan).map_err(err)?;
@@ -251,6 +287,75 @@ pub async fn edit_context_move(
     .await
 }
 
+/// (M12) "파일별로 나누기": analyse one folder item's files separately.
+#[tauri::command]
+pub async fn split_context_folder(
+    app: AppHandle,
+    id: i64,
+    move_id: u32,
+    selected: Vec<u32>,
+) -> CmdResult<EditDto> {
+    blocking(move || {
+        let cfg = app.state::<AppState>().config();
+        let ai = ai_for(&cfg)?;
+        let cur = Curator::from_config(&cfg).map_err(err)?;
+        let store = Store::open(&cfg.store.db_path()).map_err(err)?;
+        let mut plan = restructure::load(&store, id).map_err(err)?;
+        if plan.applied_batch.is_some() {
+            return Err("이미 적용한 제안은 고칠 수 없습니다".into());
+        }
+        let before: Vec<u32> = plan.moves.iter().map(|m| m.id).collect();
+        cur.split_folder(&ai, &store, &mut plan, move_id, &filter_of(&cfg))
+            .map_err(err)?;
+        let json = serde_json::to_string(&plan).map_err(err)?;
+        store.update_plan_json(plan.id, &json).map_err(err)?;
+        // Keep the user's ticks; the new file items are ticked when they move.
+        let mut ids: Vec<u32> = selected.into_iter().filter(|i| *i != move_id).collect();
+        ids.extend(
+            plan.moves
+                .iter()
+                .filter(|m| !before.contains(&m.id) && m.from != m.to)
+                .map(|m| m.id),
+        );
+        ids.retain(|i| plan.moves.iter().any(|m| m.id == *i && m.from != m.to));
+        let preview = restructure::preview(&plan, Some(&ids)).map_err(err)?;
+        Ok(EditDto {
+            plan,
+            preview,
+            suggestions: Vec::new(),
+        })
+    })
+    .await
+}
+
+/// (M12) 홈 "고객사별 보기".
+#[tauri::command]
+pub async fn customer_overview(app: AppHandle) -> CmdResult<Vec<tidy_core::curate::CustomerStat>> {
+    blocking(move || {
+        let cfg = app.state::<AppState>().config();
+        let dict = ContextDict::load(&cfg.curate.context).map_err(err)?;
+        let store = Store::open(&cfg.store.db_path()).ok();
+        Ok(tidy_core::curate::customer_overview(
+            &cfg,
+            &dict,
+            store.as_ref(),
+        ))
+    })
+    .await
+}
+
+/// (M12) Customer names for the search filter (dictionary + cache).
+#[tauri::command]
+pub async fn customer_names(app: AppHandle) -> CmdResult<Vec<String>> {
+    blocking(move || {
+        let cfg = app.state::<AppState>().config();
+        let dict = ContextDict::load(&cfg.curate.context).map_err(err)?;
+        let store = Store::open(&cfg.store.db_path()).ok();
+        Ok(tidy_core::curate::customer_names(&dict, store.as_ref()))
+    })
+    .await
+}
+
 /// Write confirmed dictionary suggestions to context.toml.
 #[tauri::command]
 pub async fn apply_context_suggestions(
@@ -280,15 +385,36 @@ pub async fn extract_context(app: AppHandle) -> CmdResult<ContextCandidates> {
         let cur = Curator::from_config(&cfg).map_err(err)?;
         let store = Store::open(&cfg.store.db_path()).map_err(err)?;
         let mut inputs = Vec::new();
+        let mut top: Vec<String> = Vec::new();
+        let names = cur.output_names(Some(&store));
         for w in &cfg.watches {
             if let Ok(root) = dunce::canonicalize(&w.path) {
-                inputs.extend(inputs_for(&cfg, &cur, &store, &root, w.recursive));
+                inputs.extend(files_for(&cfg, &cur, &store, &root, w.recursive));
+                // (M12) Folder names directly in the watch folder first:
+                // the strongest customer hints.
+                if let Ok(rd) = std::fs::read_dir(&root) {
+                    let filter = filter_of(&cfg);
+                    for e in rd.filter_map(Result::ok) {
+                        let p = e.path();
+                        let n = e.file_name().to_string_lossy().into_owned();
+                        if e.file_type().is_ok_and(|t| t.is_dir())
+                            && !n.starts_with('.')
+                            && !filter.in_excluded_dir(&p)
+                            && !names.contains(&n)
+                            && !top.contains(&n)
+                        {
+                            top.push(n);
+                        }
+                    }
+                }
             }
         }
-        if inputs.is_empty() {
+        if inputs.is_empty() && top.is_empty() {
             return Err("감시 폴더에 파일이 없습니다".into());
         }
-        cur.extract_context(&ai, &store, &inputs).map_err(err)
+        top.sort();
+        top.truncate(100);
+        cur.extract_context(&ai, &store, &inputs, &top).map_err(err)
     })
     .await
 }

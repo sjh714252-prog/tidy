@@ -42,6 +42,8 @@ const LLM_PORT = 18095;
 const GH_PORT = 18097;
 const LLM = `http://127.0.0.1:${LLM_PORT}`;
 const VERSION = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+/** The fake "newer" release: this version's patch + 1. */
+const NEWER = VERSION.replace(/\d+$/, (p) => String(Number(p) + 1));
 
 const results = [];
 const ok = (step, what, pass, note = "") => {
@@ -88,7 +90,7 @@ const gh = http
       return res.end("down");
     }
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify(release(ghMode === "newer" ? "0.4.1" : VERSION)));
+    res.end(JSON.stringify(release(ghMode === "newer" ? NEWER : VERSION)));
   })
   .listen(GH_PORT, "127.0.0.1");
 await sleep(800);
@@ -270,7 +272,8 @@ const save = async () => {
   ok("E", "탭: 홈 / 확인 대기 / 정리하기 / 되돌리기 / 설정", names.map((n) => n.replace(/\d+$/, "").trim()).join(",") === "홈,확인 대기,정리하기,되돌리기,설정", names.join(","));
   await main.getByRole("button", { name: "도움말 ▾" }).click();
   const items = await main.locator("[data-testid=help-menu] [role=menuitem]").allInnerTexts();
-  ok("E", "도움말 메뉴 4개", items.join(",") === "사용 설명서,문의·버그 신고,업데이트 확인,정보", items.join(","));
+  // (M12) + "고객사 자료는 어디 있나요?" after the manual.
+  ok("E", "도움말 메뉴: 설명서·문의·업데이트·정보", ["사용 설명서", "문의·버그 신고", "업데이트 확인", "정보"].every((i) => items.includes(i)), items.join(","));
   await main.getByRole("menuitem", { name: "사용 설명서" }).click();
   await sleep(500);
   let o = await opened();
@@ -304,7 +307,7 @@ const save = async () => {
   const modal = main.locator("[data-testid=about-modal]");
   const res = modal.locator("[data-testid=update-result]");
   await waitFor(async () => (await res.count()) === 1, 15000);
-  ok("F", "새 버전 있음 → '새 버전 0.4.1 — 받기'", (await res.innerText()).includes("새 버전 0.4.1"), await res.innerText());
+  ok("F", `새 버전 있음 → '새 버전 ${NEWER} — 받기'`, (await res.innerText()).includes(`새 버전 ${NEWER}`), await res.innerText());
   await res.getByRole("button", { name: "받기" }).click();
   await sleep(500);
   const o = await opened();

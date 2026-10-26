@@ -459,13 +459,21 @@ impl Engine {
                 reason: "restored by undo; left in place",
             }));
         }
+        let parent = path.parent().unwrap_or_else(|| Path::new(""));
+        // (M12, SPEC §14.7) Only files directly in a watch folder are placed
+        // by work context while watching. A file inside a sub-folder belongs
+        // to that folder, which is organized as a whole from the home tab
+        // (preview + approval) — never scattered file by file.
+        let root = self.anchors.watch_root_for(path);
+        if root.is_none_or(|r| parent != r) {
+            return Ok(None);
+        }
         let input = cur
-            .input(path, Some(store))
+            .input_in(path, root.unwrap_or(parent), Some(store))
             .map_err(|source| EngineError::Io {
                 path: path.clone(),
                 source,
             })?;
-        let parent = path.parent().unwrap_or_else(|| Path::new(""));
         let anchor = self.anchors.for_path(path).unwrap_or(parent);
         let placed = match cur.place(ai, store, &input, anchor) {
             Ok(Some(p)) if cur.is_classified(&p.curation) => p,
