@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>설정 — 감시 폴더</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;background:#f6f7f9;color:#1b1f27;font-family:"Pretendard","Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif}
+a{color:#2457d6;text-decoration:none}a:hover{color:#163b99}
+.mono{font-family:"Cascadia Mono","Consolas","D2Coding",ui-monospace,monospace}
+</style>
+</helmet>
+<div style="min-height: 820px; display: flex; flex-direction: column; background: #f6f7f9;">
+
+  <header style="display: flex; align-items: center; gap: 4px; padding: 0 16px; height: 48px; background: #ffffff; border-bottom: 1px solid #e3e6eb;">
+    <span style="font-weight: 800; font-size: 17px; color: #2457d6; margin-right: 12px;">Tidy</span>
+    <a href="Main.dc.html" style="padding: 6px 12px; border-radius: 6px; color: #374151; font-size: 14px;">홈</a>
+    <a href="Pending.dc.html" style="padding: 6px 12px; border-radius: 6px; color: #374151; font-size: 14px;">확인 대기 <span style="display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px; background: #e14d4d; color: #fff; font-size: 11px; font-weight: 700; text-align: center;">20</span></a>
+    <a href="Pending.dc.html" style="padding: 6px 12px; border-radius: 6px; color: #374151; font-size: 14px;">정리하기</a>
+    <a href="Pending.dc.html" style="padding: 6px 12px; border-radius: 6px; color: #374151; font-size: 14px;">되돌리기</a>
+    <a href="Settings.dc.html" style="padding: 6px 12px; border-radius: 6px; background: #eef2ff; color: #2457d6; font-weight: 600; font-size: 14px;">설정</a>
+    <span style="flex: 1;"></span>
+    <button style="height: 32px; padding: 0 12px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 13px; cursor: pointer;">검색 Ctrl+Shift+Space</button>
+    <button style="height: 32px; padding: 0 12px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 13px; cursor: pointer;">일시정지</button>
+    <button aria-label="도움말" style="height: 32px; width: 32px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 14px; cursor: pointer;">?</button>
+  </header>
+
+  <div style="flex: 1; display: flex; flex-wrap: wrap;">
+    <nav aria-label="설정 메뉴" style="width: 220px; padding: 16px 12px; background: #ffffff; border-right: 1px solid #e3e6eb; display: flex; flex-direction: column; gap: 2px;">
+      <a href="Settings.dc.html" style="padding: 9px 12px; border-radius: 6px; background: #eef2ff; color: #2457d6; font-weight: 600; font-size: 14px;">감시 폴더</a>
+      <a href="Rules.dc.html" style="padding: 9px 12px; border-radius: 6px; color: #374151; font-size: 14px;">규칙</a>
+      <a href="Settings.dc.html" style="padding: 9px 12px; border-radius: 6px; color: #374151; font-size: 14px;">업무 맥락 <span style="font-size: 11px; padding: 1px 6px; border-radius: 8px; background: #eef2ff; color: #2457d6; font-weight: 600;">AI</span></a>
+      <a href="Settings.dc.html" style="padding: 9px 12px; border-radius: 6px; color: #374151; font-size: 14px;">AI 연결</a>
+      <a href="Settings.dc.html" style="padding: 9px 12px; border-radius: 6px; color: #374151; font-size: 14px;">보안 · 개인정보</a>
+      <a href="Settings.dc.html" style="padding: 9px 12px; border-radius: 6px; color: #374151; font-size: 14px;">고급</a>
+      <span style="flex: 1; min-height: 24px;"></span>
+      <span style="padding: 8px 12px; font-size: 12px; color: #6b7280;">Tidy 0.5.0 · <a href="Settings.dc.html">정보</a></span>
+    </nav>
+
+    <section style="flex: 999 1 560px; min-width: 0; padding: 24px 32px; display: flex; flex-direction: column; gap: 16px; max-width: 900px;">
+      <div>
+        <h1 style="margin: 0 0 4px; font-size: 20px; font-weight: 700;">감시 폴더</h1>
+        <p style="margin: 0; font-size: 13px; color: #6b7280;">이 폴더들에 새 파일이 생기면 규칙대로 정리합니다. 파일 자체는 검색 인덱스에 들어갑니다.</p>
+      </div>
+
+      <div style="background: #fff; border: 1px solid #e3e6eb; border-radius: 10px; padding: 14px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+        <div style="display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 240px;">
+          <span style="font-weight: 600; font-size: 14px;">정리 위치</span>
+          <span style="font-size: 12px; color: #6b7280;">모든 폴더의 파일이 여기 아래 분류 폴더로 모입니다. 폴더마다 다르게 하려면 편집에서 바꿉니다.</span>
+        </div>
+        <span class="mono" style="font-size: 14px; padding: 6px 10px; border: 1px solid #d6dae1; border-radius: 6px; background: #fbfbfc;">D:\정리</span>
+        <button style="height: 32px; padding: 0 12px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 13px; cursor: pointer;">찾아보기…</button>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px;">
+        <article style="background: #fff; border: 1px solid #e3e6eb; border-radius: 10px; padding: 14px 16px; display: flex; align-items: center; gap: 14px;">
+          <span aria-hidden="true" style="width: 36px; height: 36px; border-radius: 8px; background: #eef2ff; color: #2457d6; display: inline-flex; align-items: center; justify-content: center; font-weight: 700;">D</span>
+          <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px;">
+            <div style="display: flex; align-items: baseline; gap: 8px;"><span style="font-weight: 700; font-size: 15px;">바탕화면</span><span class="mono" title="C:\Users\손지훈\Desktop" style="font-size: 12px; color: #6b7280;">C:\Users\…\Desktop</span></div>
+            <div style="font-size: 12px; color: #4b5563;">하위 폴더 포함 · 본문 검색 · 정리 위치 D:\정리 · 제외 없음</div>
+          </div>
+          <span style="font-size: 12px; color: #16a34a; white-space: nowrap;">● 정상</span>
+          <a href="SettingsEdit.dc.html" style="height: 32px; padding: 0 12px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 13px; display: inline-flex; align-items: center;">편집</a>
+        </article>
+
+        <article style="background: #fff; border: 1px solid #e3e6eb; border-radius: 10px; padding: 14px 16px; display: flex; align-items: center; gap: 14px;">
+          <span aria-hidden="true" style="width: 36px; height: 36px; border-radius: 8px; background: #eef2ff; color: #2457d6; display: inline-flex; align-items: center; justify-content: center; font-weight: 700;">↓</span>
+          <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px;">
+            <div style="display: flex; align-items: baseline; gap: 8px;"><span style="font-weight: 700; font-size: 15px;">다운로드</span><span class="mono" title="C:\Users\손지훈\Downloads" style="font-size: 12px; color: #6b7280;">C:\Users\…\Downloads</span></div>
+            <div style="font-size: 12px; color: #4b5563;">하위 폴더 포함 · 본문 검색 · 정리 위치 D:\정리 · 제외 2개</div>
+          </div>
+          <span style="font-size: 12px; color: #16a34a; white-space: nowrap;">● 정상</span>
+          <a href="SettingsEdit.dc.html" style="height: 32px; padding: 0 12px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 13px; display: inline-flex; align-items: center;">편집</a>
+        </article>
+
+        <article style="background: #fff; border: 1px solid #e3e6eb; border-radius: 10px; padding: 14px 16px; display: flex; align-items: center; gap: 14px;">
+          <span aria-hidden="true" style="width: 36px; height: 36px; border-radius: 8px; background: #f3f4f6; color: #4b5563; display: inline-flex; align-items: center; justify-content: center; font-weight: 700;">B</span>
+          <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px;">
+            <div style="display: flex; align-items: baseline; gap: 8px;"><span style="font-weight: 700; font-size: 15px;">PC백업</span><span class="mono" title="D:\PC백업_20241031" style="font-size: 12px; color: #6b7280;">D:\PC백업_20241031</span></div>
+            <div style="font-size: 12px; color: #4b5563;">하위 폴더 포함 · 본문 검색 · 정리 위치 D:\정리 · 제외 없음</div>
+          </div>
+          <span style="font-size: 12px; color: #16a34a; white-space: nowrap;">● 정상</span>
+          <a href="SettingsEdit.dc.html" style="height: 32px; padding: 0 12px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 13px; display: inline-flex; align-items: center;">편집</a>
+        </article>
+
+        <article style="background: #fff; border: 1px solid #e3e6eb; border-radius: 10px; padding: 14px 16px; display: flex; align-items: center; gap: 14px;">
+          <span aria-hidden="true" style="width: 36px; height: 36px; border-radius: 8px; background: #f3f4f6; color: #4b5563; display: inline-flex; align-items: center; justify-content: center; font-weight: 700;">B</span>
+          <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px;">
+            <div style="display: flex; align-items: baseline; gap: 8px;"><span style="font-weight: 700; font-size: 15px;">백업자료</span><span class="mono" title="D:\백업자료" style="font-size: 12px; color: #6b7280;">D:\백업자료</span></div>
+            <div style="font-size: 12px; color: #4b5563;">하위 폴더 포함 · 본문 검색 · 정리 위치 D:\정리 · 제외 없음</div>
+          </div>
+          <span style="font-size: 12px; color: #16a34a; white-space: nowrap;">● 정상</span>
+          <a href="SettingsEdit.dc.html" style="height: 32px; padding: 0 12px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 13px; display: inline-flex; align-items: center;">편집</a>
+        </article>
+      </div>
+
+      <div>
+        <button style="height: 36px; padding: 0 14px; border: 1px dashed #c4c8d0; border-radius: 8px; background: transparent; color: #374151; font-size: 13px; cursor: pointer;">+ 폴더 추가</button>
+      </div>
+    </section>
+  </div>
+
+  <footer style="display: flex; align-items: center; gap: 10px; padding: 10px 24px; background: #fff; border-top: 1px solid #e3e6eb; font-size: 13px;">
+    <span style="color: #6b7280;">저장하지 않은 변경 없음</span>
+    <span style="flex: 1;"></span>
+    <button style="height: 34px; padding: 0 14px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 13px; cursor: pointer;">변경 취소</button>
+    <button style="height: 34px; padding: 0 16px; border: 0; border-radius: 6px; background: #2457d6; color: #fff; font-weight: 600; font-size: 13px; cursor: pointer;">저장</button>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":820}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
