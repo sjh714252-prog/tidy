@@ -13,6 +13,7 @@ pub mod html;
 pub mod restructure;
 pub mod scan;
 pub mod stats;
+pub mod today;
 pub mod tree;
 
 use std::path::{Path, PathBuf};
