@@ -3,10 +3,13 @@ import * as ipc from "../ipc/commands";
 import { useReport } from "../store/report";
 import { formatSize, formatTime } from "../components/format";
 import { RestructurePanel } from "../components/RestructurePanel";
+import { shortenTo, watchOf } from "../components/paths";
+import { useWatchNames } from "../store/status";
 
 /** 정리하기 (SPEC §9.5, §14.6): 정리 제안 + stats cards, types, big folders/files, duplicates, stale files, tree. */
 export function ReportView() {
   const r = useReport();
+  const names = useWatchNames();
   const loadRoots = useReport((s) => s.loadRoots);
   useEffect(() => {
     void loadRoots();
@@ -21,36 +24,54 @@ export function ReportView() {
   const wasted = rep?.duplicates.reduce((a, d) => a + d.wasted, 0) ?? 0;
 
   return (
-    <div className="report">
+    <div className="page report">
       <div className="toolbar">
-        <select value={r.path} data-testid="report-folder" onChange={(e) => void r.setPath(e.target.value)}>
-          {r.path && !r.roots.includes(r.path) && <option value={r.path}>{r.path} (다른 폴더)</option>}
-          {r.roots.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
-        <button onClick={() => void pick()}>다른 폴더…</button>
-        <label>
-          <input type="checkbox" checked={r.dups} onChange={(e) => r.setDups(e.target.checked)} /> 중복 찾기(내용 읽음)
+        <label className="check" style={{ fontWeight: 600 }}>
+          정리할 폴더
+          <select
+            value={r.path}
+            data-testid="report-folder"
+            aria-label="정리할 폴더"
+            onChange={(e) => void r.setPath(e.target.value)}
+          >
+            {r.path && !r.roots.includes(r.path) && <option value={r.path}>{shortenTo(r.path, 40)} (다른 폴더)</option>}
+            {r.roots.map((p) => {
+              const w = watchOf(p, names);
+              const label = w && w.path === p ? `${w.alias} — ${shortenTo(p, 32)}` : shortenTo(p, 48);
+              return (
+                <option key={p} value={p} title={p}>
+                  {label}
+                </option>
+              );
+            })}
+          </select>
         </label>
-        <button className="primary" disabled={!r.path || r.loading} onClick={() => void r.build()}>
-          {r.loading ? "분석 중…" : "리포트 만들기"}
-        </button>
+        <button onClick={() => void pick()}>다른 폴더…</button>
       </div>
       {r.target && (
         <div className="notice warn" data-testid="organize-root-warning">
           ⚠ 이 폴더는 정리 결과가 모이는 곳입니다({r.target}). 여기서 정리하면 이미 정리된 파일을 다시 옮깁니다.
         </div>
       )}
-      {r.error && <div className="error pad">{r.error}</div>}
+      {r.error && <div className="notice warn error">{r.error}</div>}
 
       <RestructurePanel />
 
+      <section className="card">
+        <div className="card-head">
+          <h2>폴더 리포트</h2>
+          <span className="sub">파일 종류·큰 폴더·중복·오래 안 쓴 파일 (읽기만 합니다)</span>
+          <span className="spacer" />
+          <label className="check">
+            <input type="checkbox" checked={r.dups} onChange={(e) => r.setDups(e.target.checked)} /> 중복 찾기(내용 읽음)
+          </label>
+          <button disabled={!r.path || r.loading} onClick={() => void r.build()}>
+            {r.loading ? "분석 중…" : "리포트 만들기"}
+          </button>
+        </div>
       {rep && (
-        <div className="pad">
-          <div className="cards">
+        <div>
+          <div className="stat-cards">
             <Card label="파일" value={rep.stats.total_files.toLocaleString()} />
             <Card label="폴더" value={rep.stats.total_dirs.toLocaleString()} />
             <Card label="용량" value={formatSize(rep.stats.total_bytes)} />
@@ -175,14 +196,15 @@ export function ReportView() {
           <p className="muted small">HTML로 저장: tidy report "{rep.root}" --format html &gt; 리포트.html</p>
         </div>
       )}
-      {!rep && !r.loading && <p className="muted pad">폴더를 고르고 "리포트 만들기"를 누르세요.</p>}
+      {!rep && !r.loading && <p className="muted small" style={{ margin: 0 }}>"리포트 만들기"를 누르면 이 폴더의 통계를 보여 줍니다.</p>}
+      </section>
     </div>
   );
 }
 
 function Card({ label, value }: { label: string; value: string }) {
   return (
-    <div className="card">
+    <div className="stat">
       <span className="muted small">{label}</span>
       <b>{value}</b>
     </div>

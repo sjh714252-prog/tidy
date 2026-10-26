@@ -169,7 +169,7 @@ export function WizardWindow() {
               검색만으로 동작합니다. 키는 OS 키체인에만 저장됩니다. <Help id="keychain" />
             </p>
             <p className="notice small" data-testid="wizard-curate-note">
-              고객사·이슈별로 묶는 <b>업무 맥락 정리</b>를 쓰려면 AI가 필요합니다. 여기서 켜 두면 나중에 설정 → ③ 업무
+              고객사·이슈별로 묶는 <b>업무 맥락 정리</b>를 쓰려면 AI가 필요합니다. 여기서 켜 두면 나중에 설정 → 업무
               맥락에서 "바탕화면에서 뽑기"로 고객사 사전을 만들 수 있습니다.
             </p>
             <AiSettingsSection />

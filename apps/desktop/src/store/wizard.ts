@@ -35,6 +35,7 @@ const folder = (path: string, label: string, checked: boolean, network = false):
   path,
   label,
   checked,
+  alias: null,
   kind: network ? "network" : "local",
   recursive: false,
   indexContent: !network,
