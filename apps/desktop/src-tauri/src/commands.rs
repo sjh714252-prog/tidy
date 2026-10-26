@@ -84,6 +84,8 @@ pub struct StatusDto {
     /// (M11) Configured watch folders (also when not running).
     pub watch_total: usize,
     pub watch_paths: Vec<String>,
+    /// (M13) `[[watch]] alias` per watch_paths entry (null = default name).
+    pub watch_aliases: Vec<Option<String>>,
     /// (M11) Watch folders organized in place, and the distinct
     /// "지정 위치로 모으기" roots — the status bar's "정리 위치".
     pub organize_in_place: usize,
@@ -173,6 +175,7 @@ pub fn status(app: &AppHandle) -> StatusDto {
         semantic_detail,
         watch_total: inner.cfg.watches.len(),
         watch_paths: inner.cfg.watches.iter().map(|w| s(&w.path)).collect(),
+        watch_aliases: inner.cfg.watches.iter().map(|w| w.alias.clone()).collect(),
         organize_in_place: crate::overview::organize_summary(&inner.cfg.watches).0,
         organize_roots: crate::overview::organize_summary(&inner.cfg.watches).1,
         update: crate::about::available(),
@@ -749,6 +752,9 @@ pub async fn is_network_path(path: String) -> CmdResult<bool> {
 #[serde(rename_all = "camelCase")]
 pub struct WatchDto {
     pub path: String,
+    /// (M13) Display name; null/"" = default (UI works it out).
+    #[serde(default)]
+    pub alias: Option<String>,
     /// "local" | "network"
     pub kind: String,
     pub recursive: bool,
@@ -779,6 +785,7 @@ impl From<&WatchRoot> for WatchDto {
     fn from(w: &WatchRoot) -> Self {
         WatchDto {
             path: s(&w.path),
+            alias: w.alias.clone(),
             kind: match w.kind {
                 RootKind::Local => "local".into(),
                 RootKind::Network => "network".into(),
@@ -848,6 +855,12 @@ pub fn watches_from_dtos(rows: &[WatchDto]) -> CmdResult<Vec<WatchRoot>> {
         }
         watches.push(WatchRoot {
             path: root,
+            alias: w
+                .alias
+                .as_deref()
+                .map(str::trim)
+                .filter(|a| !a.is_empty())
+                .map(str::to_string),
             kind: if network {
                 RootKind::Network
             } else {

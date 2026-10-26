@@ -341,6 +341,12 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
                     .await?,
             )
         }
+        "today_moves" => ok(report_cmds::today_moves(
+            app,
+            arg(&args, "since")?,
+            arg::<Option<usize>>(&args, "limit")?,
+        )
+        .await?),
         "watch_overview" => ok(overview::watch_overview(
             app,
             arg::<Option<bool>>(&args, "refresh")?.unwrap_or(false),
