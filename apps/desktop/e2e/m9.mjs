@@ -22,6 +22,7 @@ import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { addWatchFolder, gotoSettings, openRule, openToml, saveSettings, statusText, tab } from "./lib.mjs";
 
 const T = process.env.T;
 const S = process.env.S;
@@ -53,10 +54,6 @@ const waitFor = async (fn, ms, step = 500) => {
   }
   return false;
 };
-const openAdvanced = async (page) => {
-  const d = page.locator("details.advanced");
-  if (!(await d.evaluate((e) => e.open))) await d.locator("summary").click();
-};
 /** Compression method of the first local file header (99 = WinZip AES). */
 const zipInfo = (p) => {
   const b = fs.readFileSync(p);
@@ -72,10 +69,6 @@ const ACCOUNT_FILE = path.join(DESK, "환불 계좌.txt");
 
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1100, height: 1000 } });
-// M10: settings sections are foldable; these older tests expect everything open.
-await ctx.addInitScript(() =>
-  localStorage.setItem("tidy.settings.sections", JSON.stringify({ watch: true, rules: true, context: true, ai: true, security: true, advanced: true })),
-);
 const main = await ctx.newPage();
 main.on("dialog", (d) => d.accept(process.env.PROMPT_ANSWER ?? ""));
 await main.goto("http://localhost:1420/#/main");
@@ -85,34 +78,29 @@ const sec = main.locator("[data-testid=security-section]");
 
 // A. settings: folder, rule with encrypt toggle, password; one save button
 {
-  await main.getByRole("button", { name: "설정", exact: true }).click();
-  await sleep(800);
-  process.env.PROMPT_ANSWER = DESK;
-  await main.getByRole("button", { name: "폴더 추가…" }).click();
-  await sleep(500);
-  await openAdvanced(main);
-  await main
-    .locator("textarea.rules")
-    .fill(`# 사용자 주석\n\n[[rule]]\nname = "문서"\nmatch = { ext = ["txt", "csv"] }\ndest = "문서"\n`);
+  await gotoSettings(main, "watch");
+  await addWatchFolder(main, DESK);
+  const ta = await openToml(main);
+  await ta.fill(`# 사용자 주석\n\n[[rule]]\nname = "문서"\nmatch = { ext = ["txt", "csv"] }\ndest = "문서"\n`);
   await sleep(1500);
-  const card = main.locator("[data-testid=rule-card]").first();
+  const card = await openRule(main, 0);
   await card.locator("[data-testid=encrypt-toggle]").check();
   const synced = await waitFor(async () => (await main.locator("textarea.rules").inputValue()).includes('encrypt = "pii"'), 5000);
   ok("A", "카드 토글 → TOML encrypt = \"pii\"", synced, (await main.locator("textarea.rules").inputValue()).replace(/\n/g, " | "));
 
+  await gotoSettings(main, "security");
   ok("A", "보안 섹션 표시 (비밀번호 없음)", (await sec.locator("[data-testid=vault-key-state]").innerText()).includes("아직 없음"));
   ok("A", "보안 섹션에 따로 저장 버튼 없음 (#8)", (await sec.getByRole("button", { name: /저장/ }).count()) === 0);
   const pw = sec.locator("input[type=password]");
   await pw.nth(0).fill(PW);
   await pw.nth(1).fill(PW + "x");
   await sleep(300);
-  const blocked = await main.getByRole("button", { name: "저장", exact: true }).isDisabled();
-  ok("A", "비밀번호 불일치 → 저장 불가", blocked, await main.locator(".savebar").innerText());
+  const blocked = await main.locator("[data-testid=savebar]").getByRole("button", { name: "저장", exact: true }).isDisabled();
+  ok("A", "비밀번호 불일치 → 저장 불가", blocked, await main.locator("[data-testid=savebar]").innerText());
   await pw.nth(1).fill(PW);
   await sleep(300);
-  ok("A", "저장하지 않은 변경 표시", (await main.locator(".savebar").innerText()).includes("저장하지 않은 변경"));
-  await main.getByRole("button", { name: "저장", exact: true }).click();
-  await sleep(3000);
+  ok("A", "저장하지 않은 변경 표시", (await main.locator("[data-testid=savebar]").innerText()).includes("저장하지 않은 변경"));
+  await saveSettings(main, 3000);
   const st = await bridge("get_security_settings");
   ok("A", "통합 저장 → 키체인에 비밀번호", st.hasPassword === true, `store=${st.keyStore}`);
   ok("A", "화면: 설정됨 + 저장소 표시", (await sec.locator("[data-testid=vault-key-state]").innerText()).includes("설정됨"));
@@ -123,9 +111,9 @@ const sec = main.locator("[data-testid=security-section]");
     return r.includes('encrypt = "pii"') && r.includes("# 사용자 주석");
   })());
   ok("A", "비밀번호 칸 비워짐", (await pw.nth(0).inputValue()) === "" && (await pw.nth(1).inputValue()) === "");
-  const bar = await main.locator(".statusbar").innerText();
-  ok("A", "감시 시작", bar.includes("바탕 화면"), bar.replace(/\n/g, " | "));
   await main.screenshot({ path: `${SHOT}/m9-A-settings.png`, fullPage: true });
+  const bar = await statusText(main);
+  ok("A", "감시 시작", bar.includes("감시 1곳") && bar.includes("자동 정리 중"), bar.replace(/\n/g, " | "));
 }
 
 // B. personal file → confirm popup with badge; plain file moves
@@ -141,14 +129,14 @@ const sec = main.locator("[data-testid=security-section]");
 
   const c = await ctx.newPage();
   await c.goto("http://localhost:1420/#/confirm");
-  await c.waitForSelector(".confirm .c-file");
+  await c.waitForSelector(".confirm [data-testid=pending-name]");
   const badge = await c.locator("[data-testid=pii-badge]").innerText().catch(() => "");
   ok("B", "팝업 배지: 개인정보: 이름+휴대전화 15", badge === "개인정보: 이름+휴대전화 15", badge);
   ok("B", "팝업: 🔒 암호화해서 보관", await c.locator("[data-testid=encrypt-tag]").isVisible());
-  ok("B", "팝업 파일명", (await c.locator(".confirm .c-file").innerText()).includes("직원 연락망.csv"));
+  ok("B", "팝업 파일명", (await c.locator(".confirm [data-testid=pending-name]").innerText()).includes("직원 연락망.csv"));
   await c.screenshot({ path: `${SHOT}/m9-B-confirm.png` });
 
-  await main.locator(".topbar nav").getByRole("button", { name: "확인 대기" }).click();
+  await tab(main, "확인 대기").click();
   await sleep(800);
   ok("B", "대기열 화면 배지", (await main.locator(".pending [data-testid=pii-badge]").first().innerText()).includes("이름+휴대전화 15"));
 
@@ -182,7 +170,8 @@ const sec = main.locator("[data-testid=security-section]");
 
 // E. undo → original back, not locked again
 {
-  await main.locator(".topbar nav").getByRole("button", { name: "홈" }).click();
+  await tab(main, "홈").click();
+  await main.getByRole("button", { name: "전체 보기" }).click();
   await main.getByRole("button", { name: "마지막 이동 되돌리기" }).click();
   const back = await waitFor(() => fs.existsSync(PII_FILE), 10000);
   ok("E", "되돌리기 → 원래 위치에 복원", back);
@@ -195,14 +184,12 @@ const sec = main.locator("[data-testid=security-section]");
 
 // F. auto + vault folder
 {
-  await main.getByRole("button", { name: "설정", exact: true }).click();
-  await sleep(800);
+  await gotoSettings(main, "security");
   await sec.locator("input[name=sec-mode]").nth(1).check();
   await sec.getByPlaceholder("예: D:\\정리\\보안").fill(VAULT);
   await sec.locator("select").selectOption("auto");
   await sleep(300);
-  await main.getByRole("button", { name: "저장", exact: true }).click();
-  await sleep(3000);
+  await saveSettings(main, 3000);
   const cfg = fs.readFileSync(CFG, "utf8");
   ok("F", "config: vault + auto + vault_dir", cfg.includes('mode = "vault"') && cfg.includes('approval = "auto"') && cfg.includes("정리/보안"), cfg.split("[security]")[1]?.split("[security.pii]")[0]?.replace(/\n/g, " | "));
   fs.writeFileSync(ACCOUNT_FILE, "환불 안내\n입금 계좌: 123456-12-345678 (예금주 김영희)\n");
@@ -220,9 +207,9 @@ const sec = main.locator("[data-testid=security-section]");
 
 // G. report
 {
-  await main.locator(".topbar nav").getByRole("button", { name: "정리하기" }).click();
+  await tab(main, "정리하기").click();
   await sleep(800);
-  await main.locator(".report .toolbar select").selectOption({ index: 0 });
+  await main.getByRole("combobox", { name: "정리할 폴더" }).selectOption({ index: 0 });
   await main.getByRole("button", { name: "리포트 만들기" }).click();
   const shown = await waitFor(async () => (await main.locator("[data-testid=report-pii]").count()) > 0, 15000);
   const txt = shown ? await main.locator("[data-testid=report-pii]").innerText() : "";
