@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>확인 대기 (좁은 창)</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;background:#f6f7f9;color:#1b1f27;font-family:"Pretendard","Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif}
+a{color:#2457d6;text-decoration:none}a:hover{color:#163b99}
+.mono{font-family:"Cascadia Mono","Consolas","D2Coding",ui-monospace,monospace}
+</style>
+</helmet>
+<div style="min-height: 820px; display: flex; flex-direction: column; background: #f6f7f9;">
+
+  <header style="display: flex; align-items: center; gap: 2px; padding: 0 12px; height: 48px; background: #ffffff; border-bottom: 1px solid #e3e6eb; flex-wrap: wrap;">
+    <span style="font-weight: 800; font-size: 17px; color: #2457d6; margin-right: 8px;">Tidy</span>
+    <a href="Main.dc.html" style="padding: 6px 10px; border-radius: 6px; color: #374151; font-size: 14px;">홈</a>
+    <a href="PendingNarrow.dc.html" style="padding: 6px 10px; border-radius: 6px; background: #eef2ff; color: #2457d6; font-weight: 600; font-size: 14px;">확인 대기 <span style="display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px; background: #e14d4d; color: #fff; font-size: 11px; font-weight: 700; text-align: center;">20</span></a>
+    <a href="PendingNarrow.dc.html" style="padding: 6px 10px; border-radius: 6px; color: #374151; font-size: 14px;">정리하기</a>
+    <a href="PendingNarrow.dc.html" style="padding: 6px 10px; border-radius: 6px; color: #374151; font-size: 14px;">되돌리기</a>
+    <a href="Settings.dc.html" style="padding: 6px 10px; border-radius: 6px; color: #374151; font-size: 14px;">설정</a>
+    <span style="flex: 1;"></span>
+    <button aria-label="검색" style="height: 32px; width: 32px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 13px; cursor: pointer;">⌕</button>
+    <button aria-label="메뉴" style="height: 32px; width: 32px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 15px; cursor: pointer;">≡</button>
+  </header>
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 0 12px; height: 34px; background: #fbfbfc; border-bottom: 1px solid #e3e6eb; font-size: 12px; color: #4b5563;">
+    <span style="display: inline-flex; align-items: center; gap: 6px;"><span style="width: 8px; height: 8px; border-radius: 50%; background: #16a34a;"></span>자동 정리 중</span>
+    <span style="color: #c4c8d0;">│</span>
+    <span>감시 4곳 → <span class="mono" style="color: #1b1f27;">D:\정리</span></span>
+    <span style="flex: 1;"></span>
+    <span>AI 사용</span>
+  </div>
+
+  <main style="flex: 1; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px;">
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #374151;"><input type="checkbox" aria-label="모두 선택"> 모두</label>
+      <span style="font-size: 13px; color: #6b7280;">20건</span>
+      <span style="flex: 1;"></span>
+      <button style="height: 32px; padding: 0 12px; border: 0; border-radius: 6px; background: #2457d6; color: #fff; font-weight: 600; font-size: 13px; cursor: pointer;">선택 이동</button>
+      <button aria-label="더 보기" style="height: 32px; width: 36px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 16px; cursor: pointer;">⋯</button>
+    </div>
+
+    <article style="background: #fff; border: 1px solid #e3e6eb; border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; align-items: flex-start; gap: 10px;">
+        <input type="checkbox" aria-label="선택" style="margin-top: 4px;">
+        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+          <span style="font-weight: 600; font-size: 14px;">📁 중앙선관위 로그 <span style="font-weight: 500; color: #6b7280;">폴더 · 412개</span></span>
+          <span class="mono" style="font-size: 12px; color: #6b7280;">바탕화면 › 중앙선관위 로그</span>
+        </div>
+        <span style="padding: 1px 7px; border-radius: 9px; background: #eef2ff; color: #2457d6; font-weight: 700; font-size: 12px; white-space: nowrap;">AI 92%</span>
+      </div>
+      <div style="padding-left: 24px; display: flex; flex-direction: column; gap: 4px;">
+        <div style="font-size: 13px;"><span style="color: #6b7280;">→ </span><span class="mono" title="D:\정리\중앙선관위\20261023_로그분석\개발\중앙선관위 로그">D:\정리\중앙선관위\…\개발\중앙선관위 로그</span></div>
+        <div style="font-size: 12px; color: #6b7280; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">폴더 이름에 고객사 '중앙선관위'가 있고 안의 go 소스는 로그 분석 도구로 보임. 폴더째 옮깁니다. 새 고객사 폴더가 만들어집니다.</div>
+        <a href="PendingNarrow.dc.html" style="font-size: 12px;">더보기</a>
+      </div>
+      <div style="padding-left: 24px; display: flex; gap: 6px; align-items: center;">
+        <button style="height: 32px; padding: 0 14px; border: 0; border-radius: 6px; background: #2457d6; color: #fff; font-weight: 600; font-size: 13px; cursor: pointer;">이동</button>
+        <button style="height: 32px; padding: 0 12px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 13px; cursor: pointer;">다른 곳…</button>
+        <button aria-label="다른 선택" style="height: 32px; width: 36px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 15px; cursor: pointer;">⋯</button>
+        <span style="flex: 1;"></span>
+        <span style="font-size: 12px; color: #6b7280;">10-23 15:37</span>
+      </div>
+    </article>
+
+    <article style="background: #fff; border: 1px solid #e3e6eb; border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; align-items: flex-start; gap: 10px;">
+        <input type="checkbox" aria-label="선택" style="margin-top: 4px;">
+        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+          <span style="font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">AI활용현황보고_고객지원팀통합_261022.docx</span>
+          <span class="mono" style="font-size: 12px; color: #6b7280;">바탕화면 › 팀원 AI사용내역 · 680 KB</span>
+        </div>
+        <span style="padding: 1px 7px; border-radius: 9px; background: #eef2ff; color: #2457d6; font-weight: 700; font-size: 12px; white-space: nowrap;">AI 80%</span>
+      </div>
+      <div style="padding-left: 24px; display: flex; flex-direction: column; gap: 4px;">
+        <div style="font-size: 13px;"><span style="color: #6b7280;">→ </span><span class="mono">D:\정리\기타\내부운영\AI 활용</span></div>
+        <div style="font-size: 12px; color: #6b7280; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">고객지원팀 내부 AI 활용 현황 보고서로 특정 고객사 자료가 아님. 새 주제 폴더를 만듭니다.</div>
+      </div>
+      <div style="padding-left: 24px; display: flex; gap: 6px; align-items: center;">
+        <button style="height: 32px; padding: 0 14px; border: 0; border-radius: 6px; background: #2457d6; color: #fff; font-weight: 600; font-size: 13px; cursor: pointer;">이동</button>
+        <button style="height: 32px; padding: 0 12px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 13px; cursor: pointer;">다른 곳…</button>
+        <button aria-label="다른 선택" style="height: 32px; width: 36px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 15px; cursor: pointer;">⋯</button>
+        <span style="flex: 1;"></span>
+        <span style="font-size: 12px; color: #6b7280;">10-23 15:36</span>
+      </div>
+    </article>
+
+    <article style="background: #fff; border: 1px solid #e3e6eb; border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; align-items: flex-start; gap: 10px;">
+        <input type="checkbox" aria-label="선택" style="margin-top: 4px;">
+        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+          <span style="font-weight: 600; font-size: 14px;">견적서_바다정보_RCS_v3.xlsx</span>
+          <span class="mono" style="font-size: 12px; color: #6b7280;">다운로드 · 212 KB</span>
+        </div>
+        <span style="padding: 1px 7px; border-radius: 9px; background: #fff3e6; color: #b45309; font-weight: 700; font-size: 12px; white-space: nowrap;">AI 68%</span>
+      </div>
+      <div style="padding-left: 24px; display: flex; flex-direction: column; gap: 4px;">
+        <div style="font-size: 13px;"><span style="color: #6b7280;">→ </span><span class="mono">D:\정리\바다정보\20261020_RCS전환\계약</span></div>
+        <div style="font-size: 12px; color: #6b7280; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">파일 이름의 '바다정보'가 사전의 고객사와 일치. 기존 이슈 폴더(10/20 RCS전환)에 넣습니다.</div>
+      </div>
+      <div style="padding-left: 24px; display: flex; gap: 6px; align-items: center;">
+        <button style="height: 32px; padding: 0 14px; border: 0; border-radius: 6px; background: #2457d6; color: #fff; font-weight: 600; font-size: 13px; cursor: pointer;">이동</button>
+        <button style="height: 32px; padding: 0 12px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 13px; cursor: pointer;">다른 곳…</button>
+        <button aria-label="다른 선택" style="height: 32px; width: 36px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 15px; cursor: pointer;">⋯</button>
+        <span style="flex: 1;"></span>
+        <span style="font-size: 12px; color: #6b7280;">10-23 15:31</span>
+      </div>
+    </article>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":720,"height":820}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

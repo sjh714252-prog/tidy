@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>설정 — 규칙</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;background:#f6f7f9;color:#1b1f27;font-family:"Pretendard","Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif}
+a{color:#2457d6;text-decoration:none}a:hover{color:#163b99}
+.mono{font-family:"Cascadia Mono","Consolas","D2Coding",ui-monospace,monospace}
+</style>
+</helmet>
+<div style="min-height: 820px; display: flex; flex-direction: column; background: #f6f7f9;">
+
+  <header style="display: flex; align-items: center; gap: 4px; padding: 0 16px; height: 48px; background: #ffffff; border-bottom: 1px solid #e3e6eb;">
+    <span style="font-weight: 800; font-size: 17px; color: #2457d6; margin-right: 12px;">Tidy</span>
+    <a href="Main.dc.html" style="padding: 6px 12px; border-radius: 6px; color: #374151; font-size: 14px;">홈</a>
+    <a href="Pending.dc.html" style="padding: 6px 12px; border-radius: 6px; color: #374151; font-size: 14px;">확인 대기 <span style="display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px; background: #e14d4d; color: #fff; font-size: 11px; font-weight: 700; text-align: center;">20</span></a>
+    <a href="Pending.dc.html" style="padding: 6px 12px; border-radius: 6px; color: #374151; font-size: 14px;">정리하기</a>
+    <a href="Pending.dc.html" style="padding: 6px 12px; border-radius: 6px; color: #374151; font-size: 14px;">되돌리기</a>
+    <a href="Settings.dc.html" style="padding: 6px 12px; border-radius: 6px; background: #eef2ff; color: #2457d6; font-weight: 600; font-size: 14px;">설정</a>
+    <span style="flex: 1;"></span>
+    <button style="height: 32px; padding: 0 12px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 13px; cursor: pointer;">검색 Ctrl+Shift+Space</button>
+    <button style="height: 32px; padding: 0 12px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 13px; cursor: pointer;">일시정지</button>
+    <button aria-label="도움말" style="height: 32px; width: 32px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 14px; cursor: pointer;">?</button>
+  </header>
+
+  <div style="flex: 1; display: flex; flex-wrap: wrap;">
+    <nav aria-label="설정 메뉴" style="width: 220px; padding: 16px 12px; background: #ffffff; border-right: 1px solid #e3e6eb; display: flex; flex-direction: column; gap: 2px;">
+      <a href="Settings.dc.html" style="padding: 9px 12px; border-radius: 6px; color: #374151; font-size: 14px;">감시 폴더</a>
+      <a href="Rules.dc.html" style="padding: 9px 12px; border-radius: 6px; background: #eef2ff; color: #2457d6; font-weight: 600; font-size: 14px;">규칙</a>
+      <a href="Settings.dc.html" style="padding: 9px 12px; border-radius: 6px; color: #374151; font-size: 14px;">업무 맥락 <span style="font-size: 11px; padding: 1px 6px; border-radius: 8px; background: #eef2ff; color: #2457d6; font-weight: 600;">AI</span></a>
+      <a href="Settings.dc.html" style="padding: 9px 12px; border-radius: 6px; color: #374151; font-size: 14px;">AI 연결</a>
+      <a href="Settings.dc.html" style="padding: 9px 12px; border-radius: 6px; color: #374151; font-size: 14px;">보안 · 개인정보</a>
+      <a href="Settings.dc.html" style="padding: 9px 12px; border-radius: 6px; color: #374151; font-size: 14px;">고급</a>
+    </nav>
+
+    <section style="flex: 999 1 560px; min-width: 0; padding: 24px 32px; display: flex; flex-direction: column; gap: 16px; max-width: 900px;">
+      <div style="display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap;">
+        <div style="flex: 1; min-width: 280px;">
+          <h1 style="margin: 0 0 4px; font-size: 20px; font-weight: 700;">규칙</h1>
+          <p style="margin: 0; font-size: 13px; color: #6b7280;">위에서부터 검사해 처음 맞는 규칙 하나를 적용합니다. 목적지는 정리 위치(D:\정리) 아래 상대 경로입니다.</p>
+        </div>
+        <button style="height: 34px; padding: 0 12px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 13px; cursor: pointer;">AI로 규칙 만들기</button>
+        <button style="height: 34px; padding: 0 14px; border: 0; border-radius: 6px; background: #2457d6; color: #fff; font-weight: 600; font-size: 13px; cursor: pointer;">+ 규칙 추가</button>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <article style="background: #fff; border: 1px solid #e3e6eb; border-radius: 10px; padding: 12px 16px; display: grid; grid-template-columns: 24px 150px minmax(0, 1fr) minmax(0, 1fr) 90px 60px; gap: 12px; align-items: center;">
+          <span aria-hidden="true" style="color: #9ca3af; font-size: 14px;">⋮⋮</span>
+          <span style="font-weight: 700; font-size: 14px;">문서</span>
+          <span style="font-size: 13px; color: #4b5563; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">pdf · hwp · hwpx · doc · docx · xls · xlsx · ppt · pptx</span>
+          <span class="mono" style="font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">→ 문서/{yyyy}-{mm}</span>
+          <span style="font-size: 12px; color: #2457d6; white-space: nowrap;">지금 3,494개</span>
+          <a href="Rules.dc.html" style="font-size: 13px; text-align: right;">펼치기</a>
+        </article>
+
+        <article style="background: #fff; border: 1px solid #e3e6eb; border-radius: 10px; padding: 12px 16px; display: grid; grid-template-columns: 24px 150px minmax(0, 1fr) minmax(0, 1fr) 90px 60px; gap: 12px; align-items: center;">
+          <span aria-hidden="true" style="color: #9ca3af; font-size: 14px;">⋮⋮</span>
+          <span style="font-weight: 700; font-size: 14px;">스크린샷</span>
+          <span style="font-size: 13px; color: #4b5563; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">png · jpg · jpeg, 이름 ^스크린샷|Screenshot</span>
+          <span class="mono" style="font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">→ 사진/스크린샷/{yyyy}/{mm}</span>
+          <span style="font-size: 12px; color: #6b7280; white-space: nowrap;">지금 0개</span>
+          <a href="Rules.dc.html" style="font-size: 13px; text-align: right;">펼치기</a>
+        </article>
+
+        <article style="background: #fff; border: 1px solid #f0c48c; border-radius: 10px; padding: 12px 16px; display: grid; grid-template-columns: 24px 150px minmax(0, 1fr) minmax(0, 1fr) 90px 60px; gap: 12px; align-items: center;">
+          <span aria-hidden="true" style="color: #9ca3af; font-size: 14px;">⋮⋮</span>
+          <span style="font-weight: 700; font-size: 14px;">설치 파일 <span style="font-weight: 500; font-size: 11px; color: #b45309;">확인 후</span></span>
+          <span style="font-size: 13px; color: #4b5563; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">exe · msi</span>
+          <span class="mono" title="이 규칙은 정리 위치를 무시하고 C:\Users\손지훈\Downloads\Installers 로 보냅니다" style="font-size: 13px; color: #b45309; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">⚠ C:\…\Downloads\Installers</span>
+          <a href="Rules.dc.html" style="font-size: 12px; white-space: nowrap;">상대 경로로</a>
+          <a href="Rules.dc.html" style="font-size: 13px; text-align: right;">펼치기</a>
+        </article>
+
+        <article style="background: #fff; border: 2px solid #2457d6; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: grid; grid-template-columns: 24px 150px minmax(0, 1fr) 60px; gap: 12px; align-items: center;">
+            <span aria-hidden="true" style="color: #9ca3af; font-size: 14px;">⋮⋮</span>
+            <input value="압축 파일" aria-label="규칙 이름" style="height: 30px; padding: 0 8px; border: 1px solid #d6dae1; border-radius: 6px; font-size: 14px; font-weight: 700; width: 100%; box-sizing: border-box;">
+            <span style="font-size: 12px; color: #2457d6;">지금 128개 · 예: 사진 모음.zip, 로그_1023.7z</span>
+            <a href="Rules.dc.html" style="font-size: 13px; text-align: right;">접기</a>
+          </div>
+          <div style="display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 8px 12px; align-items: center; padding-left: 36px;">
+            <span style="font-size: 13px; color: #6b7280;">확장자</span>
+            <div style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+              <span style="padding: 3px 8px; border: 1px solid #d6dae1; border-radius: 12px; font-size: 12px; background: #fbfbfc;">.zip ×</span>
+              <span style="padding: 3px 8px; border: 1px solid #d6dae1; border-radius: 12px; font-size: 12px; background: #fbfbfc;">.7z ×</span>
+              <span style="padding: 3px 8px; border: 1px solid #d6dae1; border-radius: 12px; font-size: 12px; background: #fbfbfc;">.rar ×</span>
+              <input placeholder="확장자 + Enter" aria-label="확장자 추가" style="height: 26px; padding: 0 8px; border: 1px solid #d6dae1; border-radius: 6px; font-size: 12px; width: 120px;">
+            </div>
+            <span style="font-size: 13px; color: #6b7280;">이름에 포함</span>
+            <input placeholder="예: 로그, 견적서" aria-label="이름에 포함" style="height: 30px; padding: 0 8px; border: 1px solid #d6dae1; border-radius: 6px; font-size: 13px; max-width: 360px;">
+            <span style="font-size: 13px; color: #6b7280;">어디로</span>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <input value="압축 파일" aria-label="목적지" class="mono" style="height: 30px; padding: 0 8px; border: 1px solid #d6dae1; border-radius: 6px; font-size: 13px; width: 260px;">
+              <span style="font-size: 12px; color: #6b7280;">→ D:\정리\압축 파일</span>
+              <button style="height: 30px; padding: 0 10px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 12px; cursor: pointer;">폴더 선택…</button>
+            </div>
+            <span style="font-size: 13px; color: #6b7280;">옵션</span>
+            <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+              <label style="display: flex; align-items: center; gap: 6px; font-size: 13px;"><input type="checkbox"> 옮기기 전에 묻기</label>
+              <label style="display: flex; align-items: center; gap: 6px; font-size: 13px;"><input type="checkbox"> 개인정보면 암호화</label>
+              <a href="Rules.dc.html" style="font-size: 13px;">조건 더 보기 (정규식 · 크기 · 수정일)</a>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <details style="font-size: 13px; color: #6b7280;"><summary style="cursor: pointer;">고급: rules.toml 직접 편집</summary></details>
+    </section>
+  </div>
+
+  <footer style="display: flex; align-items: center; gap: 10px; padding: 10px 24px; background: #fff; border-top: 1px solid #e3e6eb; font-size: 13px;">
+    <span style="color: #b45309;">규칙 1개가 정리 위치를 무시합니다</span>
+    <span style="flex: 1;"></span>
+    <button style="height: 34px; padding: 0 14px; border: 1px solid #d6dae1; border-radius: 6px; background: #fff; color: #374151; font-size: 13px; cursor: pointer;">변경 취소</button>
+    <button style="height: 34px; padding: 0 16px; border: 0; border-radius: 6px; background: #2457d6; color: #fff; font-weight: 600; font-size: 13px; cursor: pointer;">저장</button>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":820}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
