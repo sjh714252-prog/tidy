@@ -74,6 +74,10 @@ export interface Backlog {
   noRule: number;
   total: number;
   capped: boolean;
+  /** (M12) Sub-folders to organize as whole items ("새 폴더 N개"). */
+  newFolders: number;
+  /** (M12) Sub-folders still being copied (not offered yet). */
+  settling: number;
 }
 export interface FolderOverview {
   path: string;
@@ -94,6 +98,21 @@ export interface Overview {
   /** AI on + customers in the context dictionary. */
   canCurate: boolean;
   cap: number;
+  /** (M12) New sub-folders over all watch folders. */
+  newFolders: number;
+}
+
+/** (M12) "고객사별 보기". */
+export interface CustomerStat {
+  name: string;
+  /** Existing customer folders (one per watch folder anchor). */
+  dirs: string[];
+  /** Issue / date folders directly in them. */
+  issues: number;
+  files: number;
+  /** Newest file's mtime (Unix seconds). */
+  last: number | null;
+  capped: boolean;
 }
 
 /** "semantic" = found by meaning only (no word matched). */
@@ -498,6 +517,8 @@ export interface ContextNote {
   unclassified: boolean;
   edited: boolean;
   key: string;
+  /** (M12) A folder item's inner tree (a few levels). */
+  tree?: string | null;
 }
 export interface Plan {
   id: number;
@@ -630,6 +651,10 @@ export interface CurateEstimate {
   cost_usd: number | null;
   provider: string;
   model: string;
+  /** (M12) Items that are whole folders. */
+  folders: number;
+  /** (M12) Sub-folders still changing (left out this time). */
+  unsettled: number;
 }
 
 export type ContextSuggestion =
@@ -648,6 +673,8 @@ export interface MoveEdit {
   issue?: string | null;
   docKind?: string | null;
   topic?: string | null;
+  /** (M12) The item's own date, YYYY-MM-DD. */
+  date?: string | null;
 }
 
 /** (M10) "바탕화면에서 뽑기" candidates. */

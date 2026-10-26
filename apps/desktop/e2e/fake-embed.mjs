@@ -36,18 +36,24 @@ let lastUser = '';
 export function curateAnswer(user) {
   const files = [];
   for (const line of user.split('\n')) {
-    const m = line.match(/^\[(\d+)\] 이름: (.+?) \| /);
+    // (M12) "[n] 파일: 이름 | 폴더: 상대 경로 | …" or a whole folder:
+    // "[n] 폴더: 이름 | 경로: 상대 경로 | 파일 N개 | … | 확장자: go 30 | …".
+    const m = line.match(/^\[(\d+)\] (파일|폴더): (.+?) \| (?:폴더|경로): (.*?) \| /);
     if (!m) continue;
     const id = Number(m[1]);
-    const name = m[2];
-    // "RiverInfo" is a spelling the dictionary does not know (learning test).
-    const entity = /가람|GARA/i.test(name)
-      ? '가람정보'
-      : /하늘|SKY/i.test(name)
-        ? '하늘통신'
-        : /River/i.test(name)
-          ? 'RiverInfo'
-          : null;
+    const folder = m[2] === '폴더';
+    const name = m[3];
+    // Path context: the first-level folder is the strongest customer hint.
+    const where = `${m[4]}/${name}`;
+    const entity = /누리원/.test(where)
+      ? '가온누리원'
+      : /가람|GARA/i.test(name)
+        ? '가람정보'
+        : /하늘|SKY/i.test(name)
+          ? '하늘통신'
+          : /River/i.test(name)
+            ? 'RiverInfo'
+            : null;
     const issue = /과금/.test(name)
       ? '과금이슈'
       : /장애/.test(name)
@@ -56,21 +62,33 @@ export function curateAnswer(user) {
           ? '번호전환'
           : /대체발송/.test(name)
             ? '대체발송 중복'
-            : '기타 이슈';
+            : /누리원/.test(where) && /로그/.test(where)
+              ? '로그분석'
+              : '기타 이슈';
     const d = name.match(/(20\d\d)(\d\d)(\d\d)/);
-    const ext = name.split('.').pop().toLowerCase();
-    const doc_kind =
-      ext === 'log' ? '로그' : ['png', 'jpg'].includes(ext) ? '캡처' : ['csv', 'xlsx'].includes(ext) ? '데이터' : /회의/.test(name) ? '회의록' : '안내문서';
+    const ext = folder ? (line.match(/확장자: ([^ ,|]+)/)?.[1] ?? '') : name.split('.').pop().toLowerCase();
+    const doc_kind = ['go', 'rs', 'py', 'js', 'java'].includes(ext)
+      ? '개발'
+      : ext === 'log'
+        ? '로그'
+        : ['png', 'jpg'].includes(ext)
+          ? '캡처'
+          : ['csv', 'xlsx'].includes(ext)
+            ? '데이터'
+            : /회의/.test(name)
+              ? '회의록'
+              : '안내문서';
     const topic = entity ? null : /정책|방침/.test(name) ? `정책/${name.replace(/\.[^.]+$/, '')}` : '기타/메모';
     files.push({
       id,
+      kind: folder ? 'folder' : 'file',
       entity,
       issue: !entity && /정책|방침/.test(name) ? '정책' : issue,
       date: d ? `${d[1]}-${d[2]}-${d[3]}` : null,
       doc_kind,
       topic,
       confidence: /애매/.test(name) ? 0.3 : 0.95,
-      reason: `파일 이름 '${name}'에서 판단`,
+      reason: folder ? `폴더 '${name}'(경로 ${m[4] || '.'})와 안의 파일 종류로 판단` : `파일 이름 '${name}'에서 판단`,
     });
   }
   return { files };
@@ -84,6 +102,20 @@ export const CONTEXT_ANSWER = {
   issue_types: ['과금', '장애', '번호전환'],
   doc_kinds: [{ name: '로그', ext: ['log'] }],
 };
+
+/** (M12) "바탕화면에서 뽑기": top-level folder names are customer candidates. */
+export function contextAnswer(user) {
+  const top = [];
+  let inTop = false;
+  for (const line of user.split('\n')) {
+    if (line.startsWith('## ')) inTop = line.includes('감시 폴더 바로 아래 폴더');
+    else if (inTop && line.startsWith('- ')) top.push(line.slice(2).trim());
+  }
+  const extra = top
+    .filter((f) => /누리원/.test(f))
+    .map(() => ({ name: '가온누리원', aliases: ['누리원'], files: 1, reason: "감시 폴더 바로 아래 폴더 이름 '가온누리원 로그'" }));
+  return { ...CONTEXT_ANSWER, entities: [...CONTEXT_ANSWER.entities, ...extra.slice(0, 1)] };
+}
 
 function fnv(s) {
   let h = 0xcbf29ce484222325n;
@@ -153,7 +185,7 @@ const server = http.createServer((req, res) => {
       const answer = sys.includes('업무 자료 정리 보조자')
         ? curateAnswer(user)
         : sys.includes('업무 자료 분석가')
-          ? CONTEXT_ANSWER
+          ? contextAnswer(user)
           : { dest: DEST, confidence: 0.6, reason: '테스트용 고정 제안', new_folder: true, suggested_rename: null };
       return send(200, {
         model: JSON.parse(body).model,

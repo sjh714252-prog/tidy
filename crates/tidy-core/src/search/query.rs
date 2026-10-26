@@ -23,6 +23,9 @@ pub struct Query {
     pub exts: Vec<String>,
     /// Only files under this folder.
     pub in_dir: Option<PathBuf>,
+    /// (M12) Only files under any of these folders (a customer's folders
+    /// in every watch folder; empty = no such filter).
+    pub in_any: Vec<PathBuf>,
     /// Unix seconds, inclusive lower bound on mtime.
     pub after: Option<i64>,
     /// Unix seconds, exclusive upper bound on mtime.
@@ -53,6 +56,17 @@ pub fn type_exts(kind: &str) -> Option<&'static [&'static str]> {
 }
 
 impl Query {
+    /// Whether any filter (not just words) is set.
+    pub fn has_filters(&self) -> bool {
+        !self.exts.is_empty()
+            || self.in_dir.is_some()
+            || !self.in_any.is_empty()
+            || self.after.is_some()
+            || self.before.is_some()
+            || self.min_size.is_some()
+            || self.max_size.is_some()
+    }
+
     pub fn parse(input: &str) -> Self {
         let mut q = Query::default();
         for tok in tokenize(input) {

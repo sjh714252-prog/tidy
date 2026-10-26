@@ -1,7 +1,10 @@
 import { useEffect } from "react";
+import * as ipc from "../ipc/commands";
 import { onOrganize, onStatus } from "../ipc/events";
-import type { FolderOverview, Overview } from "../ipc/types";
-import { organizeNow, shortPath, useHome } from "../store/home";
+import type { CustomerStat, FolderOverview, Overview } from "../ipc/types";
+import { organizeFolders, organizeNow, shortPath, useHome } from "../store/home";
+import { AiNeeded, useAiOn } from "./AiNeeded";
+import { formatTime } from "./format";
 
 const STATE: Record<FolderOverview["state"], { label: string; cls: string }> = {
   ok: { label: "정상", cls: "ok" },
@@ -34,9 +37,10 @@ function useOverview() {
  */
 export function OrganizeCard() {
   const o = useOverview();
+  const aiOn = useAiOn();
   if (!o || !o.folders.length) return null;
   const counted = o.folders.filter((f) => !f.network);
-  const waiting = counted.filter((f) => f.backlog && f.backlog.total > 0);
+  const waiting = counted.filter((f) => f.backlog && (f.backlog.total > 0 || f.backlog.newFolders > 0));
   const total = o.capped ? `${o.total.toLocaleString()}+` : o.total.toLocaleString();
   return (
     <section className="home-card" data-testid="organize-card">
@@ -59,21 +63,97 @@ export function OrganizeCard() {
               <span className="path" title={f.path}>
                 {shortPath(f.path)}
               </span>{" "}
-              <b>{count(f, o)}</b>
-              {f.backlog && (
-                <span className="muted small">
+              {!!f.backlog?.total && (
+                <>
+                  <b>{count(f, o)}</b>
+                  <span className="muted small">
+                    {" "}
+                    (규칙에 맞음 {f.backlog.toMove.toLocaleString()} · 규칙 없음 {f.backlog.noRule.toLocaleString()})
+                  </span>{" "}
+                  <button className="primary" onClick={() => void organizeNow(f, o.canCurate)}>
+                    지금 정리
+                  </button>
+                </>
+              )}
+              {!!f.backlog?.newFolders && (
+                <span className="new-folders" data-testid="new-folders">
                   {" "}
-                  (규칙에 맞음 {f.backlog.toMove.toLocaleString()} · 규칙 없음 {f.backlog.noRule.toLocaleString()})
+                  <b>새 폴더 {f.backlog.newFolders}개</b> —{" "}
+                  <button
+                    className={f.backlog.total ? undefined : "primary"}
+                    disabled={!aiOn}
+                    title={
+                      aiOn
+                        ? "하위 폴더를 통째로 업무 맥락(고객사/날짜_이슈/종류)으로 정리합니다. 미리보기 후 승인해야 옮깁니다."
+                        : "폴더를 통째로 정리하려면 AI가 필요합니다"
+                    }
+                    onClick={() => void organizeFolders(f)}
+                  >
+                    지금 정리
+                  </button>
+                  {!aiOn && <AiNeeded />}
                 </span>
-              )}{" "}
-              <button className="primary" onClick={() => void organizeNow(f, o.canCurate)}>
-                지금 정리
-              </button>
+              )}
+              {!!f.backlog?.settling && (
+                <span className="muted small" title="복사 중이거나 방금 바뀐 폴더는 조용해진 뒤 셉니다">
+                  {" "}
+                  (복사 중 {f.backlog.settling}개)
+                </span>
+              )}
             </li>
           ))}
         </ul>
       )}
     </section>
+  );
+}
+
+/**
+ * (M12) 고객사별 보기: per customer how many issue folders and files there
+ * are and when they last changed; a click opens the customer's folder.
+ */
+export function CustomerCard() {
+  const { customers, loadCustomers } = useHome();
+  useEffect(() => {
+    void loadCustomers();
+    const sub = onOrganize(() => void loadCustomers());
+    return () => void sub.then((f) => f());
+  }, [loadCustomers]);
+  if (!customers || !customers.length) return null;
+  return (
+    <section className="home-card" data-testid="customer-card">
+      <details open={customers.length <= 8}>
+        <summary>
+          <b>고객사별 보기</b> <span className="muted small">({customers.length}곳)</span>
+        </summary>
+        <ul className="customers">
+          {customers.map((c) => (
+            <CustomerRow key={c.name} c={c} />
+          ))}
+        </ul>
+      </details>
+    </section>
+  );
+}
+
+function CustomerRow({ c }: { c: CustomerStat }) {
+  const open = () => void ipc.openFolder(c.dirs[0] ?? "").catch((e) => alert(String(e)));
+  return (
+    <li data-testid="customer-row" data-name={c.name}>
+      <button className="link" title={c.dirs.join("\n")} onClick={open}>
+        📁 {c.name}
+      </button>
+      <span className="small">
+        이슈 폴더 {c.issues}개 · 파일 {c.files.toLocaleString()}
+        {c.capped ? "+" : ""}개
+      </span>
+      <span className="muted small">{c.last ? `마지막 작업 ${formatTime(c.last)}` : ""}</span>
+      {c.dirs.length > 1 && (
+        <span className="muted small" title={c.dirs.join("\n")}>
+          (폴더 {c.dirs.length}곳)
+        </span>
+      )}
+    </li>
   );
 }
 

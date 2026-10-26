@@ -1,5 +1,6 @@
 //! Work-context folder layouts (SPEC §14.3): `{entity}/{yyyymmdd}_{issue}/{doc_kind}`
-//! for files with a customer, `기타/{topic}` without one. Same `{var}`
+//! for files with a customer, `기타/{topic}` without one. (M12) `{folder}`
+//! is a folder item's name (empty for files). Same `{var}`
 //! syntax as rule destinations; always relative, resolved against the watch
 //! folder's anchor (in_place: the folder itself, collect: organize_root).
 
@@ -8,7 +9,7 @@ use std::path::{Path, PathBuf};
 use chrono::{Datelike, NaiveDate};
 
 const VARS: &[&str] = &[
-    "entity", "issue", "doc_kind", "topic", "yyyy", "mm", "dd", "yyyymmdd", "root",
+    "entity", "issue", "doc_kind", "topic", "yyyy", "mm", "dd", "yyyymmdd", "root", "folder",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +33,8 @@ pub struct TemplateVals<'a> {
     /// "큰 주제/작은 주제".
     pub topic: Option<&'a str>,
     pub date: Option<NaiveDate>,
+    /// (M12) A folder item's own name; empty for files (the segment drops).
+    pub folder: Option<&'a str>,
 }
 
 impl FolderTemplate {
@@ -125,6 +128,7 @@ impl FolderTemplate {
                             .map(|d| format!("{:02}", d.month()))
                             .unwrap_or_default(),
                         "dd" => date.map(|d| format!("{:02}", d.day())).unwrap_or_default(),
+                        "folder" => vals.folder.map(clean).unwrap_or_default(),
                         "yyyymmdd" => date
                             .map(|d| d.format("%Y%m%d").to_string())
                             .unwrap_or_else(|| "날짜없음".into()),
@@ -189,6 +193,7 @@ mod tests {
                 doc_kind: "로그",
                 topic: None,
                 date: d(2026, 10, 20),
+                folder: None,
             },
             a,
         );
@@ -202,6 +207,26 @@ mod tests {
             a,
         );
         assert_eq!(p, a.join("기타").join("정책").join("문자 정책"));
+        // (M12) {folder}: the folder item's name; dropped for files.
+        let f = FolderTemplate::parse("{entity}/{issue}/{folder}/x").unwrap();
+        let vals = |folder| TemplateVals {
+            entity: Some("가온누리원"),
+            issue: "로그분석",
+            folder,
+            ..Default::default()
+        };
+        assert_eq!(
+            f.render(&vals(Some("go: 도구")), a),
+            a.join("가온누리원")
+                .join("로그분석")
+                .join("go 도구")
+                .join("x")
+        );
+        assert_eq!(
+            f.render(&vals(None), a),
+            a.join("가온누리원").join("로그분석").join("x")
+        );
+        assert!(f.uses("folder"));
     }
 
     #[test]

@@ -300,6 +300,9 @@ pub struct CurateCfg {
     pub merge_days: u32,
     /// Characters of body text per file (only with `ai.send_content`).
     pub excerpt_chars: usize,
+    /// (M12) A sub-folder becomes a folder item only after nothing inside
+    /// changed for this long (not while it is being copied / unpacked).
+    pub folder_settle_secs: u64,
 }
 
 impl Default for CurateCfg {
@@ -314,6 +317,7 @@ impl Default for CurateCfg {
             batch_size: 30,
             merge_days: 14,
             excerpt_chars: 400,
+            folder_settle_secs: 60,
         }
     }
 }

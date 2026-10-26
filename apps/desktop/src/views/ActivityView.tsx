@@ -3,7 +3,7 @@ import * as ipc from "../ipc/commands";
 import type { ActivityKind } from "../ipc/types";
 import { useActivity } from "../store/activity";
 import { formatTime } from "../components/format";
-import { OrganizeCard, WatchPanel } from "../components/HomeCards";
+import { CustomerCard, OrganizeCard, WatchPanel } from "../components/HomeCards";
 
 const LABEL: Record<ActivityKind, string> = {
   moved: "이동",
@@ -40,6 +40,7 @@ export function ActivityView() {
     <div className="activity">
       <WatchPanel />
       <OrganizeCard />
+      <CustomerCard />
       <div className="toolbar">
         <button onClick={() => void undo()}>마지막 이동 되돌리기</button>
         <button onClick={() => void ipc.indexNow()}>지금 인덱싱</button>

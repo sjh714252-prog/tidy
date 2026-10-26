@@ -161,5 +161,6 @@ template = "{entity}/{yyyymmdd}_{issue}/{doc_kind}"   # 가람정보/20261020_�
 other_template = "기타/{topic}"                       # 기타/정책/문자 정책
 min_confidence = 0.6           # 미만은 미분류(그대로 둠)
 merge_days = 14                # 같은 고객사·이슈는 14일 안이면 가장 이른 날짜 폴더로
+folder_settle_secs = 60        # (M12) 하위 폴더는 안의 무엇이든 이 시간 동안 안 바뀌어야 항목으로 봄 (복사·압축 풀기 중 제외)
 # batch_size = 30              # 한 번에 AI에 묻는 파일 수
 # excerpt_chars = 400          # 파일당 본문 앞부분 (ai.send_content = true일 때만 보냄)

@@ -194,6 +194,19 @@ pub(crate) fn filtered_ids(
     Ok(Some(ids))
 }
 
+/// `dir` + separator, canonical when it exists (stored paths are).
+fn dir_prefix(dir: &std::path::Path) -> Result<String, StoreError> {
+    let dir = dunce::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    let mut prefix = dir
+        .to_str()
+        .ok_or_else(|| StoreError::NonUtf8Path(dir.clone()))?
+        .to_string();
+    if !prefix.ends_with(std::path::MAIN_SEPARATOR) {
+        prefix.push(std::path::MAIN_SEPARATOR);
+    }
+    Ok(prefix)
+}
+
 fn push_filters(q: &Query, sql: &mut String, params: &mut Vec<Value>) -> Result<(), StoreError> {
     if !q.exts.is_empty() {
         let marks = vec!["?"; q.exts.len()].join(", ");
@@ -201,18 +214,21 @@ fn push_filters(q: &Query, sql: &mut String, params: &mut Vec<Value>) -> Result<
         params.extend(q.exts.iter().map(|e| Value::from(e.clone())));
     }
     if let Some(dir) = &q.in_dir {
-        let dir = dunce::canonicalize(dir).unwrap_or_else(|_| dir.clone());
-        let mut prefix = dir
-            .to_str()
-            .ok_or_else(|| StoreError::NonUtf8Path(dir.clone()))?
-            .to_string();
-        if !prefix.ends_with(std::path::MAIN_SEPARATOR) {
-            prefix.push(std::path::MAIN_SEPARATOR);
-        }
+        let prefix = dir_prefix(dir)?;
         // substr() counts characters, not bytes (Korean paths!).
         sql.push_str(" AND substr(f.path, 1, ?) = ?");
         params.push((prefix.chars().count() as i64).into());
         params.push(prefix.into());
+    }
+    if !q.in_any.is_empty() {
+        let mut parts = Vec::new();
+        for dir in &q.in_any {
+            let prefix = dir_prefix(dir)?;
+            parts.push("substr(f.path, 1, ?) = ?");
+            params.push((prefix.chars().count() as i64).into());
+            params.push(prefix.into());
+        }
+        sql.push_str(&format!(" AND ({})", parts.join(" OR ")));
     }
     if let Some(t) = q.after {
         sql.push_str(" AND f.mtime >= ?");

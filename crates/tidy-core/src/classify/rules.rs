@@ -559,6 +559,21 @@ impl Anchors {
             .map(|(_, _, a)| a.as_path())
     }
 
+    /// (M12) The watch folder `p` lies in, in the spelling `p` uses
+    /// (configured or canonical), so `p.strip_prefix(root)` works.
+    pub fn watch_root_for(&self, p: &Path) -> Option<&Path> {
+        self.roots
+            .iter()
+            .filter_map(|(w, c, _)| {
+                if p.starts_with(w) {
+                    Some(w.as_path())
+                } else {
+                    c.as_deref().filter(|c| p.starts_with(c))
+                }
+            })
+            .max_by_key(|r| r.components().count())
+    }
+
     /// All anchors (AI candidate tree, `dest_roots_for`).
     pub fn all(&self) -> Vec<PathBuf> {
         self.roots.iter().map(|(_, _, a)| a.clone()).collect()

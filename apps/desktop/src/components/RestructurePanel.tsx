@@ -1,26 +1,13 @@
 import { useEffect, useState } from "react";
 import * as ipc from "../ipc/commands";
-import type { CurateEstimate, StoredPlan } from "../ipc/types";
-import { useReport } from "../store/report";
+import type { StoredPlan } from "../ipc/types";
+import { guardTarget, useReport } from "../store/report";
 import { useStatus } from "../store/status";
 import { formatSize, formatTime } from "./format";
 import { AiNeeded, useAiOn } from "./AiNeeded";
 import { ContextTable, Suggestions } from "./ContextPlan";
 
 const SOURCE: Record<string, string> = { ai: "AI", rules: "규칙", context: "업무 맥락" };
-
-/** The cost notice shown before a work-context analysis (SPEC §14.3). */
-export function estimateText(e: CurateEstimate): string {
-  if (!e.files) return "정리할 파일이 없습니다.";
-  const head = `파일 ${e.files}개 중 ${e.to_analyze}개를 AI로 분석합니다`;
-  if (!e.to_analyze) return `${head} — 모두 이미 분석해 두어 AI를 다시 부르지 않습니다(비용 없음).`;
-  const cost = e.cost_usd != null ? `, 약 $${e.cost_usd.toFixed(e.cost_usd < 0.01 ? 4 : 2)}` : " (이 모델의 요금은 알 수 없음)";
-  return (
-    `${head}${e.cached ? ` (이미 분석한 ${e.cached}개는 다시 묻지 않음)` : ""}.\n` +
-    `요청 ${e.requests}번 · 예상 토큰 입력 약 ${e.input_tokens.toLocaleString()} / 출력 약 ${e.output_tokens.toLocaleString()}${cost}` +
-    `${e.model ? ` · ${e.model}` : ""}`
-  );
-}
 
 /**
  * Restructure (SPEC §5.7): plan from rules (no AI) or from the AI →
@@ -40,27 +27,8 @@ export function RestructurePanel() {
 
   const plan = r.plan;
   const rel = (p: string) => (plan && p.startsWith(plan.root) ? p.slice(plan.root.length + 1) || "." : p);
-  // (M11) Organizing a "모으기" root re-moves files that are already sorted:
-  // two confirmations before any plan there.
-  const guard = () =>
-    !r.target ||
-    (window.confirm(
-      `이 폴더는 정리 결과가 모이는 곳입니다(${r.target}). 여기서 정리하면 이미 정리된 파일을 다시 옮깁니다. 그래도 미리보기를 만들까요?`,
-    ) &&
-      window.confirm("정말 정리 위치를 다시 정리할까요? (미리보기만 만들고, 적용 전에는 아무것도 옮기지 않습니다)"));
   const plan_ = (kind: "rules" | "ai") => {
-    if (guard()) void r.makePlan(kind, recursive);
-  };
-  const curate = async () => {
-    if (!guard()) return;
-    try {
-      const est = await ipc.curateEstimate(r.path, recursive);
-      if (!est.files) return window.alert("정리할 파일이 없습니다.");
-      if (!window.confirm(`${estimateText(est)}\n\n분석만 하고 아무것도 옮기지 않습니다. 진행할까요?`)) return;
-    } catch (e) {
-      return window.alert(String(e));
-    }
-    await r.makePlan("context", recursive);
+    if (guardTarget(r.target)) void r.makePlan(kind, recursive);
   };
   const confirmApply = () => {
     if (!plan) return;
@@ -76,7 +44,7 @@ export function RestructurePanel() {
         <button disabled={!r.path || !!r.planning} onClick={() => plan_("rules")}>
           {r.planning === "rules" ? "계산 중…" : "규칙으로 정리 미리보기"}
         </button>
-        <label className="small">
+        <label className="small" title="규칙 정리에만 적용됩니다. 업무 맥락 정리는 하위 폴더를 통째로 한 항목으로 봅니다.">
           <input type="checkbox" checked={recursive} onChange={(e) => setRecursive(e.target.checked)} /> 하위 폴더 포함
         </label>
         <button
@@ -92,10 +60,10 @@ export function RestructurePanel() {
           disabled={!r.path || !!r.planning || !aiOn}
           title={
             aiOn
-              ? "파일 이름·날짜·본문 앞부분으로 고객사/날짜_이슈/종류 폴더를 제안합니다(분석 전 비용 안내)"
+              ? "파일 이름·경로·날짜·본문 앞부분으로 고객사/날짜_이슈/종류 폴더를 제안합니다. 하위 폴더는 통째로 한 항목입니다(분석 전 비용 안내)"
               : "AI를 켜면 쓸 수 있습니다"
           }
-          onClick={() => void curate()}
+          onClick={() => void r.curate()}
         >
           {r.planning === "context" ? "AI가 업무 맥락을 보는 중…" : "업무 맥락으로 정리"}
         </button>

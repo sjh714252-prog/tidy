@@ -180,9 +180,6 @@ enum CurateCmd {
         /// Only show the cost estimate (files, tokens, price); no AI call.
         #[arg(long)]
         dry_run: bool,
-        /// Also files in subfolders.
-        #[arg(long)]
-        recursive: bool,
     },
     /// Apply a saved work-context plan as one undoable batch.
     Apply {
@@ -2326,21 +2323,39 @@ fn cmd_curate(config: Option<PathBuf>, cmd: CurateCmd) -> Result<()> {
             );
             Ok(())
         }
-        CurateCmd::Scan {
-            folder,
-            dry_run,
-            recursive,
-        } => {
+        CurateCmd::Scan { folder, dry_run } => {
             let root = default_folder(&cfg, folder)?;
             let root = dunce::canonicalize(&root)
                 .with_context(|| format!("no such folder: {}", root.display()))?;
             let cur = Curator::from_config(&cfg)?;
             let protected = protected_dirs(&cfg, &[]);
-            let files = Curator::files_in(&root, recursive, &cfg.ignore_filter()?, &protected);
-            let inputs: Vec<_> = files
-                .iter()
-                .filter_map(|p| cur.input(p, Some(&store)).ok())
-                .collect();
+            let rules = RuleSet::load(&cfg.classify.rules).unwrap_or_default();
+            let anchors = tidy_core::classify::Anchors::from_config(&cfg);
+            let anchor = anchors.for_path(&root).unwrap_or(&root).to_path_buf();
+            let skip = tidy_core::curate::skip_dirs(&cfg, &rules, &anchor);
+            // (M12) Files directly in the folder + its sub-folders as whole items.
+            let items = cur.items_in(
+                &root,
+                &anchor,
+                &cfg.ignore_filter()?,
+                &protected,
+                &skip,
+                &store,
+            );
+            if !items.unsettled.is_empty() {
+                eprintln!(
+                    "# 아직 바뀌는 중인 폴더 {}개는 뺐습니다: {}",
+                    items.unsettled.len(),
+                    items
+                        .unsettled
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+            let folders = items.folders();
+            let inputs = items.inputs;
             let (provider, model) = cfg
                 .ai
                 .active()
@@ -2349,7 +2364,7 @@ fn cmd_curate(config: Option<PathBuf>, cmd: CurateCmd) -> Result<()> {
                 .unwrap_or_default();
             let est = cur.estimate(&store, &inputs, &provider, &model);
             println!(
-                "파일 {}개 (이미 분석 {}개) → 새로 분석 {}개, 요청 {}번, 예상 토큰 입력 {} · 출력 {}{}{}",
+                "항목 {}개(폴더 {folders}개 통째) (이미 분석 {}개) → 새로 분석 {}개, 요청 {}번, 예상 토큰 입력 {} · 출력 {}{}{}",
                 est.files,
                 est.cached,
                 est.to_analyze,
@@ -2362,20 +2377,17 @@ fn cmd_curate(config: Option<PathBuf>, cmd: CurateCmd) -> Result<()> {
             if dry_run {
                 return Ok(());
             }
-            let rules = RuleSet::load(&cfg.classify.rules).unwrap_or_default();
             let ai = AiClassifier::from_config(&cfg, &rules)
                 .context("업무 맥락 정리는 AI가 필요합니다 — [ai]를 켜고 분류 모델을 정하세요 (tidy ai status)")?;
             eprintln!("# asking {} / {} …", ai.provider_name(), ai.model());
-            let anchors = tidy_core::classify::Anchors::from_config(&cfg);
-            let anchor = anchors.for_path(&root).unwrap_or(&root).to_path_buf();
             let plan = cur.plan(
                 &ai,
                 &store,
                 &root,
                 &anchor,
-                recursive,
                 &cfg.ignore_filter()?,
                 &protected,
+                &skip,
             )?;
             let plan = restructure::save(&store, plan)?;
             print_plan(&plan, None)?;

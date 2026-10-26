@@ -45,7 +45,27 @@ impl Mover {
         for e in entries.into_iter().filter(|e| e.undone_at.is_none()) {
             self.undo_entry(e, &mut report)?;
         }
+        self.remove_created_dirs(batch_id)?;
         Ok(report)
+    }
+
+    /// (M12) Folders a whole-folder move created at its destination are
+    /// removed again once undo has emptied them (deepest first). One that
+    /// still holds something (a file not restored, or one the user added)
+    /// stays and is tried again on the next undo of the batch.
+    fn remove_created_dirs(&self, batch_id: &str) -> Result<(), MoverError> {
+        for d in self.store.created_dirs(batch_id)? {
+            if !d.is_dir() {
+                self.store.forget_created_dir(batch_id, &d)?;
+                continue;
+            }
+            self.expected.expect(&d);
+            if fs::remove_dir(&d).is_ok() {
+                tracing::debug!(dir = %d.display(), "removed folder created by the undone move");
+                self.store.forget_created_dir(batch_id, &d)?;
+            }
+        }
+        Ok(())
     }
 
     /// Undo every finished move since `since` (unix seconds), newest first;
