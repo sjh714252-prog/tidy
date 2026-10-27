@@ -38,6 +38,11 @@ quick-xml = "0.41"
 calamine = { version = "0.36", features = ["dates"] }
 pdf-extract = "0.12"
 encoding_rs = "0.8"
+# M14 hwp (HWP 5.0 OLE compound file + raw-deflate records) and hard-link
+# detection for duplicate groups.
+cfb = "0.10"
+flate2 = "1"
+same-file = "1"
 
 [target.'cfg(windows)'.dependencies]
 # M6: GetDriveTypeW (is this drive letter a network share?).
