@@ -811,7 +811,7 @@ send_content = false
 - ~~한국어 FTS 토크나이저: unicode61로 충분한지, trigram 병행이 필요한지 M2에서 벤치~~ → **결정(M2)**: trigram 주 + unicode61 보조(1~2글자 prefix). 근거와 측정치는 `docs/fts-tokenizer.md`.
 - ~~sqlite-vec vs 자체 brute-force: 파일 수 기준 임계치 정하기~~ → **결정(M7)**: 자체 brute-force. 벡터는 SQLite BLOB(f32)로 저장하고, 검색은 메모리의 int8 사본(질의도 int8, i32 누적)을 전부 훑는다. 측정(`cargo test -p tidy-core --release bench_100k -- --ignored --nocapture`, 768차원, 1코어): 10만 개 질의 약 25ms·캐시 73MB(적재 0.8s), f32 그대로는 약 92ms·293MB. 목표(벡터 포함 300ms)의 1/10 수준이고 확장 모듈을 OS별로 배포할 필요가 없다. **다시 볼 임계치**: 임베딩된 파일이 50만 개를 넘거나(질의 >120ms·캐시 >360MB 예상, §11 상주 메모리 목표 초과) 1,536차원 이상 모델로 20만 개를 넘을 때 sqlite-vec(또는 ANN)를 검토한다.
 - ~~Linux 키 저장소: M4는 커널 keyutils(빌드 의존성 없음)를 쓰므로 재부팅하면 키가 사라진다. Linux 데스크톱 배포(M7) 때 Secret Service(dbus) 사용을 검토한다.~~ → **결정(M7)**: Secret Service(D-Bus, libdbus 정적 포함)에 저장하고, 응답이 없으면 keyutils로 폴백한다(§5.8 M7). GNOME 키링(`dbus-run-session` + `gnome-keyring-daemon`)에서 저장·조회·삭제를 확인했다. Windows와 macOS는 그대로 영구 저장이다.
-- `.hwp`(한글 5.0 바이너리) 본문 추출: OLE 복합 문서 + zlib 압축 레코드라 순수 Rust 구현이 크다. **2차 항목**으로 미룬다(지금은 메타데이터만 인덱싱, `.hwpx`는 ZIP+XML이라 별도 검토). 후보: `hwp` 크레이트 평가, 또는 `cfb` + 레코드 파서 자체 구현(본문 `HWPTAG_PARA_TEXT`만).
+- ~~`.hwp`(한글 5.0 바이너리) 본문 추출: OLE 복합 문서 + zlib 압축 레코드라 순수 Rust 구현이 크다. 2차 항목으로 미룬다.~~ → **결정(M14)**: `cfb` + raw deflate(`flate2`) + 레코드 파서 자체 구현(본문 `HWPTAG_PARA_TEXT`만, 암호·배포용은 메타만, 실패 시 `PrvText` 폴백). `.hwpx`는 ZIP+XML(`Contents/section*.xml`의 `t`). §14.9 3.
 - `source_app`(어느 앱이 만든 파일인지) 수집 가능 범위: macOS는 `kMDItemWhereFroms`, Windows는 Zone.Identifier ADS — M1 후반에 조사
 
 
@@ -1081,3 +1081,36 @@ send_content = false
 - `e2e/m13.mjs`: 별칭(기본·변경·config 기록)·PathText(가운데 생략·title·클릭 → 탐색기 기록), 홈 카드 4장·지금 정리, 오늘 한 일 폴더 항목, 확인 대기 표↔카드 전환(뷰포트 1280 / 760), ⋯ 메뉴 5항목, 설정 왼쪽 메뉴 라우팅 6개(주소·새로고침 유지), 폴더 카드 편집 펼침→저장→config, 공통 정리 위치, 규칙 접힘/펼침 아코디언 + 절대 경로 경고·상대 경로로, `tauri.conf.json` 최소 창 크기.
 - 사용 설명서 스크린샷(`docs/images/manual/`)을 새 화면으로 다시 찍고 `docs/manual.md`를 고친다.
 
+
+### 14.9 M14 — 중복 파일 처리 + 한글(hwp/hwpx) 본문 검색 (0.7.0, 사용자 질문 2026-10-27)
+
+**배경**: "동일한 파일이 2개 이상 있으면 어떻게 처리해?" — 지금은 같은 이름+같은 내용이면 건너뛰고(설정 파일로만 바꿀 수 있음), 이름이 다르고 내용이 같은 파일은 리포트에 보여주기만 한다. 둘 다 화면에서 다룬다. 지시서: `docs/briefs/m14.md`. 화면은 §14.8 원칙(카드·PathText·주 버튼 1개+⋯·좁은 창 카드)을 따른다.
+
+**1. "옮길 자리에 똑같은 파일이 이미 있으면" (`[mover] duplicate_policy`)**
+- 값: `skip`(기본, 그대로 두고 건너뜀) / `rename`(번호를 붙여 둘 다 보관) / `replace`(기존 것을 휴지통으로 보내고 새것으로). "똑같은 파일" = 옮길 자리의 **같은 이름** 파일이 내용 해시(blake3)까지 같은 것. 이름만 같고 내용이 다르면 정책과 상관없이 언제나 `이름 (1).ext`(덮어쓰기 없음).
+- 설정 → 감시 폴더의 "정리 위치" 카드 아래 공통 카드 "옮길 자리에 똑같은 파일이 이미 있으면"(라디오 3개 + ⓘ "이름만 같고 내용이 다르면 언제나 번호를 붙입니다(덮어쓰기 없음)."). 저장하면 `config.toml`의 `[mover] duplicate_policy`(주석 유지, `SettingsPatch.duplicate_policy`). 설정 DTO `duplicatePolicy`.
+- `replace`의 휴지통 보내기도 `move_log`에 `op = trash` 행으로 같은 배치에 남긴다(아래 2와 같은 기록, 되돌리기는 휴지통 복원 안내).
+- 건너뜀 사유는 사람 말로: **"똑같은 파일이 이미 <폴더>에 있어 그대로 둠"** + [기존 파일 열기](`reveal_path`). 활동 피드(`duplicate` 이벤트, `existing` 경로를 함께 보냄), 확인 대기 결과 줄, 정리하기 미리보기 적용 결과의 건너뜀 목록에 같은 문구.
+- **미리 알림**: 확인 대기 목록(`list_pending`)을 만들 때 제안 위치(`suggested_dest/<이름 또는 제안 새 이름>`)에 같은 이름 파일이 있으면 내용을 비교한다(500MB 초과는 크기만 비교 — "크기+이름"). 같으면 `PendingDto.duplicateOf = <기존 파일 경로>`. 비교 결과는 (원본·기존 파일의 크기·수정 시각) 키로 프로세스 메모리에 캐시한다. 그 항목(표 행·카드·팝업)에만 노란 줄 **"똑같은 파일이 이미 있습니다"** + PathText + 버튼 3개 **[그대로 두기] [번호 붙여 이동] [기존 것 휴지통 후 이동]**(⋯ 메뉴가 아니다 — 결정이 필요한 항목이므로). 이때 주 버튼 [이동]은 감춘다(세 버튼이 대신). 각각 `Decision::Move { on_duplicate: Some(skip|rename|replace) }`; `skip`이면 파일은 그대로, 대기열에서 빠지고 결과 줄에 위 문구.
+- 코어: `MoveRequest.on_duplicate: Option<DuplicatePolicy>`(없으면 Mover의 정책), `Decision::Move.on_duplicate`(JSON `onDuplicate`), `pending::duplicate_at_dest(src, dest_dir, new_name) -> Option<PathBuf>`.
+
+**2. 리포트의 중복 그룹 → 정리 동작**
+- 그룹 = 내용 해시(blake3) 같은 파일들(이름 무관, 크기로 먼저 거름, 0바이트 제외, 기존 최소 크기 1KB 유지). 리포트 폴더가 감시 폴더이고 그 정리 방식이 `collect`이면 **정리 위치(`organize_root`)도 함께 훑어** 리포트 폴더 안 파일과 내용이 같은 정리 위치 파일을 같은 그룹에 넣는다(리포트 폴더 안 사본이 하나도 없는 그룹은 만들지 않는다). 같은 파일을 가리키는 하드링크(`same-file` 핸들 비교)는 한 개만 남기고, 심볼릭 링크는 훑지 않는다.
+- `DupGroup.files: [{ path(절대), rel(리포트 폴더 기준, 밖이면 없음), modified, inOrganizeRoot }]`, `keep`(기본 남길 파일 인덱스). 기본 선택: **정리 위치 안에 있는 것 > 가장 오래된 수정일 > 짧은 경로 > 이름순**(`dup::default_keep`).
+- 정리하기 → 폴더 리포트의 "중복 파일 (N그룹)" 카드: 그룹마다 파일 목록(라디오 = 남길 파일, PathText, 수정일, "정리 위치" 배지) + 체크(이 그룹 정리). 위에 **"모든 그룹에 기본 선택 적용"** 체크(켜면 모든 그룹 체크 + 기본 남길 파일로 되돌림) + [미리보기]. 미리보기 = 표(남길 파일 / 휴지통으로 N개) + "휴지통으로 N개 · 용량 절약 X" + [적용] [취소]. **[적용] 전에는 아무것도 옮기지 않는다**(§14 절대 규칙 6과 같은 승인 흐름). 적용 결과: "N개를 휴지통으로 보냄 · X 절약" + 실패 목록 + "되돌리기 탭에서 기록을 볼 수 있습니다".
+- 코어 `Mover::trash_duplicates(&[DupTrash { hash, keep, trash: Vec<PathBuf> }], batch_id) -> TrashReport { trashed: Vec<(PathBuf, u64)>, failed: Vec<(PathBuf, String)> }`. 휴지통으로 보내기 직전에 남길 파일과 보낼 파일을 **다시 해시**해 둘 다 그룹 해시와 같을 때만 보낸다(그사이 바뀐 파일·남길 파일이 없어진 그룹은 건너뜀 — 마지막 사본은 절대 보내지 않는다). 한 번의 [적용] = 배치 1개, `decided_by = user`.
+- `move_log` 행: `op = trash`, `src_path` = 휴지통으로 보낸 파일, `dst_path` = 남긴 사본, `hash`·`size`. 로그를 먼저 쓰고(`moving`) 보내고 `done`; 실패하면 철회. 중단 복구: 원본이 없으면 `done`, 있으면 철회(원본을 지우는 복구 경로는 타지 않는다).
+- **되돌리기**: OS 휴지통 API로 복원할 수 없으므로(Windows/macOS) trash 행은 되돌리지 않고 **"휴지통으로 보낸 파일입니다 — 휴지통에서 복원하세요"** 충돌로 보고한다(UI에는 [휴지통 열기]). 원래 자리에 파일이 다시 있으면(사용자가 복원함) 그 행을 되돌린 것으로 표시한다. trash 행은 "마지막 이동 되돌리기"(`last_active_batch`)·"최근 이동 되돌리기"(`active_moves_since`)·`placed_hash`·`active_move_to`·`has_moves_into`·오늘 한 일(`moves_since`)에서 빠진다. 되돌리기 탭 묶음 종류는 "중복 정리(휴지통)".
+- 휴지통은 `TrashBackend` 트레이트(`OsTrash` = `trash` crate, 기본)로 주입한다. 테스트는 가짜 휴지통, 헤드리스 e2e는 환경 변수 `TIDY_E2E_TRASH=<폴더>`(그 폴더로 옮기는 `FolderTrash`). 둘 다 `mover` 모듈 안에 있다(절대 규칙 1·2).
+- IPC: `trash_duplicates(groups: [{hash, keep, trash}]) -> { batchId, trashed, bytes, failed }`, `open_trash()`. CLI: `tidy dedupe [폴더] [--apply [--only 1,3]]`(기본 선택으로 목록 → 승인 후 휴지통).
+
+**3. 한글 문서 본문 검색 (§13 `.hwp` 결정)**
+- `.hwpx`: ZIP + XML. `Contents/section<N>.xml`을 번호순으로 읽어 `<hp:t>`(네임스페이스 접두사 무관, 로컬 이름 `t`) 텍스트를 모으고 `<hp:p>`마다 줄바꿈, `<hp:tab/>`·`<hp:lineBreak/>`는 공백/줄바꿈. 표 안 문단도 같은 `p`/`t`라 함께 나온다. 기존 docx 추출기와 같은 구조(`zip` + `quick-xml`).
+- `.hwp`(5.0 바이너리): `cfb`로 복합 문서를 열고 `FileHeader`(시그니처 "HWP Document File", 속성 비트 0 압축·1 암호·2 배포용) 확인 → `BodyText/Section<N>`을 번호순으로 읽어 압축이면 raw deflate(`flate2::DeflateDecoder`) 해제 → 레코드(헤더 32비트: tag 10비트·level 10비트·size 12비트, size = 0xFFF면 다음 4바이트) 순회 → `HWPTAG_PARA_TEXT`(tag 67)의 UTF-16LE만 추출. 제어 문자(0~31): 확장 컨트롤(1~3, 11~12, 14~18, 21~23)·인라인 컨트롤(4~9, 19~20)은 8 WCHAR를 건너뛰고, 그 외(0, 10 줄바꿈, 13 문단 끝, 24~31)는 1 WCHAR(10·13은 줄바꿈, 9 탭은 인라인이지만 공백으로 바꾼다). 문단마다 줄바꿈. 표 셀 문단도 같은 PARA_TEXT라 함께 나온다.
+- 암호·배포용 문서는 `ExtractError::Encrypted`("본문 추출 불가(암호)") → `text_status = failed`, 메타데이터만 인덱싱. 압축 해제·레코드 해석이 실패하거나 본문이 비면 `PrvText`(미리보기 텍스트, UTF-16LE) 스트림으로 폴백.
+- 픽스처: `tests/fixtures/한글 문서.hwp`·`한글 문서.hwpx`(한글·영문·숫자·표 안 텍스트) + `expected/*.txt`. 최소 구조를 코드로 만든다(`cargo test -p tidy-core --test extractors make_hwp_fixtures -- --ignored`로 다시 생성, 같은 생성기가 암호·PrvText 폴백 테스트 파일도 만든다).
+- 개인정보 탐지(M9)는 같은 추출기를 쓰므로 hwp/hwpx 본문도 검사한다. 검색 단축어 "문서" 종류에 hwp/hwpx는 이미 있다.
+
+**4. 테스트**
+- 코어: duplicate_policy 3가지 × (같은 이름 같은 내용 / 같은 이름 다른 내용), `on_duplicate` 결정, replace의 trash 행, `trash_duplicates`(가짜 `TrashBackend`) + move_log + 되돌리기 안내 + `last_active_batch` 제외 + 바뀐 파일 건너뜀, 그룹 기본 선택 규칙·정리 위치 포함·하드링크 제외, `duplicate_at_dest`, hwp/hwpx 픽스처·암호·PrvText 폴백.
+- `e2e/m14.mjs`: 설정에서 정책 변경 → config.toml, 같은 파일 두 번 들어올 때 세 정책 동작(활동 문구), 확인 대기의 "똑같은 파일이 이미 있습니다" 세 버튼, 리포트 중복 그룹 → 남길 파일 선택 → 미리보기 → 적용 → 가짜 휴지통에 N개 + 되돌리기 탭에 trash 기록·휴지통 복원 안내, hwp/hwpx 본문 검색.
