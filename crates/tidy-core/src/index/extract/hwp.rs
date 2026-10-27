@@ -186,8 +186,10 @@ fn records_text(data: &[u8], out: &mut String) -> Result<(), &'static str> {
 /// "char" controls take one.
 fn para_text(bytes: &[u8], out: &mut String) {
     let units: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&c| u16::from_le_bytes(c))
         .collect();
     let mut text: Vec<u16> = Vec::with_capacity(units.len());
     let mut i = 0;
@@ -231,8 +233,10 @@ fn para_text(bytes: &[u8], out: &mut String) {
 
 fn utf16le(bytes: &[u8]) -> String {
     let units: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&c| u16::from_le_bytes(c))
         .take_while(|&u| u != 0)
         .collect();
     String::from_utf16_lossy(&units)
