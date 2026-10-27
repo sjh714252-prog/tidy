@@ -171,7 +171,7 @@ mod tests {
         let go = root.join("tools").join("go");
         fs::create_dir_all(go.join("cmd")).unwrap();
         fs::create_dir_all(root.join("빈 폴더")).unwrap();
-        fs::write(root.join("README.md"), "중앙선관위 로그 분석 도구").unwrap();
+        fs::write(root.join("README.md"), "가온누리원 로그 분석 도구").unwrap();
         fs::write(go.join("main.go"), "package main").unwrap();
         fs::write(go.join("main_test.go"), "package main // test").unwrap();
         fs::write(go.join("cmd").join("run.go"), "package cmd").unwrap();
@@ -180,7 +180,7 @@ mod tests {
     fn check_moved(dest: &Path) {
         assert_eq!(
             fs::read_to_string(dest.join("README.md")).unwrap(),
-            "중앙선관위 로그 분석 도구"
+            "가온누리원 로그 분석 도구"
         );
         assert!(dest.join("tools").join("go").join("main_test.go").is_file());
         assert!(dest
@@ -198,15 +198,15 @@ mod tests {
     fn run(copy_always: bool) {
         let tmp = tempfile::tempdir().unwrap();
         let desk = tmp.path().join("바탕 화면");
-        let src = desk.join("중앙선관위 로그");
+        let src = desk.join("가온누리원 로그");
         tree(&src);
         let dest = tmp
             .path()
             .join("정리")
-            .join("중앙선관위")
+            .join("가온누리원")
             .join("20261023_로그분석")
             .join("개발")
-            .join("중앙선관위 로그");
+            .join("가온누리원 로그");
         let m = Mover::new(Store::open_in_memory().unwrap(), DuplicatePolicy::Skip)
             .copy_always(copy_always);
         let r = m.move_dir(&req(&src, &dest)).unwrap();
@@ -222,7 +222,7 @@ mod tests {
         assert_eq!(u.restored.len(), 4, "{:?}", u.conflicts);
         assert_eq!(
             fs::read_to_string(src.join("README.md")).unwrap(),
-            "중앙선관위 로그 분석 도구"
+            "가온누리원 로그 분석 도구"
         );
         assert!(src
             .join("tools")
@@ -239,7 +239,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("바탕 화면").join("로그");
         tree(&src);
-        let customer = tmp.path().join("정리").join("중앙선관위");
+        let customer = tmp.path().join("정리").join("가온누리원");
         fs::create_dir_all(&customer).unwrap();
         let issue = customer.join("20261023_로그분석");
         let dest = issue.join("로그");

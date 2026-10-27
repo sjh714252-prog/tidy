@@ -111,14 +111,14 @@ for (let i = 1; i <= 30; i++) {
     i % 3 === 0
       ? `문자 정책 ${i}.txt`
       : i % 3 === 1
-        ? `BADA_과금_202610${d}_로그${i}.log`
+        ? `GARA_과금_202610${d}_로그${i}.log`
         : `SKY_번호전환_202610${d}_자료${i}.txt`;
   fs.writeFileSync(path.join(WORK, n), `업무 자료 ${i}: ${n}`);
   WORK_FILES.push(n);
 }
 fs.writeFileSync(
   path.join(T, "context.toml"),
-  '[[entity]]\nname = "바다정보"\naliases = ["BADA"]\n\n[[entity]]\nname = "하늘통신"\naliases = ["SKY"]\n',
+  '[[entity]]\nname = "가람정보"\naliases = ["GARA"]\n\n[[entity]]\nname = "하늘통신"\naliases = ["SKY"]\n',
 );
 const RULES_TEXT = `[[rule]]\nname = "문서"\nmatch = { ext = ["pdf"] }\ndest = "문서/{yyyy}-{mm}"\n\n[[rule]]\nname = "설치파일"\nmatch = { ext = ["exe"] }\ndest = '${ABS}'\n`;
 
@@ -348,7 +348,7 @@ const save = () => saveSettings(main, 3000);
   const rows = await panel.locator("[data-testid=context-row]").count();
   ok("G", "미리보기 30줄", rows === 30, `rows=${rows}`);
   const after = await panel.locator(".diff pre.tree").nth(1).innerText().catch(() => "");
-  ok("G", "트리: 바다정보 / 하늘통신 / 기타", after.includes("바다정보") && after.includes("하늘통신") && after.includes("기타"));
+  ok("G", "트리: 가람정보 / 하늘통신 / 기타", after.includes("가람정보") && after.includes("하늘통신") && after.includes("기타"));
   ok("G", "근거가 긴 답도 표시 (300자)", ((await panel.locator("[data-testid=context-row] .reason").first().innerText()).length >= 200));
   ok("G", "분석만으로 무이동", WORK_FILES.every((n) => fs.existsSync(path.join(WORK, n))));
   await main.screenshot({ path: `${SHOT}/m11-G-curate.png` });
@@ -359,7 +359,7 @@ const save = () => saveSettings(main, 3000);
 {
   const OTHER = path.join(T, "다른 업무");
   fs.mkdirSync(OTHER, { recursive: true });
-  for (let i = 1; i <= 8; i++) fs.writeFileSync(path.join(OTHER, `BADA_장애_202610${String(10 + i)}_${i}.log`), `장애 로그 ${i}`);
+  for (let i = 1; i <= 8; i++) fs.writeFileSync(path.join(OTHER, `GARA_장애_202610${String(10 + i)}_${i}.log`), `장애 로그 ${i}`);
   await fetch(`${LLM}/control`, { method: "POST", body: JSON.stringify({ delayMs: 300, maxTokens: 600 }) });
   const before = await (await fetch(`${LLM}/stats`)).json();
   process.env.PROMPT_ANSWER = OTHER;

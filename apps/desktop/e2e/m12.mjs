@@ -4,12 +4,12 @@
 // Links / "open folder" are recorded instead of opened (TIDY_E2E_NO_OPEN).
 //
 //   A. settings: desktop watched, collected into 정리; AI (fake); curate on
-//   B. "바탕화면에서 뽑기": the first-level folder name "중앙선관위 로그" is
-//      sent as a customer hint → 중앙선관위 goes into the dictionary
+//   B. "바탕화면에서 뽑기": the first-level folder name "가온누리원 로그" is
+//      sent as a customer hint → 가온누리원 goes into the dictionary
 //   C. home: "새 폴더 1개 — 지금 정리" → 정리하기 + cost notice (폴더 1개)
 //   D. preview: ONE folder row (📁, 파일 31개, inner tree) + top-level file
 //      rows; the prompt carries paths; folder date editable; nothing moved
-//   E. apply → 정리/중앙선관위/날짜_로그분석/개발/중앙선관위 로그/tools/go/…
+//   E. apply → 정리/가온누리원/날짜_로그분석/개발/가온누리원 로그/tools/go/…
 //   F. 고객사별 보기 (click opens the folder) · search filter by customer ·
 //      도움말 "고객사 자료는 어디 있나요?"
 //   G. 되돌리기 → the folder is back on the desktop, all 30 .go files
@@ -29,7 +29,7 @@ const T = process.env.T;
 const S = process.env.S;
 const DESK = path.join(T, "바탕 화면");
 const ORG = path.join(T, "정리");
-const UNIT = path.join(DESK, "중앙선관위 로그");
+const UNIT = path.join(DESK, "가온누리원 로그");
 const GO = path.join(UNIT, "tools", "go");
 const CFG = path.join(T, "config.toml");
 const CONTEXT = path.join(T, "context.toml");
@@ -78,21 +78,21 @@ await sleep(800);
 // ── fixtures (before watching) ──────────────────────────────────────────
 fs.mkdirSync(GO, { recursive: true });
 fs.mkdirSync(ORG, { recursive: true });
-fs.writeFileSync(path.join(UNIT, "README.md"), "중앙선관위 선거 로그 분석 도구\n사용법: go run ./tools/go");
+fs.writeFileSync(path.join(UNIT, "README.md"), "가온누리원 선거 로그 분석 도구\n사용법: go run ./tools/go");
 const GO_FILES = [];
 for (let i = 1; i <= 30; i++) {
   const n = `f${String(i).padStart(2, "0")}.go`;
-  fs.writeFileSync(path.join(GO, n), `package main // 선관위 로그 분석 도구 ${i}`);
+  fs.writeFileSync(path.join(GO, n), `package main // 누리원 로그 분석 도구 ${i}`);
   GO_FILES.push(n);
 }
-const TOP = ["선관위_회의록_20261021.txt", "BADA_과금_20261014_로그.log", "메모.txt"];
+const TOP = ["누리원_회의록_20261021.txt", "GARA_과금_20261014_로그.log", "메모.txt"];
 for (const n of TOP) fs.writeFileSync(path.join(DESK, n), `업무 자료: ${n}`);
 // The folder's own date = its newest file (2026-10-20); folders too, so
 // the unit is settled ("not being copied").
 const OLD = new Date("2026-10-20T12:00:00");
 for (const p of [...GO_FILES.map((n) => path.join(GO, n)), path.join(UNIT, "README.md"), GO, path.dirname(GO), UNIT])
   fs.utimesSync(p, OLD, OLD);
-fs.writeFileSync(CONTEXT, '[[entity]]\nname = "바다정보"\naliases = ["BADA"]\n');
+fs.writeFileSync(CONTEXT, '[[entity]]\nname = "가람정보"\naliases = ["GARA"]\n');
 
 // ── browser ─────────────────────────────────────────────────────────────
 const browser = await chromium.launch();
@@ -147,14 +147,14 @@ const fileRows = () => panel.locator("[data-testid=context-row][data-kind=file]"
   await main.locator("[data-testid=extract-context]").click();
   const shown = await waitFor(async () => (await main.locator("[data-testid=candidates]").count()) === 1, 30000);
   const st = await stats();
-  ok("B", "요청에 '감시 폴더 바로 아래 폴더: 중앙선관위 로그'", st.lastUser.includes("## 감시 폴더 바로 아래 폴더") && st.lastUser.includes("- 중앙선관위 로그"), st.lastUser.split("\n").slice(0, 3).join(" | "));
-  const cand = main.locator("[data-testid=candidate-entity]").filter({ has: main.locator("input[value='중앙선관위']") });
-  ok("B", "후보: 중앙선관위 (폴더 이름에서)", shown && (await cand.count()) === 1, (await main.locator("[data-testid=candidates]").innerText().catch(() => "")).replace(/\n/g, " | ").slice(0, 200));
+  ok("B", "요청에 '감시 폴더 바로 아래 폴더: 가온누리원 로그'", st.lastUser.includes("## 감시 폴더 바로 아래 폴더") && st.lastUser.includes("- 가온누리원 로그"), st.lastUser.split("\n").slice(0, 3).join(" | "));
+  const cand = main.locator("[data-testid=candidate-entity]").filter({ has: main.locator("input[value='가온누리원']") });
+  ok("B", "후보: 가온누리원 (폴더 이름에서)", shown && (await cand.count()) === 1, (await main.locator("[data-testid=candidates]").innerText().catch(() => "")).replace(/\n/g, " | ").slice(0, 200));
   await main.screenshot({ path: `${SHOT}/m12-B-extract.png` });
   await main.getByRole("button", { name: "고른 것 사전에 넣기" }).click();
   await sleep(500);
   await save();
-  ok("B", "context.toml에 중앙선관위", fs.readFileSync(CONTEXT, "utf8").includes('name = "중앙선관위"'));
+  ok("B", "context.toml에 가온누리원", fs.readFileSync(CONTEXT, "utf8").includes('name = "가온누리원"'));
 }
 
 // C. home: "새 폴더 1개 — 지금 정리"
@@ -176,13 +176,13 @@ const fileRows = () => panel.locator("[data-testid=context-row][data-kind=file]"
 {
   ok("D", "폴더 항목 1줄 + 파일 항목 3줄", (await folderRow().count()) === 1 && (await fileRows().count()) === 3, `folder=${await folderRow().count()} files=${await fileRows().count()}`);
   const fr = folderRow();
-  ok("D", "폴더 줄: 📁 중앙선관위 로그 · 파일 31개", (await fr.innerText()).includes("📁") && (await fr.locator("[data-testid=folder-count]").innerText()).includes("파일 31개"), (await fr.locator("[data-testid=folder-count]").innerText()));
+  ok("D", "폴더 줄: 📁 가온누리원 로그 · 파일 31개", (await fr.innerText()).includes("📁") && (await fr.locator("[data-testid=folder-count]").innerText()).includes("파일 31개"), (await fr.locator("[data-testid=folder-count]").innerText()));
   const u = (await stats()).lastUser;
-  ok("D", "프롬프트: 폴더 요약 줄 (경로·파일 수·확장자)", /\] 폴더: 중앙선관위 로그 \| 경로: 중앙선관위 로그 \| 파일 31개 .*확장자: go 30/.test(u), u.split("\n").find((l) => l.includes("] 폴더:"))?.slice(0, 160));
-  ok("D", "프롬프트: 파일 줄에 폴더 경로", /\] 파일: 선관위_회의록_20261021\.txt \| 폴더: /.test(u));
+  ok("D", "프롬프트: 폴더 요약 줄 (경로·파일 수·확장자)", /\] 폴더: 가온누리원 로그 \| 경로: 가온누리원 로그 \| 파일 31개 .*확장자: go 30/.test(u), u.split("\n").find((l) => l.includes("] 폴더:"))?.slice(0, 160));
+  ok("D", "프롬프트: 파일 줄에 폴더 경로", /\] 파일: 누리원_회의록_20261021\.txt \| 폴더: /.test(u));
   const dest = () => fr.locator("td.path").nth(1).getAttribute("title");
-  const want = (d) => path.join(ORG, "중앙선관위", `${d}_로그분석`, "개발", "중앙선관위 로그");
-  ok("D", "옮길 곳: 정리/중앙선관위/20261020_로그분석/개발/중앙선관위 로그 (날짜 = 최근 파일)", (await dest()) === want("20261020"), await dest());
+  const want = (d) => path.join(ORG, "가온누리원", `${d}_로그분석`, "개발", "가온누리원 로그");
+  ok("D", "옮길 곳: 정리/가온누리원/20261020_로그분석/개발/가온누리원 로그 (날짜 = 최근 파일)", (await dest()) === want("20261020"), await dest());
   await fr.locator("[data-testid=folder-toggle]").click();
   const tree = await panel.locator("[data-testid=folder-inner] pre").innerText().catch(() => "");
   ok("D", "펼치면 안의 구조 (tools/go)", tree.includes("tools") && tree.includes("go"), tree.split("\n").slice(0, 4).join(" | "));
@@ -198,17 +198,17 @@ const fileRows = () => panel.locator("[data-testid=context-row][data-kind=file]"
 }
 
 // E. apply: the folder keeps its inner structure under the work context
-const DEST = path.join(ORG, "중앙선관위", "20261019_로그분석", "개발", "중앙선관위 로그");
+const DEST = path.join(ORG, "가온누리원", "20261019_로그분석", "개발", "가온누리원 로그");
 {
   dialogs.length = 0;
   await panel.getByRole("button", { name: /선택한 \d+개 적용/ }).click();
   const moved = await waitFor(async () => (await panel.locator(".notice", { hasText: "옮겼습니다" }).count()) === 1, 30000);
   const inner = walk(DEST);
-  ok("E", "적용 → …/개발/중앙선관위 로그/tools/go/*.go 30개 + README", moved && inner.filter((p) => /^tools\/go\/f\d\d\.go$/.test(p)).length === 30 && inner.includes("README.md"), `${inner.length} files`);
+  ok("E", "적용 → …/개발/가온누리원 로그/tools/go/*.go 30개 + README", moved && inner.filter((p) => /^tools\/go\/f\d\d\.go$/.test(p)).length === 30 && inner.includes("README.md"), `${inner.length} files`);
   ok("E", "바탕 화면의 폴더는 비워져 정리됨", !fs.existsSync(UNIT));
   const n = (await panel.locator(".notice", { hasText: "옮겼습니다" }).innerText()).match(/(\d+)개 파일/)?.[1];
   ok("E", "한 배치로 34개 파일 이동 (폴더 31 + 파일 3)", n === "34", n);
-  ok("E", "최상위 파일: 선관위_회의록 → 중앙선관위, BADA → 바다정보", walk(path.join(ORG, "중앙선관위")).some((p) => p.endsWith("선관위_회의록_20261021.txt")) && walk(path.join(ORG, "바다정보")).some((p) => p.endsWith("BADA_과금_20261014_로그.log")));
+  ok("E", "최상위 파일: 누리원_회의록 → 가온누리원, GARA → 가람정보", walk(path.join(ORG, "가온누리원")).some((p) => p.endsWith("누리원_회의록_20261021.txt")) && walk(path.join(ORG, "가람정보")).some((p) => p.endsWith("GARA_과금_20261014_로그.log")));
   await main.screenshot({ path: `${SHOT}/m12-E-applied.png` });
 }
 
@@ -217,30 +217,30 @@ const DEST = path.join(ORG, "중앙선관위", "20261019_로그분석", "개발"
   await tab("홈").click();
   const card = main.locator("[data-testid=customer-card]");
   await waitFor(async () => (await card.count()) === 1, 15000);
-  const row = card.locator("[data-testid=customer-row][data-name=중앙선관위]");
+  const row = card.locator("[data-testid=customer-row][data-name=가온누리원]");
   const text = await row.innerText().catch(() => "");
-  ok("F", "고객사별 보기: 중앙선관위 · 폴더 2 · 파일 32 · 마지막 작업 날짜", text.includes("폴더 2") && text.includes("파일 32") && /\d+\/\d+/.test(text), text.replace(/\n/g, " "));
-  ok("F", "고객사별 보기: 바다정보도", (await card.locator("[data-testid=customer-row][data-name=바다정보]").count()) === 1);
+  ok("F", "고객사별 보기: 가온누리원 · 폴더 2 · 파일 32 · 마지막 작업 날짜", text.includes("폴더 2") && text.includes("파일 32") && /\d+\/\d+/.test(text), text.replace(/\n/g, " "));
+  ok("F", "고객사별 보기: 가람정보도", (await card.locator("[data-testid=customer-row][data-name=가람정보]").count()) === 1);
   await main.screenshot({ path: `${SHOT}/m12-F-customers.png` });
   await row.getByRole("button").first().click();
   await sleep(500);
   const o = await bridge("debug_opened");
-  ok("F", "클릭 → 탐색기로 고객사 폴더 열기", o.at(-1) === path.join(ORG, "중앙선관위"), o.at(-1));
+  ok("F", "클릭 → 탐색기로 고객사 폴더 열기", o.at(-1) === path.join(ORG, "가온누리원"), o.at(-1));
 
   const all = await bridge("search", { query: "로그", limit: 50, customer: null });
-  const only = await bridge("search", { query: "로그", limit: 50, customer: "중앙선관위" });
-  ok("F", "검색 '로그': 모든 고객사 → 바다정보 파일도", all.some((h) => h.path.includes(path.join(ORG, "바다정보"))), `${all.length} hits`);
-  ok("F", "검색 '로그' + 고객사 중앙선관위 → 중앙선관위 폴더만", only.length > 0 && only.every((h) => h.path.startsWith(path.join(ORG, "중앙선관위"))), `${only.length} hits`);
+  const only = await bridge("search", { query: "로그", limit: 50, customer: "가온누리원" });
+  ok("F", "검색 '로그': 모든 고객사 → 가람정보 파일도", all.some((h) => h.path.includes(path.join(ORG, "가람정보"))), `${all.length} hits`);
+  ok("F", "검색 '로그' + 고객사 가온누리원 → 가온누리원 폴더만", only.length > 0 && only.every((h) => h.path.startsWith(path.join(ORG, "가온누리원"))), `${only.length} hits`);
   const s = await ctx.newPage();
   await s.goto("http://localhost:1420/#/search");
   await s.waitForSelector("[data-testid=customer-filter]", { timeout: 15000 }).catch(() => {});
   const opts = await s.locator("[data-testid=customer-filter] option").allInnerTexts();
-  ok("F", "검색창 고객사 필터: 모든 고객사 + 사전", opts[0] === "모든 고객사" && opts.includes("중앙선관위") && opts.includes("바다정보"), opts.join(","));
-  await s.locator("[data-testid=customer-filter]").selectOption("중앙선관위");
+  ok("F", "검색창 고객사 필터: 모든 고객사 + 사전", opts[0] === "모든 고객사" && opts.includes("가온누리원") && opts.includes("가람정보"), opts.join(","));
+  await s.locator("[data-testid=customer-filter]").selectOption("가온누리원");
   await s.locator(".search-input").fill("로그");
   await waitFor(async () => (await s.locator(".results li[data-i]").count()) > 0, 10000);
   const dirs = await s.locator(".results li[data-i] .r-dir").allInnerTexts();
-  ok("F", "검색창: 필터 적용 결과는 중앙선관위만", dirs.length > 0 && dirs.every((d) => d.includes("중앙선관위")), `${dirs.length} hits`);
+  ok("F", "검색창: 필터 적용 결과는 가온누리원만", dirs.length > 0 && dirs.every((d) => d.includes("가온누리원")), `${dirs.length} hits`);
   await s.screenshot({ path: `${SHOT}/m12-F-search.png` });
   await s.close();
   await main.getByRole("button", { name: "도움말", exact: true }).click();
@@ -258,7 +258,7 @@ const DEST = path.join(ORG, "중앙선관위", "20261019_로그분석", "개발"
   dialogs.length = 0;
   await row.getByRole("button", { name: "되돌리기", exact: true }).click();
   const back = await waitFor(() => GO_FILES.every((n) => fs.existsSync(path.join(GO, n))) && TOP.every((n) => fs.existsSync(path.join(DESK, n))), 20000);
-  ok("G", "되돌리기 → 바탕 화면/중앙선관위 로그/tools/go 30개 + 최상위 파일", back && fs.existsSync(path.join(UNIT, "README.md")));
+  ok("G", "되돌리기 → 바탕 화면/가온누리원 로그/tools/go 30개 + 최상위 파일", back && fs.existsSync(path.join(UNIT, "README.md")));
   ok("G", "정리 위치에 남은 파일 없음", walk(DEST).length === 0, walk(DEST).join(","));
 }
 
@@ -283,7 +283,7 @@ const DEST = path.join(ORG, "중앙선관위", "20261019_로그분석", "개발"
   ok("H", "나누기 전 확인", dialogs.some((d) => d.includes("파일 31개를 하나씩")));
   const f01 = panel.locator("[data-testid=context-row][data-name='f01.go'] td.path").nth(1);
   const to = (await f01.getAttribute("title").catch(() => "")) ?? "";
-  ok("H", "안의 파일도 경로 맥락으로 중앙선관위", to.startsWith(path.join(ORG, "중앙선관위")), to);
+  ok("H", "안의 파일도 경로 맥락으로 가온누리원", to.startsWith(path.join(ORG, "가온누리원")), to);
   ok("H", "나누기만으로 무이동", fs.existsSync(path.join(GO, "f01.go")));
   await main.screenshot({ path: `${SHOT}/m12-H-split.png` });
   await panel.getByRole("button", { name: "닫기" }).click();
@@ -299,18 +299,18 @@ const DEST = path.join(ORG, "중앙선관위", "20261019_로그분석", "개발"
   await sleep(1500);
   fs.writeFileSync(path.join(GO, "new_tool.go"), "package main // 새 도구");
   fs.mkdirSync(path.join(DESK, "새 프로젝트"));
-  fs.writeFileSync(path.join(DESK, "새 프로젝트", "선관위_계획.txt"), "새 폴더 안의 파일");
-  fs.writeFileSync(path.join(DESK, "선관위_장애_20261023.txt"), "선관위 장애 보고");
+  fs.writeFileSync(path.join(DESK, "새 프로젝트", "누리원_계획.txt"), "새 폴더 안의 파일");
+  fs.writeFileSync(path.join(DESK, "누리원_장애_20261023.txt"), "누리원 장애 보고");
   const top = await waitFor(
     async () =>
-      !fs.existsSync(path.join(DESK, "선관위_장애_20261023.txt")) ||
-      (await bridge("list_pending")).some((p) => p.name === "선관위_장애_20261023.txt"),
+      !fs.existsSync(path.join(DESK, "누리원_장애_20261023.txt")) ||
+      (await bridge("list_pending")).some((p) => p.name === "누리원_장애_20261023.txt"),
     30000,
   );
   ok("I", "새 최상위 파일 → 업무 맥락으로 처리 (이동 또는 확인 대기)", top);
   await sleep(4000);
   ok("I", "하위 폴더의 새 파일은 그대로", fs.existsSync(path.join(GO, "new_tool.go")));
-  ok("I", "새 폴더 안의 파일도 그대로 (폴더마다 AI 팝업 없음)", fs.existsSync(path.join(DESK, "새 프로젝트", "선관위_계획.txt")));
+  ok("I", "새 폴더 안의 파일도 그대로 (폴더마다 AI 팝업 없음)", fs.existsSync(path.join(DESK, "새 프로젝트", "누리원_계획.txt")));
   const est = await bridge("curate_estimate", { path: DESK });
   ok("I", "복사 중(방금 바뀐) 폴더는 이번 정리에서 뺌", est.unsettled >= 1 && est.folders === 0, JSON.stringify({ files: est.files, folders: est.folders, unsettled: est.unsettled }));
   const c = await ctx.newPage();

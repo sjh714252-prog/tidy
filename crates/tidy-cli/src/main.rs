@@ -216,7 +216,7 @@ enum ContextCmd {
     /// Add a customer/project (or with --issue an issue type, --kind a kind).
     Add {
         name: String,
-        /// Aliases for a customer, comma-separated (e.g. BADA,바다).
+        /// Aliases for a customer, comma-separated (e.g. GARA,가람).
         #[arg(long, value_delimiter = ',')]
         alias: Vec<String>,
         #[arg(long, conflicts_with = "kind")]
@@ -227,7 +227,7 @@ enum ContextCmd {
         #[arg(long, value_delimiter = ',', requires = "kind")]
         ext: Vec<String>,
     },
-    /// Add an alias to a customer: `tidy context alias 바다정보 BADA`.
+    /// Add an alias to a customer: `tidy context alias 가람정보 GARA`.
     Alias { entity: String, alias: String },
 }
 

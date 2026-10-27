@@ -83,7 +83,7 @@ export const HELP = {
   curateTemplate: {
     title: "폴더 틀",
     line: "업무 맥락으로 정리할 때 만들 폴더 모양입니다. {entity} 고객사, {yyyymmdd} 날짜, {issue} 이슈, {doc_kind} 자료 종류, {topic} 주제.",
-    example: "{entity}/{yyyymmdd}_{issue}/{doc_kind} → 바다정보\\20261020_과금이슈\\로그\\",
+    example: "{entity}/{yyyymmdd}_{issue}/{doc_kind} → 가람정보\\20261020_과금이슈\\로그\\",
   },
   curateMin: {
     title: "미분류 기준",
@@ -93,12 +93,12 @@ export const HELP = {
   curatePrefer: {
     title: "맥락 정리 우선",
     line: "켜면 새 파일을 규칙보다 먼저 업무 맥락으로 정리합니다. 끄면 규칙에 안 걸린 파일만.",
-    example: "'문서' 규칙이 있어도 바다정보 과금 안내문은 바다정보 폴더로",
+    example: "'문서' 규칙이 있어도 가람정보 과금 안내문은 가람정보 폴더로",
   },
   context: {
     title: "맥락 사전",
     line: "고객사 이름과 별칭, 이슈 유형, 자료 종류를 적어 두면 AI가 같은 이름으로 묶습니다. 결과를 고치면 사전에 넣을지 묻습니다.",
-    example: "바다정보 (별칭: BADA, 바다) → BADA_장애로그.log 도 바다정보로",
+    example: "가람정보 (별칭: GARA, 가람) → GARA_장애로그.log 도 가람정보로",
   },
 } as const;
 

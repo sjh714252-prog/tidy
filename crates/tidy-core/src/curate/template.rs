@@ -188,7 +188,7 @@ mod tests {
         let a = Path::new("/바탕 화면");
         let p = t.render(
             &TemplateVals {
-                entity: Some("바다정보"),
+                entity: Some("가람정보"),
                 issue: "과금이슈",
                 doc_kind: "로그",
                 topic: None,
@@ -197,7 +197,7 @@ mod tests {
             },
             a,
         );
-        assert_eq!(p, a.join("바다정보").join("20261020_과금이슈").join("로그"));
+        assert_eq!(p, a.join("가람정보").join("20261020_과금이슈").join("로그"));
         let o = FolderTemplate::parse("기타/{topic}").unwrap();
         let p = o.render(
             &TemplateVals {
@@ -210,21 +210,21 @@ mod tests {
         // (M12) {folder}: the folder item's name; dropped for files.
         let f = FolderTemplate::parse("{entity}/{issue}/{folder}/x").unwrap();
         let vals = |folder| TemplateVals {
-            entity: Some("중앙선관위"),
+            entity: Some("가온누리원"),
             issue: "로그분석",
             folder,
             ..Default::default()
         };
         assert_eq!(
             f.render(&vals(Some("go: 도구")), a),
-            a.join("중앙선관위")
+            a.join("가온누리원")
                 .join("로그분석")
                 .join("go 도구")
                 .join("x")
         );
         assert_eq!(
             f.render(&vals(None), a),
-            a.join("중앙선관위").join("로그분석").join("x")
+            a.join("가온누리원").join("로그분석").join("x")
         );
         assert!(f.uses("folder"));
     }

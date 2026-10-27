@@ -31,7 +31,7 @@ const TOP_EXTS: usize = 5;
 pub struct FolderUnit {
     pub path: PathBuf,
     pub name: String,
-    /// Relative to the folder being organized ("중앙선관위 로그").
+    /// Relative to the folder being organized ("가온누리원 로그").
     pub rel: String,
     pub files: usize,
     pub bytes: u64,
@@ -247,12 +247,12 @@ mod tests {
     fn summarizes_a_go_tool_folder() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("바탕 화면");
-        let unit = root.join("중앙선관위 로그");
+        let unit = root.join("가온누리원 로그");
         let go = unit.join("tools").join("go");
         fs::create_dir_all(go.join("cmd")).unwrap();
         fs::write(
             unit.join("README.md"),
-            "중앙선관위 선거 로그 분석 도구입니다.\n사용법: go run",
+            "가온누리원 선거 로그 분석 도구입니다.\n사용법: go run",
         )
         .unwrap();
         for i in 0..12 {
@@ -262,8 +262,8 @@ mod tests {
         fs::write(unit.join(".hidden"), "x").unwrap();
         let filter = IgnoreFilter::new(&[]).unwrap();
         let u = FolderUnit::scan(&unit, &root, &filter, 300).unwrap();
-        assert_eq!(u.name, "중앙선관위 로그");
-        assert_eq!(u.rel, "중앙선관위 로그");
+        assert_eq!(u.name, "가온누리원 로그");
+        assert_eq!(u.rel, "가온누리원 로그");
         assert_eq!(u.files, 14);
         assert_eq!(u.exts[0], ("go".to_string(), 13));
         assert_eq!(u.samples[0], "README.md", "shallowest first");
@@ -276,8 +276,8 @@ mod tests {
             .doc
             .as_deref()
             .unwrap()
-            .starts_with("중앙선관위 선거 로그"));
-        assert!(u.key.starts_with("folder:") && u.key.ends_with("|중앙선관위 로그"));
+            .starts_with("가온누리원 선거 로그"));
+        assert!(u.key.starts_with("folder:") && u.key.ends_with("|가온누리원 로그"));
         let l = u.line();
         assert!(l.exts.starts_with("go 13"));
         // No contents without send_content.

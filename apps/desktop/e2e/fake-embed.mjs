@@ -3,7 +3,7 @@
 // character trigrams hashed into buckets, plus synonym groups that share a
 // reserved bucket so "meaning" can be tested deterministically. Chat
 // completions answer a classify request with one fixed suggestion, a
-// work-context request (M10) per file from its name (customer 바다정보/BADA
+// work-context request (M10) per file from its name (customer 가람정보/GARA
 // or 하늘통신/SKY, issue 과금/장애/전환/대체발송, date YYYYMMDD in the name,
 // kind from the extension; 정책 documents by topic; "애매" = unsure), and
 // a dictionary request ("바탕화면에서 뽑기") with fixed candidates.
@@ -45,14 +45,14 @@ export function curateAnswer(user) {
     const name = m[3];
     // Path context: the first-level folder is the strongest customer hint.
     const where = `${m[4]}/${name}`;
-    const entity = /선관위/.test(where)
-      ? '중앙선관위'
-      : /바다|BADA/i.test(name)
-        ? '바다정보'
+    const entity = /누리원/.test(where)
+      ? '가온누리원'
+      : /가람|GARA/i.test(name)
+        ? '가람정보'
         : /하늘|SKY/i.test(name)
           ? '하늘통신'
           : /Ocean/i.test(name)
-            ? 'OceanInfo'
+            ? 'RiverInfo'
             : null;
     const issue = /과금/.test(name)
       ? '과금이슈'
@@ -62,7 +62,7 @@ export function curateAnswer(user) {
           ? '번호전환'
           : /대체발송/.test(name)
             ? '대체발송 중복'
-            : /선관위/.test(where) && /로그/.test(where)
+            : /누리원/.test(where) && /로그/.test(where)
               ? '로그분석'
               : '기타 이슈';
     const d = name.match(/(20\d\d)(\d\d)(\d\d)/);
@@ -96,7 +96,7 @@ export function curateAnswer(user) {
 
 export const CONTEXT_ANSWER = {
   entities: [
-    { name: '바다정보', aliases: ['BADA'], files: 3, reason: '파일 이름에 자주 나옴' },
+    { name: '가람정보', aliases: ['GARA'], files: 3, reason: '파일 이름에 자주 나옴' },
     { name: '하늘통신', aliases: ['SKY'], files: 2, reason: '파일 이름에 자주 나옴' },
   ],
   issue_types: ['과금', '장애', '번호전환'],
@@ -112,8 +112,8 @@ export function contextAnswer(user) {
     else if (inTop && line.startsWith('- ')) top.push(line.slice(2).trim());
   }
   const extra = top
-    .filter((f) => /선관위/.test(f))
-    .map(() => ({ name: '중앙선관위', aliases: ['선관위'], files: 1, reason: "감시 폴더 바로 아래 폴더 이름 '중앙선관위 로그'" }));
+    .filter((f) => /누리원/.test(f))
+    .map(() => ({ name: '가온누리원', aliases: ['누리원'], files: 1, reason: "감시 폴더 바로 아래 폴더 이름 '가온누리원 로그'" }));
   return { ...CONTEXT_ANSWER, entities: [...CONTEXT_ANSWER.entities, ...extra.slice(0, 1)] };
 }
 

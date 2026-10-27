@@ -97,7 +97,7 @@ pub struct CurateInput {
     pub name: String,
     pub ext: String,
     /// (M12) Folder relative to the folder being organized
-    /// ("중앙선관위 로그/tools/go"; "." directly in it) — path context.
+    /// ("가온누리원 로그/tools/go"; "." directly in it) — path context.
     pub rel_dir: String,
     pub size: u64,
     pub modified: NaiveDate,
@@ -1416,14 +1416,14 @@ mod tests {
     #[test]
     fn answers_are_validated() {
         let v = serde_json::json!({"files": [
-            {"id": 1, "entity": "바다/정보", "issue": "과금이슈", "date": "2026-10-20T09:00", "doc_kind": "로그", "topic": null, "confidence": 1.7, "reason": "r"},
+            {"id": 1, "entity": "가람/정보", "issue": "과금이슈", "date": "2026-10-20T09:00", "doc_kind": "로그", "topic": null, "confidence": 1.7, "reason": "r"},
             {"id": 2, "entity": null, "issue": "", "date": "bad", "doc_kind": "", "topic": null, "confidence": 0.5, "reason": ""},
             {"id": 9, "entity": "x", "issue": "y", "date": null, "doc_kind": "z", "topic": null, "confidence": 1, "reason": ""}
         ]});
         let m = parse_answer(&v, 2);
         assert_eq!(m.len(), 2, "id 9 is not in the batch");
         let a = &m[&1];
-        assert_eq!(a.entity.as_deref(), Some("바다 정보"));
+        assert_eq!(a.entity.as_deref(), Some("가람 정보"));
         assert_eq!(a.date, Some(d("2026-10-20")));
         assert_eq!(a.confidence, 1.0);
         let b = &m[&2];

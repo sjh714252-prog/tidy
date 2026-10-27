@@ -135,14 +135,14 @@ mod tests {
         let desk = tmp.path().join("바탕 화면");
         let org = tmp.path().join("정리");
         let a = org
-            .join("중앙선관위")
+            .join("가온누리원")
             .join("20261023_로그분석")
             .join("개발");
         std::fs::create_dir_all(&a).unwrap();
         std::fs::write(a.join("x.go"), "x").unwrap();
-        std::fs::create_dir_all(desk.join("중앙선관위").join("20260901_장애")).unwrap();
+        std::fs::create_dir_all(desk.join("가온누리원").join("20260901_장애")).unwrap();
         std::fs::write(
-            desk.join("중앙선관위").join("20260901_장애").join("y.log"),
+            desk.join("가온누리원").join("20260901_장애").join("y.log"),
             "y",
         )
         .unwrap();
@@ -162,14 +162,14 @@ mod tests {
             ..Default::default()
         };
         let mut dict = ContextDict::starter();
-        dict.add_entity("중앙선관위", &[]).unwrap();
-        dict.add_entity("바다정보", &[]).unwrap();
+        dict.add_entity("가온누리원", &[]).unwrap();
+        dict.add_entity("가람정보", &[]).unwrap();
         let v = customer_overview(&cfg, &dict, None);
         assert_eq!(v.len(), 1, "no folder, no entry");
-        assert_eq!(v[0].name, "중앙선관위");
+        assert_eq!(v[0].name, "가온누리원");
         assert_eq!((v[0].dirs.len(), v[0].issues, v[0].files), (2, 2, 2));
         assert!(v[0].last.is_some());
-        assert_eq!(customer_dirs(&cfg, "중앙선관위").len(), 2);
-        assert!(customer_dirs(&cfg, "바다정보").is_empty());
+        assert_eq!(customer_dirs(&cfg, "가온누리원").len(), 2);
+        assert!(customer_dirs(&cfg, "가람정보").is_empty());
     }
 }

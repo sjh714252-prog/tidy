@@ -46,7 +46,7 @@ export function watchOf(p: string, watches: WatchName[]): WatchName | null {
   return best;
 }
 
-/** "바탕화면 › 중앙선관위 로그" for a path inside a watch folder, else null. */
+/** "바탕화면 › 가온누리원 로그" for a path inside a watch folder, else null. */
 export function aliasPath(p: string, alias: string, root: string): string | null {
   const n = norm(p);
   const r = norm(root);

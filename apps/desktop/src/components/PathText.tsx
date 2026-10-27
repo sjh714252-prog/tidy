@@ -15,7 +15,7 @@ function textWidth(text: string, font: string): number {
  * One way to show a path everywhere (SPEC §14.8 0.1): monospace, middle
  * ellipsis that keeps the drive + first part and the last 1–2 parts, the
  * full path in the title, a click opens it in the file manager. Inside a
- * watch folder (`alias` + `root`) it reads "바탕화면 › 중앙선관위 로그".
+ * watch folder (`alias` + `root`) it reads "바탕화면 › 가온누리원 로그".
  * `max` = a character budget (summary spots); without it the text fits the
  * element's width.
  */

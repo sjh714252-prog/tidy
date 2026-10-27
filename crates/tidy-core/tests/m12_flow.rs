@@ -1,6 +1,6 @@
 //! M12 (SPEC §14.7): folder-unit work-context curation with a MockProvider.
-//! A Go tool folder on the desktop (`중앙선관위 로그/tools/go/*.go`) is ONE
-//! item that keeps its structure under `중앙선관위/<date>_로그분석/개발/…`;
+//! A Go tool folder on the desktop (`가온누리원 로그/tools/go/*.go`) is ONE
+//! item that keeps its structure under `가온누리원/<date>_로그분석/개발/…`;
 //! files directly on the desktop are items of their own; the AI sees the
 //! path relative to the desktop; watching never scatters a sub-folder's
 //! files; folders still being copied wait; split into files on request.
@@ -53,9 +53,9 @@ fn mock(prompts: Arc<Mutex<Vec<String>>>) -> Arc<MockProvider> {
                         .or_else(|| p.strip_prefix("폴더: "))
                 })
                 .unwrap_or(".");
-            let customer = path.starts_with("중앙선관위") || name.contains("중앙선관위");
+            let customer = path.starts_with("가온누리원") || name.contains("가온누리원");
             files.push(if customer {
-                json!({"id": id, "kind": kind, "entity": "중앙선관위", "issue": "로그분석",
+                json!({"id": id, "kind": kind, "entity": "가온누리원", "issue": "로그분석",
                        "date": "2026-10-23", "doc_kind": if kind == "folder" { "개발" } else { "자료" },
                        "topic": null, "confidence": 0.95, "reason": format!("경로 {path}")})
             } else {
@@ -76,10 +76,10 @@ struct Desk {
 fn desk() -> Desk {
     let tmp = tempfile::tempdir().unwrap();
     let desk = dunce::canonicalize(tmp.path()).unwrap().join("바탕 화면");
-    let tool = desk.join("중앙선관위 로그");
+    let tool = desk.join("가온누리원 로그");
     let go = tool.join("tools").join("go");
     fs::create_dir_all(go.join("cmd")).unwrap();
-    fs::write(tool.join("README.md"), "중앙선관위 선거 로그 분석 도구").unwrap();
+    fs::write(tool.join("README.md"), "가온누리원 선거 로그 분석 도구").unwrap();
     for i in 0..30 {
         fs::write(
             go.join(format!("f{i:02}.go")),
@@ -88,7 +88,7 @@ fn desk() -> Desk {
         .unwrap();
     }
     fs::write(go.join("cmd").join("run.go"), "package cmd").unwrap();
-    fs::write(desk.join("중앙선관위 회의록.txt"), "회의").unwrap();
+    fs::write(desk.join("가온누리원 회의록.txt"), "회의").unwrap();
     fs::write(desk.join("장보기.txt"), "우유").unwrap();
     Desk {
         _tmp: tmp,
@@ -105,7 +105,7 @@ fn cfg_settle(secs: u64) -> Config {
 
 fn curator(cfg: &Config) -> Curator {
     let mut d = ContextDict::starter();
-    d.add_entity("중앙선관위", &["NEC".into()]).unwrap();
+    d.add_entity("가온누리원", &["NRW".into()]).unwrap();
     Curator::new(d, cfg.curate.clone(), true).unwrap()
 }
 
@@ -137,7 +137,7 @@ fn a_folder_moves_as_one_item_with_path_context_and_undoes() {
     assert_eq!(folder.files, 32);
     assert_eq!(
         rel(&folder.to, &org),
-        "중앙선관위/20261023_로그분석/개발/중앙선관위 로그"
+        "가온누리원/20261023_로그분석/개발/가온누리원 로그"
     );
     let note = folder.context.as_ref().unwrap();
     assert!(
@@ -148,12 +148,12 @@ fn a_folder_moves_as_one_item_with_path_context_and_undoes() {
     // The AI saw the folder summary and each file's path from the desktop.
     let sent = prompts.lock().unwrap().join("\n");
     assert!(
-        sent.contains("] 폴더: 중앙선관위 로그 | 경로: 중앙선관위 로그 | 파일 32개"),
+        sent.contains("] 폴더: 가온누리원 로그 | 경로: 가온누리원 로그 | 파일 32개"),
         "{sent}"
     );
     assert!(sent.contains("확장자: go 31"), "{sent}");
     assert!(
-        sent.contains("문서: 중앙선관위 선거 로그 분석 도구"),
+        sent.contains("문서: 가온누리원 선거 로그 분석 도구"),
         "{sent}"
     );
     assert!(sent.contains("파일: 장보기.txt | 폴더: ."), "{sent}");
@@ -170,10 +170,10 @@ fn a_folder_moves_as_one_item_with_path_context_and_undoes() {
     assert!(r.errors.is_empty(), "{:?}", r.errors);
     assert_eq!(r.moved.len(), 34);
     let moved = org
-        .join("중앙선관위")
+        .join("가온누리원")
         .join("20261023_로그분석")
         .join("개발")
-        .join("중앙선관위 로그");
+        .join("가온누리원 로그");
     assert!(moved
         .join("tools")
         .join("go")
@@ -204,8 +204,8 @@ fn organized_and_unsettled_folders_are_not_items_and_split_works() {
     let ai = AiClassifier::with_provider(mock(prompts.clone()), &cfg, &RuleSet::default()).unwrap();
     let store = Store::open_in_memory().unwrap();
     // A customer folder (result) and a rule destination are not items.
-    fs::create_dir_all(d.desk.join("중앙선관위").join("이전")).unwrap();
-    fs::write(d.desk.join("중앙선관위").join("이전").join("a.txt"), "a").unwrap();
+    fs::create_dir_all(d.desk.join("가온누리원").join("이전")).unwrap();
+    fs::write(d.desk.join("가온누리원").join("이전").join("a.txt"), "a").unwrap();
     fs::create_dir_all(d.desk.join("문서")).unwrap();
     fs::write(d.desk.join("문서").join("b.pdf"), "b").unwrap();
     let rules =
@@ -231,7 +231,7 @@ fn organized_and_unsettled_folders_are_not_items_and_split_works() {
     assert!(plan.moves.iter().all(|m| !m.is_dir));
     let sent = prompts.lock().unwrap().join("\n");
     assert!(
-        sent.contains("파일: f00.go | 폴더: 중앙선관위 로그/tools/go"),
+        sent.contains("파일: f00.go | 폴더: 가온누리원 로그/tools/go"),
         "{sent}"
     );
     // A file's date can be changed in the preview.
@@ -245,7 +245,7 @@ fn organized_and_unsettled_folders_are_not_items_and_split_works() {
         &mut plan,
         any,
         &MoveEdit {
-            entity: Some("중앙선관위".into()),
+            entity: Some("가온누리원".into()),
             issue: Some("로그분석".into()),
             date: Some("2026-09-01".into()),
             ..Default::default()
@@ -298,7 +298,7 @@ fn watching_never_scatters_a_sub_folder() {
     // placed automatically (95% ≥ 90%, known folder).
     fs::create_dir_all(
         d.desk
-            .join("중앙선관위")
+            .join("가온누리원")
             .join("20261023_로그분석")
             .join("자료"),
     )
@@ -320,8 +320,8 @@ fn watching_never_scatters_a_sub_folder() {
         "no AI call for files in sub-folders"
     );
     // A new file directly on the desktop: placed, with "." as its folder.
-    let top = d.desk.join("중앙선관위 회의록.txt");
+    let top = d.desk.join("가온누리원 회의록.txt");
     let a = engine.handle(&top, &new_batch_id()).unwrap();
     assert!(matches!(a, Action::Moved { .. }), "{a:?}");
-    assert!(prompts.lock().unwrap()[0].contains("파일: 중앙선관위 회의록.txt | 폴더: ."));
+    assert!(prompts.lock().unwrap()[0].contains("파일: 가온누리원 회의록.txt | 폴더: ."));
 }

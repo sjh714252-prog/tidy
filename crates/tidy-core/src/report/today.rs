@@ -152,16 +152,16 @@ mod tests {
             e(
                 1,
                 "b1",
-                "/d/바탕 화면/중앙선관위 로그/tools/a.go",
-                "/정리/중앙선관위/20261023_로그분석/개발/중앙선관위 로그/tools/a.go",
+                "/d/바탕 화면/가온누리원 로그/tools/a.go",
+                "/정리/가온누리원/20261023_로그분석/개발/가온누리원 로그/tools/a.go",
                 100,
                 None,
             ),
             e(
                 2,
                 "b1",
-                "/d/바탕 화면/중앙선관위 로그/b.md",
-                "/정리/중앙선관위/20261023_로그분석/개발/중앙선관위 로그/b.md",
+                "/d/바탕 화면/가온누리원 로그/b.md",
+                "/정리/가온누리원/20261023_로그분석/개발/가온누리원 로그/b.md",
                 101,
                 None,
             ),
@@ -191,11 +191,11 @@ mod tests {
         assert_eq!(t.items[0].dest_dir, PathBuf::from("/정리/문서/2026-10"));
         let f = &t.items[1];
         assert!(f.is_dir);
-        assert_eq!(f.name, "중앙선관위 로그");
+        assert_eq!(f.name, "가온누리원 로그");
         assert_eq!(f.files, 2);
         assert_eq!(
             f.dest_dir,
-            PathBuf::from("/정리/중앙선관위/20261023_로그분석/개발")
+            PathBuf::from("/정리/가온누리원/20261023_로그분석/개발")
         );
         // A single file whose parent happens to match is still a file.
         assert!(!t.items[2].is_dir);

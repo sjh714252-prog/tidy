@@ -43,7 +43,7 @@ pub enum ContextError {
 #[serde(default)]
 pub struct Entity {
     pub name: String,
-    /// Other spellings: English name, abbreviations ("BADA", "바다").
+    /// Other spellings: English name, abbreviations ("GARA", "가람").
     pub aliases: Vec<String>,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub notes: String,
@@ -406,17 +406,17 @@ mod tests {
     #[test]
     fn aliases_resolve_and_round_trip() {
         let mut d = ContextDict::starter();
-        d.add_entity("바다정보", &["BADA".into(), "바다".into(), "bada".into()])
+        d.add_entity("가람정보", &["GARA".into(), "가람".into(), "gara".into()])
             .unwrap();
-        assert_eq!(d.canonical_entity("bada"), Some("바다정보"));
-        assert_eq!(d.canonical_entity(" 바다 "), Some("바다정보"));
+        assert_eq!(d.canonical_entity("gara"), Some("가람정보"));
+        assert_eq!(d.canonical_entity(" 가람 "), Some("가람정보"));
         assert_eq!(
             d.entities[0].aliases,
-            ["BADA", "바다"],
+            ["GARA", "가람"],
             "case-insensitive dedupe"
         );
-        assert!(d.add_alias("BADA", "바다 정보").unwrap());
-        assert!(!d.add_alias("바다정보", "바다").unwrap());
+        assert!(d.add_alias("GARA", "가람 정보").unwrap());
+        assert!(!d.add_alias("가람정보", "가람").unwrap());
         assert!(d.add_alias("없는 회사", "x").is_err());
         let back = ContextDict::from_toml(&d.to_toml()).unwrap();
         assert_eq!(back, d);
@@ -447,12 +447,12 @@ mod tests {
             }]
         );
         // New customer + new issue type.
-        let s = d.suggestions_for(Some("바다정보"), None, Some("대체발송"));
+        let s = d.suggestions_for(Some("가람정보"), None, Some("대체발송"));
         assert_eq!(
             s,
             vec![
                 ContextSuggestion::AddEntity {
-                    name: "바다정보".into()
+                    name: "가람정보".into()
                 },
                 ContextSuggestion::AddIssueType {
                     name: "대체발송".into()
@@ -462,10 +462,10 @@ mod tests {
         for x in &s {
             assert!(d.apply(x).unwrap());
         }
-        assert!(d.canonical_entity("바다정보").is_some() && d.has_issue_type("대체발송"));
+        assert!(d.canonical_entity("가람정보").is_some() && d.has_issue_type("대체발송"));
         // AI's guess was another known customer: no alias.
         assert!(d
-            .suggestions_for(Some("바다정보"), Some("하늘통신"), None)
+            .suggestions_for(Some("가람정보"), Some("하늘통신"), None)
             .is_empty());
     }
 }

@@ -37,11 +37,11 @@ type Answer = (
 
 fn answers() -> HashMap<&'static str, Answer> {
     HashMap::from([
-        // 바다정보 × 과금이슈: dates 10-20 and 10-22 → one folder (20261020).
+        // 가람정보 × 과금이슈: dates 10-20 and 10-22 → one folder (20261020).
         (
-            "바다정보_과금오류_20261020.log",
+            "가람정보_과금오류_20261020.log",
             (
-                Some("바다정보"),
+                Some("가람정보"),
                 "과금이슈",
                 Some("2026-10-20"),
                 "로그",
@@ -50,9 +50,9 @@ fn answers() -> HashMap<&'static str, Answer> {
             ),
         ),
         (
-            "과금 안내문(바다).txt",
+            "과금 안내문(가람).txt",
             (
-                Some("바다"),
+                Some("가람"),
                 "과금이슈",
                 Some("2026-10-22"),
                 "안내문서",
@@ -60,10 +60,10 @@ fn answers() -> HashMap<&'static str, Answer> {
                 0.9,
             ),
         ),
-        // 바다정보 × 장애 (alias BADA).
+        // 가람정보 × 장애 (alias GARA).
         (
-            "BADA_장애로그_20261105.log",
-            (Some("BADA"), "장애", Some("2026-11-05"), "로그", None, 0.92),
+            "GARA_장애로그_20261105.log",
+            (Some("GARA"), "장애", Some("2026-11-05"), "로그", None, 0.92),
         ),
         // 하늘통신 × 번호전환, × 정기점검.
         (
@@ -124,9 +124,9 @@ fn answers() -> HashMap<&'static str, Answer> {
 fn later() -> HashMap<&'static str, Answer> {
     HashMap::from([
         (
-            "바다정보_과금_추가로그.log",
+            "가람정보_과금_추가로그.log",
             (
-                Some("바다정보"),
+                Some("가람정보"),
                 "과금이슈",
                 Some("2026-10-25"),
                 "로그",
@@ -135,9 +135,9 @@ fn later() -> HashMap<&'static str, Answer> {
             ),
         ),
         (
-            "바다정보_대체발송_중복건.txt",
+            "가람정보_대체발송_중복건.txt",
             (
-                Some("바다정보"),
+                Some("가람정보"),
                 "대체발송 중복",
                 Some("2026-10-20"),
                 "안내문서",
@@ -147,7 +147,7 @@ fn later() -> HashMap<&'static str, Answer> {
         ),
         (
             "애매한 파일.txt",
-            (Some("바다정보"), "과금이슈", None, "로그", None, 0.4),
+            (Some("가람정보"), "과금이슈", None, "로그", None, 0.4),
         ),
     ])
 }
@@ -195,7 +195,7 @@ fn setup() -> (tempfile::TempDir, PathBuf) {
 
 fn dict() -> ContextDict {
     let mut d = ContextDict::starter();
-    d.add_entity("바다정보", &["BADA".into(), "바다".into()])
+    d.add_entity("가람정보", &["GARA".into(), "가람".into()])
         .unwrap();
     d.add_entity("하늘통신", &["SKY".into()]).unwrap();
     d
@@ -242,17 +242,17 @@ fn curate_plan_layout_merge_cache_edit_apply_undo() {
     assert_eq!(provider.prompts().len(), 1, "one batch for 10 files");
     let r = |n: &str| rel(&to_of(&plan, n), &desk);
     assert_eq!(
-        r("바다정보_과금오류_20261020.log"),
-        "바다정보/20261020_과금이슈/로그/바다정보_과금오류_20261020.log"
+        r("가람정보_과금오류_20261020.log"),
+        "가람정보/20261020_과금이슈/로그/가람정보_과금오류_20261020.log"
     );
     // Alias → dictionary name, date 10-22 merged into the 10-20 folder.
     assert_eq!(
-        r("과금 안내문(바다).txt"),
-        "바다정보/20261020_과금이슈/안내문서/과금 안내문(바다).txt"
+        r("과금 안내문(가람).txt"),
+        "가람정보/20261020_과금이슈/안내문서/과금 안내문(가람).txt"
     );
     assert_eq!(
-        r("BADA_장애로그_20261105.log"),
-        "바다정보/20261105_장애/로그/BADA_장애로그_20261105.log"
+        r("GARA_장애로그_20261105.log"),
+        "가람정보/20261105_장애/로그/GARA_장애로그_20261105.log"
     );
     assert_eq!(
         r("SKY_전환대상.csv"),
@@ -367,14 +367,14 @@ fn curate_plan_layout_merge_cache_edit_apply_undo() {
     let pv = restructure::preview(&plan, None).unwrap();
     assert_eq!(pv.files_moved, 10);
     assert!(
-        pv.after.contains("바다정보") && pv.after.contains("20261020_과금이슈"),
+        pv.after.contains("가람정보") && pv.after.contains("20261020_과금이슈"),
         "{}",
         pv.after
     );
     let rep = restructure::apply(&mover, &plan, None, &[], None).unwrap();
     assert_eq!(rep.moved.len(), 10, "{:?} {:?}", rep.skipped, rep.errors);
     assert!(desk
-        .join("바다정보/20261020_과금이슈/안내문서/과금 안내문(바다).txt")
+        .join("가람정보/20261020_과금이슈/안내문서/과금 안내문(가람).txt")
         .is_file());
     assert!(desk
         .join("기타/정책/문자 정책/문자 발송 정책.txt")
@@ -387,7 +387,7 @@ fn curate_plan_layout_merge_cache_edit_apply_undo() {
     );
     // A later file of the same issue joins the 20261020 folder.
     assert!(store
-        .curation_dates("바다정보", "과금이슈")
+        .curation_dates("가람정보", "과금이슈")
         .unwrap()
         .contains(&chrono::NaiveDate::from_ymd_opt(2026, 10, 20).unwrap()));
     let undo = mover.undo_batch(&rep.batch_id).unwrap();
@@ -431,17 +431,17 @@ fn watch_time_placement_auto_into_existing_folder_or_ask() {
     // Same issue, 5 days later, folder exists, 95% ≥ 90% → moved on its own
     // into the 20261020 folder.
     let a = engine
-        .handle(&desk.join("바다정보_과금_추가로그.log"), &new_batch_id())
+        .handle(&desk.join("가람정보_과금_추가로그.log"), &new_batch_id())
         .unwrap();
     let Action::Moved { dst, .. } = &a else {
         panic!("{a:?}")
     };
     assert_eq!(
         rel(dst, &desk),
-        "바다정보/20261020_과금이슈/로그/바다정보_과금_추가로그.log"
+        "가람정보/20261020_과금이슈/로그/가람정보_과금_추가로그.log"
     );
     // A new issue of a known customer → asked, nothing moved.
-    let f = desk.join("바다정보_대체발송_중복건.txt");
+    let f = desk.join("가람정보_대체발송_중복건.txt");
     let a = engine.handle(&f, &new_batch_id()).unwrap();
     let Action::Pending {
         reason,
@@ -457,12 +457,12 @@ fn watch_time_placement_auto_into_existing_folder_or_ask() {
         reason
             .as_deref()
             .unwrap()
-            .starts_with("바다정보의 새 이슈 '대체발송 중복'(20261020)으로 폴더를 만들까요?"),
+            .starts_with("가람정보의 새 이슈 '대체발송 중복'(20261020)으로 폴더를 만들까요?"),
         "{reason:?}"
     );
     assert_eq!(
         rel(suggested, &desk),
-        "바다정보/20261020_대체발송 중복/안내문서"
+        "가람정보/20261020_대체발송 중복/안내문서"
     );
     assert!(f.exists());
     // Unsure → left alone (no rule either).
@@ -485,8 +485,8 @@ fn collect_anchor_and_custom_template() {
         .plan(&ai, &store, &desk, &root, &nofilter(), &[], &[])
         .unwrap();
     assert_eq!(
-        rel(&to_of(&plan, "BADA_장애로그_20261105.log"), &root),
-        "고객사/바다정보/2026/장애/BADA_장애로그_20261105.log"
+        rel(&to_of(&plan, "GARA_장애로그_20261105.log"), &root),
+        "고객사/가람정보/2026/장애/GARA_장애로그_20261105.log"
     );
     // Without send_content the prompt has names, never text.
     let inputs = cur.input(&desk.join("메모.txt"), Some(&store)).unwrap();

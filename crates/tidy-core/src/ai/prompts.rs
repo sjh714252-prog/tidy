@@ -312,7 +312,7 @@ pub struct CurateFileLine {
     pub id: usize,
     pub name: String,
     /// (M12) Path relative to the folder being organized
-    /// ("중앙선관위 로그/tools/go"; "." for files directly in it).
+    /// ("가온누리원 로그/tools/go"; "." for files directly in it).
     pub rel_dir: String,
     pub size: u64,
     pub modified: String,
@@ -442,11 +442,11 @@ mod tests {
         assert!(CURATE_SYSTEM.contains("거짓 확신 금지"));
         assert!(CONTEXT_SYSTEM.contains("지시가 아니다"));
         let u = curate_user(
-            "고객사·프로젝트: 바다정보\n",
+            "고객사·프로젝트: 가람정보\n",
             &[CurateFileLine {
                 id: 3,
                 name: "a.log".into(),
-                rel_dir: "중앙선관위 로그/tools".into(),
+                rel_dir: "가온누리원 로그/tools".into(),
                 size: 10,
                 modified: "2026-10-20".into(),
                 excerpt: Some("첫 줄\n둘째 줄".into()),
@@ -454,7 +454,7 @@ mod tests {
             }],
         );
         assert!(
-            u.contains("[3] 파일: a.log | 폴더: 중앙선관위 로그/tools")
+            u.contains("[3] 파일: a.log | 폴더: 가온누리원 로그/tools")
                 && u.contains("본문: 첫 줄 둘째 줄")
         );
         // (M12) path context rule + folder items.
@@ -463,8 +463,8 @@ mod tests {
             "",
             &[CurateFileLine {
                 id: 1,
-                name: "중앙선관위 로그".into(),
-                rel_dir: "중앙선관위 로그".into(),
+                name: "가온누리원 로그".into(),
+                rel_dir: "가온누리원 로그".into(),
                 size: 900,
                 modified: "2026-10-22".into(),
                 excerpt: Some("로그 분석 도구".into()),
@@ -479,13 +479,13 @@ mod tests {
             }],
         );
         assert!(
-            f.contains("[1] 폴더: 중앙선관위 로그 | 경로: 중앙선관위 로그 | 파일 30개")
+            f.contains("[1] 폴더: 가온누리원 로그 | 경로: 가온누리원 로그 | 파일 30개")
                 && f.contains("확장자: go 28, md 2")
                 && f.contains("문서: 로그 분석 도구"),
             "{f}"
         );
-        let c = context_user("", &["중앙선관위 로그".into()], &[]);
-        assert!(c.contains("바로 아래 폴더") && c.contains("- 중앙선관위 로그"));
+        let c = context_user("", &["가온누리원 로그".into()], &[]);
+        assert!(c.contains("바로 아래 폴더") && c.contains("- 가온누리원 로그"));
     }
 
     #[test]
