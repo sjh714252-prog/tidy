@@ -101,6 +101,7 @@ fn exclude_round_trips_through_config_toml() {
         start_on_login: false,
         onboarded: None,
         check_updates: true,
+        duplicate_policy: None,
     };
     write_settings(&path, &patch).unwrap();
     let text = fs::read_to_string(&path).unwrap();

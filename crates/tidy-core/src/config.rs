@@ -52,6 +52,9 @@ pub struct SettingsPatch {
     /// (M11) `[general] check_updates`.
     #[serde(default = "yes")]
     pub check_updates: bool,
+    /// (M14) `[mover] duplicate_policy`; `None` leaves the key alone.
+    #[serde(default)]
+    pub duplicate_policy: Option<DuplicatePolicy>,
 }
 
 fn yes() -> bool {
@@ -90,6 +93,21 @@ pub fn write_settings(path: &Path, patch: &SettingsPatch) -> Result<(), ConfigEr
     general.insert("check_updates", value(patch.check_updates));
     if let Some(o) = patch.onboarded {
         general.insert("onboarded", value(o));
+    }
+    if let Some(p) = patch.duplicate_policy {
+        let mover = doc
+            .entry("mover")
+            .or_insert(Item::Table(Table::new()))
+            .as_table_like_mut()
+            .expect("[mover] is a table");
+        mover.insert(
+            "duplicate_policy",
+            value(match p {
+                DuplicatePolicy::Skip => "skip",
+                DuplicatePolicy::Rename => "rename",
+                DuplicatePolicy::Replace => "replace",
+            }),
+        );
     }
 
     let mut watches = ArrayOfTables::new();
@@ -1455,6 +1473,7 @@ path = "~/Desktop"
             start_on_login: false,
             onboarded: Some(true),
             check_updates: true,
+            duplicate_policy: None,
         };
         write_settings(&path, &patch).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
@@ -1470,6 +1489,20 @@ path = "~/Desktop"
             Some("02:00-05:00")
         );
         assert_eq!(c.mover.duplicate_policy, DuplicatePolicy::Rename);
+        // (M14) Setting the policy keeps the rest of [mover].
+        write_settings(
+            &path,
+            &SettingsPatch {
+                duplicate_policy: Some(DuplicatePolicy::Replace),
+                ..patch.clone()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            Config::load(&path).unwrap().mover.duplicate_policy,
+            DuplicatePolicy::Replace
+        );
+        assert!(std::fs::read_to_string(&path).unwrap().contains("# 언어"));
         assert!(c.general.quiet_mode);
         assert_eq!(c.general.hotkey, "CmdOrCtrl+Alt+K");
         assert!(!c.general.start_on_login);
@@ -1622,6 +1655,7 @@ send_content = false
             start_on_login: true,
             onboarded: Some(true),
             check_updates: true,
+            duplicate_policy: None,
         };
         write_settings(&path, &patch).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
@@ -1643,6 +1677,7 @@ send_content = false
             &SettingsPatch {
                 onboarded: None,
                 check_updates: true,
+                duplicate_policy: None,
                 ..patch
             },
         )

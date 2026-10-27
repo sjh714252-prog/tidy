@@ -189,6 +189,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
         rulesText: d.rulesText,
         startOnLogin: d.autostart.wanted,
         checkUpdates: d.checkUpdates,
+        duplicatePolicy: d.duplicatePolicy,
       });
       await get().load();
       set({ message: "저장했습니다. 감시를 다시 시작하고 인덱스를 갱신합니다." });

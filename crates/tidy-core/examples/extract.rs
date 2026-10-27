@@ -1,15 +1,17 @@
-//! Debug helper: `cargo run -p tidy-core --example extract -- <file>...`
-//! prints the text an extractor produces for each file.
-use tidy_core::index::Extractors;
-
+//! Print the extracted text of files (manual check of extractors).
+//! `cargo run -p tidy-core --example extract -- <file>...`
 fn main() {
-    let x = Extractors::default_set();
-    for arg in std::env::args().skip(1) {
-        println!("=== {arg}");
-        match x.extract(std::path::Path::new(&arg)) {
-            None => println!("(unsupported)"),
-            Some(Ok(t)) => println!("{t}"),
-            Some(Err(e)) => println!("ERROR: {e}"),
+    let x = tidy_core::index::Extractors::default_set();
+    for a in std::env::args().skip(1) {
+        let p = std::path::Path::new(&a);
+        match x.extract(p) {
+            Some(Ok(t)) => println!(
+                "== {a} ({} chars)\n{}\n",
+                t.chars().count(),
+                t.chars().take(300).collect::<String>()
+            ),
+            Some(Err(e)) => println!("== {a}: ERROR {e}\n"),
+            None => println!("== {a}: no extractor\n"),
         }
     }
 }

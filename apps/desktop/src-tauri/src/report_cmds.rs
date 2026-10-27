@@ -95,7 +95,8 @@ pub async fn build_report(app: AppHandle, path: String, duplicates: bool) -> Cmd
         let opts = report::ReportOptions {
             top_n: cfg.report.top_n,
             stale_days: cfg.report.stale_days,
-            duplicates: duplicates.then(report::DupOptions::default),
+            duplicates: duplicates
+                .then(|| report::DupOptions::for_root(&expand(&path), &cfg.watches)),
             scan: report::ScanOptions {
                 max_depth: cfg.report.scan_depth,
                 ..Default::default()
@@ -226,7 +227,18 @@ pub struct ApplyDto {
     pub batch_id: String,
     pub moved: usize,
     pub skipped: Vec<String>,
+    /// (M14) Skipped because an identical file is already there.
+    pub duplicates: Vec<DupSkipDto>,
     pub errors: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DupSkipDto {
+    pub path: String,
+    pub existing: String,
+    /// "똑같은 파일이 이미 …에 있어 그대로 둠"
+    pub message: String,
 }
 
 /// Apply the ticked moves of plan `id` as one undoable batch. Only ever
@@ -273,6 +285,15 @@ pub async fn apply_plan(
         Ok(ApplyDto {
             batch_id: r.batch_id,
             moved: r.moved.len(),
+            duplicates: r
+                .duplicates
+                .iter()
+                .map(|(p, e)| DupSkipDto {
+                    path: p.display().to_string(),
+                    existing: e.display().to_string(),
+                    message: tidy_core::mover::duplicate_message(e),
+                })
+                .collect(),
             skipped: r
                 .skipped
                 .iter()
@@ -395,18 +416,7 @@ pub async fn undo_since(
             Path::new(""),
             format!("최근 이동 되돌림: {}개", report.restored.len()),
         );
-        Ok(UndoDto {
-            restored: report
-                .restored
-                .iter()
-                .map(|(a, b)| (a.display().to_string(), b.display().to_string()))
-                .collect(),
-            conflicts: report
-                .conflicts
-                .iter()
-                .map(|c| format!("{}: {}", c.dst_path.display(), c.reason))
-                .collect(),
-        })
+        Ok(UndoDto::from(&report))
     })
     .await
 }
@@ -434,18 +444,7 @@ pub async fn undo_batch(app: AppHandle, batch_id: String) -> CmdResult<UndoDto> 
                 report.restored.len()
             ),
         );
-        Ok(UndoDto {
-            restored: report
-                .restored
-                .iter()
-                .map(|(a, b)| (a.display().to_string(), b.display().to_string()))
-                .collect(),
-            conflicts: report
-                .conflicts
-                .iter()
-                .map(|c| format!("{}: {}", c.dst_path.display(), c.reason))
-                .collect(),
-        })
+        Ok(UndoDto::from(&report))
     })
     .await
 }
@@ -470,4 +469,70 @@ pub async fn today_moves(
         ))
     })
     .await
+}
+
+// ── duplicates (M14, SPEC §14.9 2) ──────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrashDto {
+    pub batch_id: String,
+    pub trashed: usize,
+    pub bytes: u64,
+    pub failed: Vec<String>,
+}
+
+/// Send the copies the user did not keep to the trash, one batch for the
+/// whole "적용" (only ever called from that click — CLAUDE.md rule 6).
+/// Every file is re-hashed first; see `Mover::trash_duplicates`.
+#[tauri::command]
+pub async fn trash_duplicates(
+    app: AppHandle,
+    groups: Vec<tidy_core::mover::DupTrash>,
+) -> CmdResult<TrashDto> {
+    crate::overview::invalidate();
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let inner = state.lock_inner();
+        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        let batch = tidy_core::engine::new_batch_id();
+        let r = mover.trash_duplicates(&groups, &batch);
+        // Trashed files leave the search index.
+        for (p, _) in &r.trashed {
+            if let Err(e) = mover.store().remove_file(p) {
+                tracing::debug!("index row not removed: {e}");
+            }
+        }
+        watch::emit_activity(
+            &app,
+            "info",
+            Path::new(""),
+            format!(
+                "중복 정리: {}개를 휴지통으로 ({:.1} MB)",
+                r.trashed.len(),
+                r.bytes() as f64 / 1_048_576.0
+            ),
+        );
+        Ok(TrashDto {
+            batch_id: r.batch_id.clone(),
+            trashed: r.trashed.len(),
+            bytes: r.bytes(),
+            failed: r
+                .failed
+                .iter()
+                .map(|(p, why)| format!("{}: {why}", p.display()))
+                .collect(),
+        })
+    })
+    .await
+}
+
+/// "휴지통 열기" (undo of a `trash` row points here). With
+/// `TIDY_E2E_NO_OPEN` the request is only recorded (headless e2e).
+#[tauri::command]
+pub async fn open_trash() -> CmdResult<Option<String>> {
+    if crate::about::e2e_record("trash") {
+        return Ok(Some("trash".into()));
+    }
+    Ok(tidy_core::mover::open_trash())
 }

@@ -90,7 +90,19 @@ export function ActivityView() {
                   <td className="path" title={a.path}>
                     {a.path}
                   </td>
-                  <td className="detail">{a.detail}</td>
+                  <td className="detail">
+                    {a.detail}
+                    {a.existing && (
+                      <button
+                        className="link small"
+                        style={{ marginLeft: 6 }}
+                        data-testid="open-existing"
+                        onClick={() => void ipc.revealPath(a.existing as string)}
+                      >
+                        기존 파일 열기
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

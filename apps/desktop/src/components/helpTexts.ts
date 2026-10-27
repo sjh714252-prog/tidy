@@ -1,5 +1,10 @@
 /** ⓘ help texts (SPEC §14.4): one line + an example. Plain Korean. */
 export const HELP = {
+  duplicatePolicy: {
+    title: "똑같은 파일이 이미 있으면",
+    line: "이름만 같고 내용이 다르면 언제나 번호를 붙입니다(덮어쓰기 없음).",
+    example: "보고서.pdf가 이미 있고 내용까지 같으면: 건너뜀 → 그대로 둠, 번호 → 보고서 (1).pdf, 휴지통 → 기존 것을 휴지통으로 보내고 새것을 둠",
+  },
   organizeMode: {
     title: "정리 위치",
     line: "'공통 정리 위치'는 위에서 정한 한 곳 아래로 모으고, '이 폴더 안에서'는 하위 폴더를 만들어 그 안에서만, '다른 폴더…'는 이 폴더만 따로 고른 곳으로 옮깁니다.",

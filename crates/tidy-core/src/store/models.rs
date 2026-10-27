@@ -56,6 +56,9 @@ pub enum MoveOp {
     Move,
     /// Moved into an AES-256 zip (`<name>.zip`); undo decrypts it back.
     Encrypt,
+    /// (M14) Sent to the OS trash as an identical copy of `dst_path` (the
+    /// copy that stays). Undo cannot restore it; it says so.
+    Trash,
 }
 
 impl MoveOp {
@@ -63,14 +66,15 @@ impl MoveOp {
         match self {
             MoveOp::Move => "move",
             MoveOp::Encrypt => "encrypt",
+            MoveOp::Trash => "trash",
         }
     }
 
     pub fn parse(s: &str) -> Self {
-        if s == "encrypt" {
-            MoveOp::Encrypt
-        } else {
-            MoveOp::Move
+        match s {
+            "encrypt" => MoveOp::Encrypt,
+            "trash" => MoveOp::Trash,
+            _ => MoveOp::Move,
         }
     }
 }

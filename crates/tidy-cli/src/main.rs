@@ -14,7 +14,7 @@ use tidy_core::classify::{learner, AiClassifier, FileFacts, RuleSet};
 use tidy_core::config::RootKind;
 use tidy_core::engine::{new_batch_id, reindex_undo, Action};
 use tidy_core::index::{jobs_from_config, FileOutcome, IndexOptions, IndexReport, Indexer};
-use tidy_core::mover::{ExpectedMoves, Mover, ProgressFn, TransferProgress, UndoReport};
+use tidy_core::mover::{DupTrash, ExpectedMoves, Mover, ProgressFn, TransferProgress, UndoReport};
 use tidy_core::pending::{resolve, Decision, Resolution};
 use tidy_core::report::{self, render_tree, restructure, scan, ScanOptions, Stats, TreeOptions};
 use tidy_core::search::{
@@ -76,6 +76,9 @@ enum Cmd {
     Report(ReportArgs),
     /// Propose a reorganisation (rules or AI), show the diff, apply on approval.
     Restructure(RestructureArgs),
+    /// (M14) Identical files (content, any name): list groups with the copy
+    /// kept by default; --apply sends the other copies to the OS trash.
+    Dedupe(DedupeArgs),
     /// (M10) Work-context curation: customer / dated issue / kind folders
     /// proposed by the AI, applied only on approval.
     #[command(subcommand)]
@@ -119,6 +122,22 @@ struct ReportArgs {
     /// for huge folders. Default: `report.scan_depth`, else unlimited.
     #[arg(long, value_name = "N")]
     scan_depth: Option<usize>,
+}
+
+#[derive(Args)]
+struct DedupeArgs {
+    /// Folder (default: the first [[watch]] folder). Its watch folder's
+    /// organize_root is searched for copies too.
+    path: Option<PathBuf>,
+    /// Send the copies that are not kept to the OS trash (logged, one batch).
+    #[arg(long)]
+    apply: bool,
+    /// Comma-separated group numbers for --apply, e.g. 1,3.
+    #[arg(long, value_delimiter = ',', value_name = "N,..", requires = "apply")]
+    only: Vec<usize>,
+    /// Smallest file size to consider, in bytes.
+    #[arg(long, default_value_t = 1024)]
+    min_size: u64,
 }
 
 #[derive(Args)]
@@ -359,6 +378,10 @@ struct PendingArgs {
     /// New file name for --move (keeps the extension if none is given).
     #[arg(long, requires = "move", value_name = "NAME")]
     rename: Option<String>,
+    /// (M14) If an identical file already has the name at the destination:
+    /// skip | rename | replace (default: [mover] duplicate_policy).
+    #[arg(long, requires = "move", value_name = "POLICY", value_parser = parse_dup_policy)]
+    on_duplicate: Option<tidy_core::config::DuplicatePolicy>,
     /// Drop entry ID from the queue and leave the file (this time only).
     #[arg(long, value_name = "ID", conflicts_with = "ignore")]
     skip: Option<i64>,
@@ -478,6 +501,7 @@ fn main() -> Result<()> {
         Cmd::Rules(cmd) => cmd_rules(cli.config, cmd),
         Cmd::Learn(args) => cmd_learn(cli.config, args),
         Cmd::Report(args) => cmd_report(cli.config, args),
+        Cmd::Dedupe(args) => cmd_dedupe(cli.config, args),
         Cmd::Restructure(args) => cmd_restructure(cli.config, args),
         Cmd::Pii(cmd) => cmd_pii(cli.config, cmd),
         Cmd::Curate(cmd) => cmd_curate(cli.config, cmd),
@@ -1014,7 +1038,11 @@ fn cmd_log(config: Option<PathBuf>, args: LogArgs) -> Result<()> {
                 m.rule_name.as_deref().unwrap_or(m.decided_by.as_str())
             ),
             m.src_path.display(),
-            m.dst_path.display(),
+            if m.op == tidy_core::store::MoveOp::Trash {
+                format!("trash (kept {})", m.dst_path.display())
+            } else {
+                m.dst_path.display().to_string()
+            },
             match (m.undone_at, m.in_progress) {
                 (Some(t), _) => format!("  (undone {})", fmt_time(t)),
                 (None, true) => "  (in progress / interrupted)".into(),
@@ -1025,6 +1053,16 @@ fn cmd_log(config: Option<PathBuf>, args: LogArgs) -> Result<()> {
     Ok(())
 }
 
+fn parse_dup_policy(s: &str) -> std::result::Result<tidy_core::config::DuplicatePolicy, String> {
+    use tidy_core::config::DuplicatePolicy::*;
+    match s {
+        "skip" => Ok(Skip),
+        "rename" => Ok(Rename),
+        "replace" => Ok(Replace),
+        _ => Err("skip | rename | replace".into()),
+    }
+}
+
 fn cmd_pending(config: Option<PathBuf>, args: PendingArgs) -> Result<()> {
     let cfg = load_config(config)?;
     let decision = if let Some(id) = args.r#move {
@@ -1033,6 +1071,7 @@ fn cmd_pending(config: Option<PathBuf>, args: PendingArgs) -> Result<()> {
             Decision::Move {
                 dest_dir: args.to.map(|p| tidy_core::config::expand_home(&p)),
                 new_name: args.rename,
+                on_duplicate: args.on_duplicate,
             },
         ))
     } else if let Some(id) = args.skip {
@@ -1703,6 +1742,95 @@ fn default_folder(cfg: &Config, path: Option<PathBuf>) -> Result<PathBuf> {
     }
 }
 
+fn cmd_dedupe(config: Option<PathBuf>, args: DedupeArgs) -> Result<()> {
+    let cfg = load_config(config)?;
+    let root = default_folder(&cfg, args.path)?;
+    let store = Store::open(&cfg.store.db_path())?;
+    let res = report::scan(
+        &root,
+        &ScanOptions {
+            max_depth: cfg.report.scan_depth,
+            ..Default::default()
+        },
+    )
+    .with_context(|| format!("scanning {}", root.display()))?;
+    let opts = report::DupOptions {
+        min_size: args.min_size,
+        ..report::DupOptions::for_root(&root, &cfg.watches)
+    };
+    let groups = report::find_duplicates(&res.root, &res.tree, &opts, Some(&store));
+    if groups.is_empty() {
+        println!("no identical files in {}", root.display());
+        return Ok(());
+    }
+    let picked = |i: usize| args.only.is_empty() || args.only.contains(&i);
+    let mut wasted = 0;
+    for (i, g) in groups.iter().enumerate() {
+        let n = i + 1;
+        if !picked(n) {
+            continue;
+        }
+        wasted += g.wasted;
+        println!(
+            "#{n}  {} × {}  (saves {})",
+            format_size(g.size, BINARY),
+            g.files.len(),
+            format_size(g.wasted, BINARY)
+        );
+        for (k, f) in g.files.iter().enumerate() {
+            println!(
+                "    {} {}{}",
+                if k == g.keep { "keep " } else { "trash" },
+                f.path.display(),
+                if f.in_organize_root {
+                    "  [정리 위치]"
+                } else {
+                    ""
+                }
+            );
+        }
+    }
+    if !args.apply {
+        println!(
+            "\n{} group(s), {} could be freed. Nothing was moved; \
+             `tidy dedupe --apply [--only 1,3]` sends the \"trash\" copies to the OS trash.",
+            groups.len(),
+            format_size(wasted, BINARY)
+        );
+        return Ok(());
+    }
+    let req: Vec<DupTrash> = groups
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| picked(i + 1))
+        .map(|(_, g)| DupTrash {
+            hash: g.hash.clone(),
+            keep: g.files[g.keep].path.clone(),
+            trash: g
+                .files
+                .iter()
+                .enumerate()
+                .filter(|(k, _)| *k != g.keep)
+                .map(|(_, f)| f.path.clone())
+                .collect(),
+        })
+        .collect();
+    let mover = Mover::new(store, cfg.mover.duplicate_policy);
+    let batch = new_batch_id();
+    let r = mover.trash_duplicates(&req, &batch);
+    println!(
+        "sent {} file(s) to the trash ({} freed), batch {}",
+        r.trashed.len(),
+        format_size(r.bytes(), BINARY),
+        short(&batch)
+    );
+    for (p, why) in &r.failed {
+        println!("  left {}: {why}", p.display());
+    }
+    println!("(undo cannot restore from the OS trash: restore them there if needed)");
+    Ok(())
+}
+
 fn cmd_report(config: Option<PathBuf>, args: ReportArgs) -> Result<()> {
     let cfg = load_config(config)?;
     let root = default_folder(&cfg, args.path)?;
@@ -1710,7 +1838,7 @@ fn cmd_report(config: Option<PathBuf>, args: ReportArgs) -> Result<()> {
     let opts = report::ReportOptions {
         top_n: cfg.report.top_n,
         stale_days: args.stale_days.unwrap_or(cfg.report.stale_days),
-        duplicates: (!args.no_dups).then(report::DupOptions::default),
+        duplicates: (!args.no_dups).then(|| report::DupOptions::for_root(&root, &cfg.watches)),
         scan: ScanOptions {
             max_depth: args.scan_depth.or(cfg.report.scan_depth),
             ..Default::default()
@@ -2142,6 +2270,7 @@ fn cmd_vault(config: Option<PathBuf>, cmd: VaultCmd) -> Result<()> {
                 ai_confidence: None,
                 new_name: None,
                 encrypt: true,
+                on_duplicate: None,
             })?;
             match out {
                 tidy_core::mover::MoveOutcome::Moved { log_id, src, dst } => {

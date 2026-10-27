@@ -103,6 +103,34 @@ function Rename({ p, a, onDone }: { p: PendingItem; a: ItemActions; onDone: () =
   );
 }
 
+/**
+ * (M14) "똑같은 파일이 이미 있습니다" — shown on that item only, with the
+ * three answers as buttons (a decision is needed, so not in the ⋯ menu).
+ */
+export function DuplicateNotice({ p, a }: { p: PendingItem; a: ItemActions }) {
+  if (!p.duplicateOf) return null;
+  const go = (onDuplicate: "skip" | "rename" | "replace") =>
+    void a.resolve(p.id, { kind: "move", destDir: null, onDuplicate });
+  return (
+    <div className="dup-notice" data-testid="dup-notice">
+      <span className="dup-line">
+        ⚠ 똑같은 파일이 이미 있습니다 <PathText path={p.duplicateOf} className="sub-path" />
+      </span>
+      <span className="dup-actions">
+        <button className="sm" disabled={a.busy} onClick={() => go("skip")}>
+          그대로 두기
+        </button>
+        <button className="sm" disabled={a.busy} onClick={() => go("rename")}>
+          번호 붙여 이동
+        </button>
+        <button className="sm" disabled={a.busy} onClick={() => go("replace")}>
+          기존 것 휴지통 후 이동
+        </button>
+      </span>
+    </div>
+  );
+}
+
 function Source({ p }: { p: PendingItem }) {
   const w = watchOf(p.dir, useWatchNames());
   return <PathText path={p.dir} alias={w?.alias} root={w?.path} className="sub-path" />;
@@ -153,6 +181,7 @@ export function PendingRow({
         )}
         {p.suggestedName && <span className="reason">새 이름: {p.suggestedName}</span>}
         {p.encrypt && <span className="tag lock">🔒 암호화해서 보관</span>}
+        <DuplicateNotice p={p} a={a} />
       </div>
       <div className="cell" style={{ gap: 4 }}>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, flexWrap: "wrap" }}>
@@ -162,13 +191,15 @@ export function PendingRow({
         <span className="muted small">{shortTime(p.createdAt)}</span>
       </div>
       <div className="cell right">
-        <button
-          className="primary"
-          disabled={a.busy || !p.suggestedDest}
-          onClick={() => void a.resolve(p.id, { kind: "move", destDir: null })}
-        >
-          {p.encrypt ? "암호화 이동" : "이동"}
-        </button>
+        {!p.duplicateOf && (
+          <button
+            className="primary"
+            disabled={a.busy || !p.suggestedDest}
+            onClick={() => void a.resolve(p.id, { kind: "move", destDir: null })}
+          >
+            {p.encrypt ? "암호화 이동" : "이동"}
+          </button>
+        )}
         <MoreMenu label="다른 선택" items={menu} />
       </div>
     </div>
@@ -256,16 +287,19 @@ export function PendingCard({
         )}
         {p.suggestedName && <div className="reason">새 이름 제안: {p.suggestedName}</div>}
         {!p.exists && <div className="warn small">파일이 더 이상 없습니다.</div>}
+        <DuplicateNotice p={p} a={a} />
         {renaming && <Rename p={p} a={a} onDone={() => setRenaming(false)} />}
       </div>
       <div className={flush ? "ic-actions flush" : "ic-actions"}>
-        <button
-          className="primary"
-          disabled={a.busy || !p.suggestedDest}
-          onClick={() => void a.resolve(p.id, { kind: "move", destDir: null })}
-        >
-          {p.encrypt ? "암호화해서 이동" : "이동"}
-        </button>
+        {!p.duplicateOf && (
+          <button
+            className="primary"
+            disabled={a.busy || !p.suggestedDest}
+            onClick={() => void a.resolve(p.id, { kind: "move", destDir: null })}
+          >
+            {p.encrypt ? "암호화해서 이동" : "이동"}
+          </button>
+        )}
         <button disabled={a.busy} onClick={() => void elsewhere()}>
           다른 곳…
         </button>

@@ -188,6 +188,14 @@ export function RestructurePanel() {
                 이 정리 되돌리기
               </button>
               {r.applied.skipped.length > 0 && <div className="small">건너뜀 {r.applied.skipped.length}개</div>}
+              {(r.applied.duplicates ?? []).map((d) => (
+                <div key={d.path} className="small" data-testid="applied-duplicate">
+                  {d.path.split(/[\\/]/).pop()}: {d.message}{" "}
+                  <button className="link small" onClick={() => void ipc.revealPath(d.existing)}>
+                    기존 파일 열기
+                  </button>
+                </div>
+              ))}
               {r.applied.errors.length > 0 && <div className="small error">{r.applied.errors.join("; ")}</div>}
             </div>
           )}
