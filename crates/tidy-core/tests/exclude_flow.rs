@@ -101,6 +101,7 @@ fn exclude_round_trips_through_config_toml() {
         start_on_login: false,
         onboarded: None,
         check_updates: true,
+        keep_shortcuts: true,
         duplicate_policy: None,
     };
     write_settings(&path, &patch).unwrap();
@@ -129,4 +130,25 @@ fn exclude_round_trips_through_config_toml() {
         "{:?}",
         c3.warnings()
     );
+}
+
+/// `[general] keep_shortcuts` (default on): launcher files stay put; off
+/// → they are ordinary files again.
+#[test]
+fn shortcuts_stay_put_by_default() {
+    let (_tmp, desk, mut cfg) = setup();
+    for n in ["회사 포털.url", "한글.lnk", "메모.webloc"] {
+        fs::write(desk.join(n), "x").unwrap();
+    }
+    let on = cfg.ignore_filter().unwrap();
+    assert!(on.is_ignored(&desk.join("한글.lnk")));
+    assert!(on.is_ignored(&desk.join("회사 포털.url")));
+    assert!(!on.is_ignored(&desk.join("보고서.pdf")));
+    let found = existing_files(&cfg.watches[0], &on);
+    assert_eq!(found, vec![desk.join("보고서.pdf")], "{found:?}");
+
+    cfg.general.keep_shortcuts = false;
+    let off = cfg.ignore_filter().unwrap();
+    assert!(!off.is_ignored(&desk.join("한글.lnk")));
+    assert_eq!(existing_files(&cfg.watches[0], &off).len(), 4);
 }

@@ -189,6 +189,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
         rulesText: d.rulesText,
         startOnLogin: d.autostart.wanted,
         checkUpdates: d.checkUpdates,
+        keepShortcuts: d.keepShortcuts,
         duplicatePolicy: d.duplicatePolicy,
       });
       await get().load();
