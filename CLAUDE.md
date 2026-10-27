@@ -60,6 +60,7 @@ cargo run -p tidy-cli -- rules check [rules.toml] [--each]   # 규칙별 지금 
 cargo run -p tidy-cli -- rules starters [--toml documents,archives]   # 마법사 시작 규칙 목록 / TOML로 출력
 cargo run -p tidy-cli -- report [폴더] [--format text|json|html] [--scan-depth N]
 cargo run -p tidy-cli -- restructure [폴더] --rules|--ai  → --apply ID [--only 1,3]   # 승인 전엔 아무것도 안 옮김
+cargo run -p tidy-cli -- dedupe [폴더] [--apply [--only 1,3]]   # 내용이 같은 파일 그룹(정리 위치 사본 포함·기본 남김) → 승인 후 휴지통(M14)
 cargo run -p tidy-cli -- log --batches / undo --batch <id>
 cargo run -p tidy-cli -- recover [--grace-secs 0]        # 중단된 이동(복사 도중 종료·NAS 끊김) 정리
 cargo run -p tidy-cli -- pii scan <폴더> [--all] [--format json]   # 개인정보 의심 파일 (읽기만)
@@ -68,7 +69,7 @@ cargo run -p tidy-cli -- context list / add <이름> [--alias A,B | --issue | --
 cargo run -p tidy-cli -- curate scan [폴더] [--dry-run]  → curate apply <plan-id> [--only 1,3]   # 업무 맥락 정리(AI, 승인 전 무이동). 하위 폴더는 통째로 한 항목(M12)
 cd apps/desktop && npm ci && npm run tauri dev   # 클라우드: npm run build + (src-tauri) cargo clippy 까지만
 cd apps/desktop && npx tauri build [--bundles deb,appimage]   # 설치 패키지 (docs/packaging.md), 태그 v*는 release.yml
-S=/tmp/tidy-e2e bash apps/desktop/e2e/run-headless.sh m13    # 헤드리스 GUI e2e (m3~m13, 공통 도우미 e2e/lib.mjs, 가짜 OpenAI 호환 서버 e2e/fake-embed.mjs, 느린 가짜 LLM e2e/fake-llm.mjs)
+S=/tmp/tidy-e2e bash apps/desktop/e2e/run-headless.sh m14    # 헤드리스 GUI e2e (m3~m14, m14는 휴지통 = $T/휴지통 폴더(TIDY_E2E_TRASH), 공통 도우미 e2e/lib.mjs, 가짜 OpenAI 호환 서버 e2e/fake-embed.mjs, 느린 가짜 LLM e2e/fake-llm.mjs)
 node apps/desktop/e2e/fake-llm.mjs 18095   # 느린·긴 가짜 Anthropic/OpenAI 호환 (파일당 1초, FAKE_MAX_TOKENS로 max_tokens 잘림 재현)
 ```
 
@@ -88,6 +89,7 @@ node apps/desktop/e2e/fake-llm.mjs 18095   # 느린·긴 가짜 Anthropic/OpenAI
 - [x] M12 폴더 단위 업무 맥락 정리 + 경로 맥락 + 고객사별 찾기 (2026-10-23, 0.5.0) — 하위 폴더 = 한 항목(FolderUnit 요약·캐시 키, `{folder}`, Mover::move_dir 한 배치·빈 폴더 정리·undo), AI에 상대 경로(맨 위 폴더 = 고객사 단서), 감시 중 맥락 정리는 최상위 파일만·폴더는 미리보기 승인만, folder_settle_secs, 파일별로 나누기·날짜 수정, 홈 "새 폴더 N개"·고객사별 보기, 검색 고객사 필터, 팝업 "대기열에 두기". 실제 AI의 폴더 판단 품질·실제 NAS 폴더 이동·창 확인은 로컬에서
 
 - [x] M13 화면 개편 (2026-10-26, 0.6.0) — 감시 폴더 별칭(`[[watch]] alias`)·PathText(가운데 줄임·전체 경로 title·클릭 열기), 홈 폴더 카드 4열+오늘 한 일(move_log `today_moves`)+고객사별, 확인 대기 5열 표↔900px 미만 카드·⋯ 메뉴 5개(팝업 같은 카드), 설정 왼쪽 메뉴 6쪽 `#/main/settings/<key>`(좁으면 가로 탭)·공통 정리 위치·폴더 편집 패널·규칙 한 줄 아코디언, 최소 창 960×640, 색 토큰, e2e `lib.mjs`+m13. 실제 창 크기·DPI·한글 글꼴·트레이·탐색기 열기는 로컬에서
+- [x] M14 중복 파일 처리 + 한글 본문 검색 (2026-10-27, 0.7.0) — `[mover] duplicate_policy` 설정 카드(건너뜀·번호·휴지통, 이름만 같으면 언제나 번호), 건너뜀 사유 "똑같은 파일이 이미 …에 있어 그대로 둠"+기존 파일 열기, 확인 대기·팝업 미리 알림+세 버튼(`on_duplicate`), 리포트 중복 그룹(정리 위치 사본 포함·하드링크 제외·기본 남김)→미리보기→휴지통(`Mover::trash_duplicates`, move_log `op = trash`, undo는 휴지통 복원 안내, `TrashBackend`), `tidy dedupe`, hwp(cfb+deflate+PARA_TEXT, 암호=메타만, PrvText 폴백)·hwpx 추출기. 실제 Windows 휴지통·실제 한글 문서 여러 종은 로컬에서
 - [x] 0.2.x 핫픽스 (2026-10-22~23) — 규칙 카드 정렬(#12), AI 응답 잘림 분할 재시도(#13), HTTP 타임아웃 상한(#14), 감시 폴더 제외 폴더(SPEC §14.5)
 
 ## 열린 결정
@@ -95,4 +97,4 @@ SPEC §13 참조. 결정되면 여기와 SPEC 양쪽 갱신.
 - 한국어 FTS 토크나이저 → **결정(M2)**: trigram 주 + unicode61 보조(1~2글자 prefix). `docs/fts-tokenizer.md`.
 - sqlite-vec vs brute-force → **결정(M7)**: BLOB + 메모리 int8 brute-force(10만×768 질의 ~25ms). 50만 파일 넘으면 재검토.
 - Linux 키 저장소 → **결정(M7)**: Secret Service, 없으면 keyutils 폴백.
-- `.hwp` 본문 추출 → 2차 항목(SPEC §13).
+- `.hwp` 본문 추출 → **결정(M14)**: `cfb` + raw deflate + 레코드 파서 자체 구현(HWPTAG_PARA_TEXT), `.hwpx`는 ZIP+XML. SPEC §13·§14.9.
