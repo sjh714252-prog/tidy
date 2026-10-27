@@ -51,7 +51,7 @@ export function curateAnswer(user) {
         ? '가람정보'
         : /하늘|SKY/i.test(name)
           ? '하늘통신'
-          : /Ocean/i.test(name)
+          : /River/i.test(name)
             ? 'RiverInfo'
             : null;
     const issue = /과금/.test(name)
