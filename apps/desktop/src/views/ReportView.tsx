@@ -3,6 +3,7 @@ import * as ipc from "../ipc/commands";
 import { useReport } from "../store/report";
 import { formatSize, formatTime } from "../components/format";
 import { RestructurePanel } from "../components/RestructurePanel";
+import { DuplicateGroups } from "../components/DuplicateGroups";
 import { shortenTo, watchOf } from "../components/paths";
 import { useWatchNames } from "../store/status";
 
@@ -137,32 +138,12 @@ export function ReportView() {
           </div>
 
           <h3>중복 파일 ({rep.duplicates.length}그룹)</h3>
-          {rep.duplicates.length === 0 ? (
-            <p className="muted">{r.dups ? "없음" : "중복 찾기가 꺼져 있습니다"}</p>
+          {r.dups || rep.duplicates.length > 0 ? (
+            <DuplicateGroups groups={rep.duplicates} onApplied={() => void r.build()} />
           ) : (
-            <table className="grid">
-              <tbody>
-                {rep.duplicates.map((g) => (
-                  <tr key={g.hash}>
-                    <td>
-                      {g.paths.map((p) => (
-                        <div key={p}>
-                          <button className="link" onClick={() => void ipc.revealPath(join(p))}>
-                            {p}
-                          </button>
-                        </div>
-                      ))}
-                    </td>
-                    <td className="num">
-                      {formatSize(g.size)} × {g.paths.length}
-                    </td>
-                    <td className="num">낭비 {formatSize(g.wasted)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <p className="muted">중복 찾기가 꺼져 있습니다</p>
           )}
-          <p className="muted small">삭제 기능은 없습니다. 필요하면 폴더를 열어 직접 휴지통으로 보내세요.</p>
+          <p className="muted small">내용이 같은 파일을 이름과 상관없이 묶습니다. 정리 위치에 이미 있는 사본도 함께 보여 줍니다. 지우지 않고 휴지통으로만 보냅니다.</p>
 
           <h3>오래 안 쓴 파일</h3>
           {rep.stats.stale.length === 0 ? (

@@ -200,12 +200,17 @@ export interface PendingItem {
   encrypt: boolean;
   /** (M9) "주민번호 2 · 이름+휴대전화 15". */
   pii: string | null;
+  /** (M14) An identical file already has this name in the suggested folder. */
+  duplicateOf: string | null;
 }
+
+/** (M14) `[mover] duplicate_policy`. */
+export type DuplicatePolicy = "skip" | "rename" | "replace";
 
 /** Confirm popup actions (SPEC §5.3). */
 export type Decision =
-  // destDir null = suggested folder; newName = "이름 바꿔 이동"
-  | { kind: "move"; destDir: string | null; newName?: string | null }
+  // destDir null = suggested folder; newName = "이름 바꿔 이동"; onDuplicate = answer to "똑같은 파일이 이미 있습니다"
+  | { kind: "move"; destDir: string | null; newName?: string | null; onDuplicate?: DuplicatePolicy | null }
   | { kind: "skip" }
   | { kind: "ignore" };
 
@@ -214,6 +219,8 @@ export interface Resolution {
   path: string;
   dst: string | null;
   batchId: string | null;
+  /** (M14) "똑같은 파일이 이미 …에 있어 그대로 둠". */
+  message?: string | null;
 }
 
 /** serde `Result<T, String>`: `{ Ok: T }` or `{ Err: string }`. */
@@ -223,6 +230,8 @@ export interface UndoResult {
   /** [from, to] pairs. */
   restored: [string, string][];
   conflicts: string[];
+  /** (M14) Files in the trash that undo cannot bring back ("휴지통 열기"). */
+  inTrash: string[];
 }
 
 export interface WatchFolder {
@@ -264,6 +273,8 @@ export interface Settings {
   autostart: Autostart;
   /** (M11) `[general] check_updates`. */
   checkUpdates: boolean;
+  /** (M14) `[mover] duplicate_policy`. */
+  duplicatePolicy: DuplicatePolicy;
 }
 
 export interface SaveSettingsArgs {
@@ -274,6 +285,8 @@ export interface SaveSettingsArgs {
   rulesText: string;
   startOnLogin: boolean;
   checkUpdates: boolean;
+  /** (M14) Absent = unchanged. */
+  duplicatePolicy?: DuplicatePolicy;
 }
 
 export interface RulesCheck {
@@ -298,6 +311,8 @@ export interface Activity {
   detail: string;
   /** Unix seconds. */
   at: number;
+  /** (M14) duplicate: the identical file already there. */
+  existing?: string;
 }
 
 export type MainTab = "activity" | "pending" | "report" | "history" | "settings";
@@ -494,7 +509,26 @@ export interface Stats {
   stale_files: number;
   stale: StaleFile[];
 }
-export interface DupGroup { hash: string; size: number; paths: string[]; wasted: number }
+/** (M14) One copy in a duplicate group (core JSON, snake_case). */
+export interface DupFile {
+  path: string;
+  /** Relative to the report root; null = outside it (정리 위치). */
+  rel: string | null;
+  modified: number | null;
+  in_organize_root: boolean;
+}
+export interface DupGroup {
+  hash: string;
+  size: number;
+  paths: string[];
+  wasted: number;
+  files: DupFile[];
+  /** Index in `files` kept by default. */
+  keep: number;
+}
+/** (M14) `trash_duplicates` input / result. */
+export interface DupTrash { hash: string; keep: string; trash: string[] }
+export interface TrashResult { batchId: string; trashed: number; bytes: number; failed: string[] }
 
 export interface Report {
   root: string;
@@ -566,7 +600,8 @@ export interface Preview {
   emptied: string[];
 }
 export interface PlanResult { plan: Plan; preview: Preview }
-export interface ApplyResult { batchId: string; moved: number; skipped: string[]; errors: string[] }
+export interface DupSkip { path: string; existing: string; message: string }
+export interface ApplyResult { batchId: string; moved: number; skipped: string[]; duplicates: DupSkip[]; errors: string[] }
 export interface StoredPlan {
   id: number;
   root: string;
@@ -585,6 +620,8 @@ export interface BatchSummary {
   decided_by: "rule" | "ai" | "user" | "restructure";
   label: string | null;
   example: string;
+  /** (M14) Rows that sent a duplicate to the trash. */
+  trashed: number;
 }
 export interface MoveLogEntry {
   id: number;
@@ -598,6 +635,8 @@ export interface MoveLogEntry {
   undone_at: number | null;
   /** (M6) Logged but the transfer has not finished (long NAS copy, or interrupted). */
   in_progress: boolean;
+  /** move | encrypt | trash (M14: src_path went to the trash, dst_path = the copy kept). */
+  op?: "move" | "encrypt" | "trash";
 }
 
 /** Progress of a long copy-verify move to/from a NAS (core snake_case). */

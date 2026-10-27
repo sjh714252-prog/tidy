@@ -9,6 +9,8 @@ interface PendingState {
   busy: boolean;
   error: string | null;
   lastResult: string | null;
+  /** (M14) The identical file a "그대로 둠" result refers to ("기존 파일 열기"). */
+  lastExisting: string | null;
   refresh: () => Promise<void>;
   toggle: (id: number) => void;
   toggleAll: () => void;
@@ -22,7 +24,7 @@ export function describe(r: Resolution): string {
     case "moved":
       return `이동함 → ${r.dst}`;
     case "duplicate":
-      return `같은 파일이 이미 있어 그대로 둠 (${r.dst})`;
+      return r.message ?? `똑같은 파일이 이미 있어 그대로 둠 (${r.dst})`;
     case "already_in_place":
       return "이미 그 폴더에 있음";
     case "skipped":
@@ -40,6 +42,7 @@ export const usePending = create<PendingState>((set, get) => ({
   busy: false,
   error: null,
   lastResult: null,
+  lastExisting: null,
   refresh: async () => {
     try {
       const items = await ipc.listPending();
@@ -64,10 +67,10 @@ export const usePending = create<PendingState>((set, get) => ({
     set({ busy: true, error: null });
     try {
       const r = await ipc.resolvePending(id, d);
-      set({ lastResult: describe(r) });
+      set({ lastResult: describe(r), lastExisting: r.kind === "duplicate" ? r.dst : null });
       return r;
     } catch (e) {
-      set({ error: String(e).replace(/^Error:\s*/, ""), lastResult: null });
+      set({ error: String(e).replace(/^Error:\s*/, ""), lastResult: null, lastExisting: null });
       return null;
     } finally {
       set({ busy: false });
@@ -91,6 +94,7 @@ export const usePending = create<PendingState>((set, get) => ({
       busy: false,
       checked: new Set(),
       lastResult: `${ok}건 처리${failed.length ? `, ${failed.length}건 실패` : ""}`,
+      lastExisting: null,
       error: failed[0] ?? null,
     });
     await get().refresh();

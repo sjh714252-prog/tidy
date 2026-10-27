@@ -186,6 +186,8 @@ pub fn run() {
             report_cmds::count_moves_since,
             report_cmds::undo_since,
             report_cmds::today_moves,
+            report_cmds::trash_duplicates,
+            report_cmds::open_trash,
             overview::watch_overview,
             about::about_info,
             about::open_url,

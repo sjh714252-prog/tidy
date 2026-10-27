@@ -12,6 +12,8 @@ export function HistoryView() {
   const [open, setOpen] = useState<string | null>(null);
   const [moves, setMoves] = useState<MoveLogEntry[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
+  /** (M14) Undo met files in the trash: offer "휴지통 열기". */
+  const [inTrash, setInTrash] = useState(0);
 
   const refresh = () => void ipc.listBatches(200).then(setBatches).catch((e) => setMsg(String(e)));
   useEffect(refresh, []);
@@ -31,6 +33,7 @@ export function HistoryView() {
     if (!window.confirm(`최근 ${bulkHours}시간 동안 규칙·AI가 자동으로 옮긴 ${bulkCount}개를 전부 원래 자리로 되돌릴까요? (직접 확인해서 옮긴 것은 그대로 둡니다)`)) return;
     try {
       const r = await ipc.undoSince(bulkHours * 3600, true);
+      setInTrash(0);
       setMsg(`${r.restored.length}개 되돌림` + (r.conflicts.length ? ` · 충돌 ${r.conflicts.length}개: ${r.conflicts.slice(0, 3).join("; ")}` : ""));
       refresh();
     } catch (e) {
@@ -39,11 +42,19 @@ export function HistoryView() {
   };
 
   const undo = async (b: BatchSummary) => {
-    if (!window.confirm(`${BY[b.decided_by] ?? b.decided_by} 이동 ${b.moves - b.undone}개를 원래 자리로 되돌릴까요?`)) return;
+    const trashOnly = b.trashed > 0 && b.trashed === b.moves;
+    const q = trashOnly
+      ? `휴지통으로 보낸 ${b.moves - b.undone}개는 Tidy가 되살릴 수 없습니다. 휴지통에서 복원했는지 확인할까요?`
+      : `${BY[b.decided_by] ?? b.decided_by} 이동 ${b.moves - b.undone}개를 원래 자리로 되돌릴까요?`;
+    if (!window.confirm(q)) return;
     try {
       const r = await ipc.undoBatch(b.batch_id);
+      const other = r.conflicts.length - r.inTrash.length;
+      setInTrash(r.inTrash.length);
       setMsg(
-        `${r.restored.length}개 되돌림` + (r.conflicts.length ? ` · 충돌 ${r.conflicts.length}개: ${r.conflicts.join("; ")}` : ""),
+        `${r.restored.length}개 되돌림` +
+          (r.inTrash.length ? ` · 휴지통에 있는 파일 ${r.inTrash.length}개 — 휴지통에서 복원하세요` : "") +
+          (other > 0 ? ` · 충돌 ${other}개: ${r.conflicts.filter((c) => !r.inTrash.some((t) => c.startsWith(t))).join("; ")}` : ""),
       );
       refresh();
       if (open === b.batch_id) setMoves(await ipc.batchMoves(b.batch_id));
@@ -79,7 +90,16 @@ export function HistoryView() {
           새로고침
         </button>
       </div>
-      {msg && <div className="notice">{msg}</div>}
+      {msg && (
+        <div className="notice" data-testid="history-msg">
+          {msg}
+          {inTrash > 0 && (
+            <button className="link" style={{ marginLeft: 8 }} onClick={() => void ipc.openTrash()}>
+              휴지통 열기
+            </button>
+          )}
+        </div>
+      )}
       {batches.length === 0 ? (
         <p className="muted">아직 이동 기록이 없습니다.</p>
       ) : (
@@ -90,7 +110,7 @@ export function HistoryView() {
                 <span className="muted small hide-narrow">{formatTime(b.last_at)}</span>
                 <span className="hide-narrow">
                   <span className="tag" style={{ marginLeft: 0 }}>
-                    {BY[b.decided_by] ?? b.decided_by}
+                    {b.trashed > 0 && b.trashed === b.moves ? "중복 정리(휴지통)" : (BY[b.decided_by] ?? b.decided_by)}
                   </span>
                 </span>
                 <span className="small hide-narrow">
@@ -109,12 +129,20 @@ export function HistoryView() {
               </div>
               {open === b.batch_id && (
                 <ul className="history-files">
-                  {moves.map((m) => (
-                    <li key={m.id} className={m.undone_at ? "muted" : ""}>
-                      <span className="mono">{m.src_path}</span> → <span className="mono">{m.dst_path}</span>
-                      {m.undone_at ? " (되돌림)" : m.in_progress ? " (진행 중 / 중단됨)" : ""}
-                    </li>
-                  ))}
+                  {moves.map((m) =>
+                    m.op === "trash" ? (
+                      <li key={m.id} className={m.undone_at ? "muted" : ""} data-testid="trash-row">
+                        🗑 <span className="mono">{m.src_path}</span> → 휴지통{" "}
+                        <span className="muted">(남긴 사본: <span className="mono">{m.dst_path}</span>)</span>
+                        {m.undone_at ? " (복원됨)" : ""}
+                      </li>
+                    ) : (
+                      <li key={m.id} className={m.undone_at ? "muted" : ""}>
+                        <span className="mono">{m.src_path}</span> → <span className="mono">{m.dst_path}</span>
+                        {m.undone_at ? " (되돌림)" : m.in_progress ? " (진행 중 / 중단됨)" : ""}
+                      </li>
+                    ),
+                  )}
                 </ul>
               )}
             </Fragment>

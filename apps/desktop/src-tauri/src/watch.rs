@@ -50,6 +50,10 @@ pub struct Activity {
     pub path: String,
     pub detail: String,
     pub at: i64,
+    /// (M14) `duplicate`: the identical file already at the destination
+    /// ("기존 파일 열기").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub existing: Option<String>,
 }
 
 fn now() -> i64 {
@@ -71,6 +75,21 @@ pub fn emit_activity(app: &AppHandle, kind: &'static str, path: &Path, detail: S
             path: path.display().to_string(),
             detail,
             at: now(),
+            existing: None,
+        },
+    );
+}
+
+/// (M14) "똑같은 파일이 이미 …에 있어 그대로 둠" with the existing file.
+pub fn emit_duplicate(app: &AppHandle, path: &Path, existing: &Path) {
+    let _ = app.emit(
+        EV_ACTIVITY,
+        Activity {
+            kind: "duplicate",
+            path: path.display().to_string(),
+            detail: tidy_core::mover::duplicate_message(existing),
+            at: now(),
+            existing: Some(existing.display().to_string()),
         },
     );
 }
@@ -344,12 +363,7 @@ fn on_event(app: &AppHandle, ev: WatchEvent<'_>) {
                 path,
                 format!("맞는 규칙 없음 · AI 실패: {error}"),
             ),
-            Ok(Action::Duplicate { existing, .. }) => emit_activity(
-                app,
-                "duplicate",
-                path,
-                format!("동일한 파일이 이미 있음: {}", existing.display()),
-            ),
+            Ok(Action::Duplicate { existing, .. }) => emit_duplicate(app, path, existing),
             Ok(Action::NoRule(_)) => emit_activity(app, "no_rule", path, "맞는 규칙 없음".into()),
             Ok(Action::Skipped { reason, .. }) => {
                 emit_activity(app, "skipped", path, (*reason).to_string())

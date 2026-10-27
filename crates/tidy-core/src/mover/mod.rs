@@ -271,7 +271,7 @@ impl Mover {
             expected: ExpectedMoves::new(),
             transfer: TransferOpts::default(),
             vault: VaultSource::Keychain,
-            trash: Arc::new(OsTrash),
+            trash: trash::default_backend(),
         }
     }
 
@@ -414,6 +414,21 @@ impl Mover {
             dst,
         })
     }
+}
+
+/// (M14) Why a file stayed: "똑같은 파일이 이미 D:\정리\문서\에 있어 그대로 둠".
+pub fn duplicate_message(existing: &Path) -> String {
+    let dir = existing
+        .parent()
+        .map(|d| {
+            let mut s = d.display().to_string();
+            if !s.ends_with(['/', '\\']) {
+                s.push(std::path::MAIN_SEPARATOR);
+            }
+            s
+        })
+        .unwrap_or_default();
+    format!("똑같은 파일이 이미 {dir}에 있어 그대로 둠")
 }
 
 /// Validate a user/AI-supplied new name; keep the original extension when
