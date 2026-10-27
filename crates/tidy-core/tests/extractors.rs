@@ -62,3 +62,37 @@ fn binary_and_missing_files_fail_softly() {
     // Unsupported type: None, never an error.
     assert!(x.extract(&dir.path().join("a.exe")).is_none());
 }
+
+/// (M14) Regenerate the hwp/hwpx fixtures (minimal structures built in
+/// code, SPEC §14.9 3): `cargo test -p tidy-core --test extractors
+/// make_hwp_fixtures -- --ignored`.
+#[test]
+#[ignore]
+fn make_hwp_fixtures() {
+    use tidy_core::index::hwp_testgen::{hwp_bytes, hwpx_bytes, COMPRESSED};
+    let dir = fixtures();
+    fs::write(
+        dir.join("한글 문서.hwp"),
+        hwp_bytes(
+            &[
+                "2026년 정기 점검 보고서",
+                "Tidy HWP sample 문서 번호 A-1024",
+                "점검 결과 표:\u{b}",
+                "항목",
+                "서버 상태 정상",
+                "응답 시간 35ms",
+            ],
+            COMPRESSED,
+            Some("2026년 정기 점검 보고서"),
+        ),
+    )
+    .unwrap();
+    fs::write(
+        dir.join("한글 문서.hwpx"),
+        hwpx_bytes(
+            &["2026년 하반기 사업 계획", "HWPX sample 예산 4,500만 원"],
+            &["담당 부서", "정보보호팀", "기한 12월 31일"],
+        ),
+    )
+    .unwrap();
+}

@@ -63,3 +63,24 @@ fn names_with_emails_in_a_document() {
 fn files_without_text_cannot_be_judged() {
     assert_eq!(judge("회의 사진.png").status, PiiStatus::Unknown);
 }
+
+/// (M14) hwp/hwpx bodies are read by the same extractors, so the detector
+/// sees them too (SPEC §14.9 3).
+#[test]
+fn hwp_and_hwpx_bodies_are_checked() {
+    use tidy_core::index::hwp_testgen::{hwp_bytes, hwpx_bytes, COMPRESSED};
+    let body = std::fs::read_to_string(fixture("주민번호_양성.txt")).unwrap();
+    let lines: Vec<&str> = body.lines().collect();
+    let tmp = tempfile::tempdir().unwrap();
+    let hwp = tmp.path().join("명단.hwp");
+    std::fs::write(&hwp, hwp_bytes(&lines, COMPRESSED, None)).unwrap();
+    let hwpx = tmp.path().join("명단.hwpx");
+    std::fs::write(&hwpx, hwpx_bytes(&lines, &[])).unwrap();
+    for p in [&hwp, &hwpx] {
+        let f = Detector::new(&PiiCfg::default())
+            .unwrap()
+            .judge_path(p, 1 << 30, 1_000_000);
+        assert!(f.is_pii(), "{}: {f:?}", p.display());
+        assert_eq!(f.counts.rrn, 3, "{}", p.display());
+    }
+}
