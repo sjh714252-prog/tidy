@@ -201,12 +201,36 @@ pub struct AiPatch {
     /// removes it (search stays FTS-only).
     #[serde(default)]
     pub embed: Option<ProviderConfig>,
+    /// Remembered settings per classify provider (`[ai.profiles.<p>.saved]`).
+    /// The current `classify` is added to it on write.
+    #[serde(default)]
+    pub saved: std::collections::BTreeMap<String, ProviderConfig>,
+    /// Remembered settings per embedding provider (`embed_saved`).
+    #[serde(default)]
+    pub embed_saved: std::collections::BTreeMap<String, ProviderConfig>,
+}
+
+/// One provider entry as a TOML inline table (empty fields left out).
+fn provider_inline(pc: &ProviderConfig) -> toml_edit::InlineTable {
+    let mut t = toml_edit::InlineTable::new();
+    t.insert("provider", pc.provider.as_str().into());
+    t.insert("model", pc.model.as_str().into());
+    if let Some(k) = pc.key_ref.as_deref().filter(|k| !k.is_empty()) {
+        t.insert("key_ref", k.into());
+    }
+    if let Some(u) = pc.base_url.as_deref().filter(|u| !u.is_empty()) {
+        t.insert("base_url", u.into());
+    }
+    if let Some(e) = pc.effort.as_deref().filter(|e| !e.is_empty()) {
+        t.insert("effort", e.into());
+    }
+    t
 }
 
 /// Apply `patch` to `[ai]` / `[ai.profiles.<active>]` of the config at
 /// `path`, keeping everything else (other profiles, comments) as is.
 pub fn write_ai_settings(path: &Path, patch: &AiPatch) -> Result<(), ConfigError> {
-    use toml_edit::{value, DocumentMut, InlineTable, Item, Table};
+    use toml_edit::{value, DocumentMut, Item, Table};
 
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
@@ -248,24 +272,33 @@ pub fn write_ai_settings(path: &Path, patch: &AiPatch) -> Result<(), ConfigError
     for (key, pc) in [("classify", &patch.classify), ("embed", &patch.embed)] {
         match pc {
             Some(pc) => {
-                let mut t = InlineTable::new();
-                t.insert("provider", pc.provider.as_str().into());
-                t.insert("model", pc.model.as_str().into());
-                if let Some(k) = pc.key_ref.as_deref().filter(|k| !k.is_empty()) {
-                    t.insert("key_ref", k.into());
-                }
-                if let Some(u) = pc.base_url.as_deref().filter(|u| !u.is_empty()) {
-                    t.insert("base_url", u.into());
-                }
-                if let Some(e) = pc.effort.as_deref().filter(|e| !e.is_empty()) {
-                    t.insert("effort", e.into());
-                }
-                profile.insert(key, value(t));
+                profile.insert(key, value(provider_inline(pc)));
             }
             None => {
                 profile.remove(key);
             }
         }
+    }
+    for (key, saved, current) in [
+        ("saved", &patch.saved, &patch.classify),
+        ("embed_saved", &patch.embed_saved, &patch.embed),
+    ] {
+        let mut all = saved.clone();
+        if let Some(pc) = current {
+            all.insert(pc.provider.as_str().to_string(), pc.clone());
+        }
+        if all.is_empty() {
+            profile.remove(key);
+            continue;
+        }
+        let mut t = Table::new();
+        for (name, pc) in &all {
+            // The map key is the provider; a mismatching entry is skipped.
+            if pc.provider.as_str() == name {
+                t.insert(name, value(provider_inline(pc)));
+            }
+        }
+        profile.insert(key, Item::Table(t));
     }
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
@@ -536,6 +569,14 @@ pub struct AiProfile {
     /// ollama; Anthropic has no embeddings API.
     pub embed: Option<ProviderConfig>,
     pub send_content: Option<bool>,
+    /// Settings last used with each classify provider, keyed by
+    /// `ProviderKind::as_str()`, so switching back to a provider in the
+    /// settings screen restores its model / key name / address.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub saved: std::collections::BTreeMap<String, ProviderConfig>,
+    /// Same for the embedding model (semantic search).
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub embed_saved: std::collections::BTreeMap<String, ProviderConfig>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1617,6 +1658,18 @@ send_content = false
                     base_url: Some("http://localhost:11434".into()),
                     effort: None,
                 }),
+                saved: [(
+                    "openai".to_string(),
+                    ProviderConfig {
+                        provider: ProviderKind::Openai,
+                        model: "gpt-5-mini".into(),
+                        key_ref: Some("tidy/openai".into()),
+                        base_url: Some("https://api.openai.com/v1".into()),
+                        effort: None,
+                    },
+                )]
+                .into(),
+                embed_saved: Default::default(),
             },
         )
         .unwrap();
@@ -1632,6 +1685,40 @@ send_content = false
         let embed = c.ai.active().unwrap().embed.as_ref().unwrap();
         assert_eq!(embed.model, "nomic-embed-text");
         assert_eq!(c.ai.profiles["work"].send_content, Some(false));
+        // Remembered per provider: the given one plus the current classify.
+        let home = c.ai.active().unwrap();
+        assert_eq!(home.saved["openai"].model, "gpt-5-mini");
+        assert_eq!(home.saved["anthropic"].model, "claude-haiku-5-5");
+        assert_eq!(home.embed_saved["ollama"].model, "nomic-embed-text");
+        assert!(c.ai.profiles["work"].saved.is_empty());
+
+        // Switching to OpenAI keeps the Anthropic settings for later.
+        let mut openai = home.saved["openai"].clone();
+        openai.model = "gpt-5".into();
+        write_ai_settings(
+            &path,
+            &AiPatch {
+                enabled: true,
+                active_profile: "home".into(),
+                auto_threshold: 0.85,
+                send_content: true,
+                classify: Some(openai),
+                embed: None,
+                saved: home.saved.clone(),
+                embed_saved: home.embed_saved.clone(),
+            },
+        )
+        .unwrap();
+        let c = Config::load(&path).unwrap();
+        let home = c.ai.active().unwrap();
+        assert_eq!(home.classify.as_ref().unwrap().model, "gpt-5");
+        assert_eq!(home.saved["openai"].model, "gpt-5");
+        assert_eq!(
+            home.saved["anthropic"].key_ref.as_deref(),
+            Some("tidy/anthropic")
+        );
+        assert!(home.embed.is_none());
+        assert_eq!(home.embed_saved["ollama"].model, "nomic-embed-text");
     }
 
     #[test]

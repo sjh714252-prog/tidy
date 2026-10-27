@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import * as ipc from "../ipc/commands";
 import type { AiProvider, AiSettings, SemanticStatus } from "../ipc/types";
-import { useAiSettings } from "../store/aiSettings";
+import { explainAiError, useAiSettings, type AiTestResult, type AiTestTarget } from "../store/aiSettings";
 import { Help } from "./Help";
 
 /**
@@ -25,6 +25,8 @@ export function AiSettingsSection() {
     setEmbedApiKey,
     deleteKey,
     test,
+    tests,
+    dirty,
   } = useAiSettings();
   const [sem, setSem] = useState<SemanticStatus | null>(null);
   const refreshSem = () => void ipc.semanticStatus().then(setSem, () => setSem(null));
@@ -35,6 +37,28 @@ export function AiSettingsSection() {
   }, [load]);
 
   if (!draft) return <p className="muted small">{error ?? "AI 설정 불러오는 중…"}</p>;
+  const unsaved = dirty();
+  const testRow = (which: AiTestTarget, label: string, disabled: boolean, why: string) => (
+    <div className="actions ai-test" data-testid={`ai-test-${which}`}>
+      <button
+        disabled={busy || tests[which].busy || disabled}
+        title={disabled ? why : unsaved ? "바꾼 설정을 먼저 저장한 뒤 테스트합니다" : ""}
+        onClick={() => void test(which)}
+      >
+        {unsaved ? `저장 후 ${label}` : label}
+      </button>
+      {tests[which].busy && <span className="muted small">확인 중…</span>}
+      {disabled && <span className="muted small">{why}</span>}
+      <TestResult r={tests[which]} />
+    </div>
+  );
+  const PROVIDER_LABEL: Record<string, string> = {
+    anthropic: "Anthropic (Claude)",
+    openai: "OpenAI 호환",
+    ollama: "Ollama (로컬)",
+  };
+  const savedMark = (p: string, current: string, saved: Record<string, unknown>) =>
+    p !== current && saved[p] ? " · 저장된 설정" : "";
   const needsKey = draft.provider === "anthropic" || (draft.provider === "openai" && !!draft.keyRef);
 
   return (
@@ -64,11 +88,15 @@ export function AiSettingsSection() {
         <span>제공자</span>
         <select value={draft.provider} onChange={(e) => setProvider(e.target.value as AiProvider)}>
           <option value="">(없음)</option>
-          <option value="anthropic">Anthropic (Claude)</option>
-          <option value="openai">OpenAI 호환</option>
-          <option value="ollama">Ollama (로컬)</option>
+          {(["anthropic", "openai", "ollama"] as const).map((p) => (
+            <option key={p} value={p}>
+              {PROVIDER_LABEL[p]}
+              {savedMark(p, draft.provider, draft.saved)}
+            </option>
+          ))}
         </select>
       </label>
+      <p className="muted small">제공자마다 설정(모델·키 이름·주소)을 따로 기억해, 바꿨다가 돌아오면 그대로 복원됩니다.</p>
       {draft.provider && (
         <>
           <label className="row">
@@ -146,6 +174,12 @@ export function AiSettingsSection() {
         <span>본문 앞부분(기본 1,500자)도 보내기 — 끄면 파일명·크기·날짜·폴더만 보냅니다</span>
         <Help id="sendContent" />
       </label>
+      {testRow(
+        "classify",
+        "AI 연결 테스트",
+        !draft.enabled || !draft.provider,
+        !draft.enabled ? "AI 사용을 켜야 테스트할 수 있습니다" : "제공자를 고르세요",
+      )}
       <h3>
         의미검색 모델 <Help id="embedding" />
       </h3>
@@ -161,8 +195,12 @@ export function AiSettingsSection() {
           onChange={(e) => setEmbedProvider(e.target.value as AiSettings["embedProvider"])}
         >
           <option value="">(사용 안 함)</option>
-          <option value="openai">OpenAI 호환</option>
-          <option value="ollama">Ollama (로컬)</option>
+          {(["openai", "ollama"] as const).map((p) => (
+            <option key={p} value={p}>
+              {PROVIDER_LABEL[p]}
+              {savedMark(p, draft.embedProvider, draft.embedSaved)}
+            </option>
+          ))}
         </select>
         {sem && (
           <span className={sem.state === "ready" ? "ok small" : sem.state === "unavailable" ? "warn small" : "muted small"}>
@@ -223,16 +261,33 @@ export function AiSettingsSection() {
           )}
         </>
       )}
+      {draft.embedProvider &&
+        testRow(
+          "embed",
+          "의미검색 연결 테스트",
+          !draft.enabled,
+          "AI 사용을 켜야 의미검색 모델도 동작합니다",
+        )}
       <p className="muted small">키 저장 위치: {draft.keyStore}</p>
       <div className="actions">
         <span className="muted small">아래 "저장"을 누르면 AI 설정도 함께 저장됩니다.</span>
-        <button disabled={busy || !draft.enabled || !draft.provider} onClick={() => void test()}>
-          연결 테스트
-        </button>
         {busy && <span className="muted small">처리 중…</span>}
       </div>
       {message && <p className="ok small">{message}</p>}
       {error && <p className="error small">{error}</p>}
+    </div>
+  );
+}
+
+/** One section's test outcome: what to do (if known) plus the raw message. */
+function TestResult({ r }: { r: AiTestResult }) {
+  if (r.busy || r.text === undefined) return null;
+  if (r.ok) return <p className="ok small ai-test-result">✓ {r.text}</p>;
+  const hint = explainAiError(r.text);
+  return (
+    <div className="ai-test-result">
+      <p className="error small">✗ 연결 실패{hint ? ` — ${hint}` : ""}</p>
+      <p className="muted small">{r.text}</p>
     </div>
   );
 }

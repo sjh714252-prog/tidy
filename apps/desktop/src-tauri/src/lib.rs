@@ -153,6 +153,8 @@ pub fn run() {
             commands::save_ai_settings,
             commands::delete_api_key,
             commands::test_ai,
+            commands::test_embed,
+            commands::api_key_stored,
             security_cmds::get_security_settings,
             security_cmds::save_security_settings,
             security_cmds::open_vault_file,

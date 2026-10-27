@@ -250,6 +250,8 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         .await?),
         "delete_api_key" => ok(commands::delete_api_key(app, arg(&args, "keyRef")?).await?),
         "test_ai" => ok(commands::test_ai(app).await?),
+        "test_embed" => ok(commands::test_embed(app).await?),
+        "api_key_stored" => ok(commands::api_key_stored(arg(&args, "keyRef")?).await?),
         "get_security_settings" => ok(security_cmds::get_security_settings(app).await?),
         "save_security_settings" => ok(security_cmds::save_security_settings(
             app,

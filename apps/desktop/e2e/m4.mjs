@@ -79,11 +79,24 @@ await sleep(1000);
   const persisted = await main.locator("label.row", { hasText: "AI 사용" }).locator("input[type=checkbox]").isChecked();
   const prov = await main.locator("[data-testid=ai-section]").locator("select").first().inputValue();
   ok("B", "#8 하단 저장 → 재진입 후 AI 설정 유지", persisted && prov === "ollama", `enabled=${persisted} provider=${prov}`);
-  await ai.getByRole("button", { name: "연결 테스트" }).click();
+  // Each section has its own test; the main AI one sits under the main settings.
+  const cls = ai.locator("[data-testid=ai-test-classify]");
+  await cls.getByRole("button", { name: "AI 연결 테스트" }).click();
   await sleep(6000);
-  const err2 = await ai.locator("p.error").innerText().catch(() => "");
-  const msg2 = await ai.locator("p.ok").innerText().catch(() => "");
-  ok("B", "연결 테스트 실패가 오류로 표시 (앱은 계속 동작)", err2.length > 0 || /실패|오류|연결/.test(msg2), `err=${err2.slice(0, 80)} msg=${msg2.slice(0, 80)}`);
+  const res = await cls.locator(".ai-test-result").innerText().catch(() => "");
+  ok("B", "AI 연결 테스트 실패가 이 섹션 아래 오류로 표시 (앱은 계속 동작)", /연결 실패/.test(res), res.slice(0, 120));
+  ok("B", "의미검색 모델이 없으면 의미검색 테스트 버튼 없음", (await ai.locator("[data-testid=ai-test-embed]").count()) === 0);
+  // Switching providers remembers each one's settings.
+  const sel = ai.locator("select").first();
+  await sel.selectOption("anthropic");
+  await sleep(300);
+  const model = await ai.locator("label.row", { hasText: "모델" }).locator("input").first().inputValue();
+  await sel.selectOption("ollama");
+  await sleep(300);
+  const back = await ai.locator("label.row", { hasText: "주소" }).locator("input").first().inputValue();
+  ok("B", "제공자 바꿨다 돌아오면 저장한 주소 복원", back === "http://127.0.0.1:9" && model.startsWith("claude"), `anthropic model=${model} ollama base=${back}`);
+  await main.locator("[data-testid=savebar]").getByRole("button", { name: "변경 취소" }).click().catch(() => {});
+  await sleep(300);
   await main.screenshot({ path: `${SHOT}/m4-B-ai-settings.png`, fullPage: true });
   const st = await bridge("get_status");
   // "ready" only means the provider was built from config; per-call failures
