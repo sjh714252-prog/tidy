@@ -1131,6 +1131,83 @@ pub struct AiSettingsDto {
     /// Where keys go on this machine (e.g. "Secret Service(GNOME 키링/KWallet)").
     #[serde(default)]
     pub key_store: String,
+    /// Remembered settings per classify provider ("anthropic" → …), so
+    /// switching the provider back restores them.
+    #[serde(default)]
+    pub saved: std::collections::BTreeMap<String, ProviderSlotDto>,
+    /// Same for the embedding provider.
+    #[serde(default)]
+    pub embed_saved: std::collections::BTreeMap<String, ProviderSlotDto>,
+}
+
+/// One remembered provider entry of the AI settings screen.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderSlotDto {
+    pub model: String,
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub key_ref: String,
+    #[serde(default)]
+    pub effort: String,
+    #[serde(default)]
+    pub key_stored: bool,
+}
+
+fn provider_kind(name: &str) -> Option<ProviderKind> {
+    match name {
+        "anthropic" => Some(ProviderKind::Anthropic),
+        "openai" => Some(ProviderKind::Openai),
+        "ollama" => Some(ProviderKind::Ollama),
+        _ => None,
+    }
+}
+
+fn slots(
+    saved: &std::collections::BTreeMap<String, ProviderConfig>,
+    current: Option<&ProviderConfig>,
+) -> std::collections::BTreeMap<String, ProviderSlotDto> {
+    saved
+        .values()
+        .chain(current)
+        .map(|pc| {
+            let key_ref = pc.key_ref.clone().unwrap_or_default();
+            (
+                pc.provider.as_str().to_string(),
+                ProviderSlotDto {
+                    model: pc.model.clone(),
+                    base_url: pc.base_url.clone().unwrap_or_default(),
+                    key_stored: !key_ref.is_empty() && tidy_core::ai::keys::has_key(&key_ref),
+                    key_ref,
+                    effort: pc.effort.clone().unwrap_or_default(),
+                },
+            )
+        })
+        .collect()
+}
+
+/// Remembered entries back to config form (empty models dropped).
+fn slot_configs(
+    slots: &std::collections::BTreeMap<String, ProviderSlotDto>,
+) -> std::collections::BTreeMap<String, ProviderConfig> {
+    slots
+        .iter()
+        .filter_map(|(name, s)| {
+            let kind = provider_kind(name)?;
+            let trimmed = |v: &str| Some(v.trim().to_string()).filter(|v| !v.is_empty());
+            Some((
+                name.clone(),
+                ProviderConfig {
+                    provider: kind,
+                    model: trimmed(&s.model)?,
+                    key_ref: trimmed(&s.key_ref),
+                    base_url: trimmed(&s.base_url),
+                    effort: trimmed(&s.effort),
+                },
+            ))
+        })
+        .collect()
 }
 
 fn ai_settings(cfg: &tidy_core::Config) -> AiSettingsDto {
@@ -1174,6 +1251,16 @@ fn ai_settings(cfg: &tidy_core::Config) -> AiSettingsDto {
         embed_key_stored: !embed_key_ref.is_empty() && tidy_core::ai::keys::has_key(&embed_key_ref),
         embed_key_ref,
         key_store: tidy_core::ai::keys::store_name().to_string(),
+        saved: cfg
+            .ai
+            .active()
+            .map(|p| slots(&p.saved, p.classify.as_ref()))
+            .unwrap_or_default(),
+        embed_saved: cfg
+            .ai
+            .active()
+            .map(|p| slots(&p.embed_saved, p.embed.as_ref()))
+            .unwrap_or_default(),
     }
 }
 
@@ -1192,11 +1279,8 @@ pub async fn save_ai_settings(
 ) -> CmdResult<AiSettingsDto> {
     blocking(move || {
         let provider = match settings.provider.as_str() {
-            "anthropic" => Some(ProviderKind::Anthropic),
-            "openai" => Some(ProviderKind::Openai),
-            "ollama" => Some(ProviderKind::Ollama),
             "" => None,
-            other => return Err(format!("알 수 없는 제공자: {other}")),
+            other => Some(provider_kind(other).ok_or(format!("알 수 없는 제공자: {other}"))?),
         };
         let classify = match provider {
             Some(kind) => {
@@ -1276,6 +1360,11 @@ pub async fn save_ai_settings(
                 send_content: settings.send_content,
                 classify,
                 embed,
+                saved: slot_configs(&settings.saved),
+                embed_saved: slot_configs(&settings.embed_saved)
+                    .into_iter()
+                    .filter(|(_, pc)| pc.provider != ProviderKind::Anthropic)
+                    .collect(),
             },
         )
         .map_err(|e| e.to_string())?;
@@ -1296,12 +1385,27 @@ pub async fn delete_api_key(app: AppHandle, key_ref: String) -> CmdResult<AiSett
     .await
 }
 
-/// One tiny request with the saved settings ("연결 테스트").
+/// Whether the OS keychain has a key under `key_ref` (shown next to the
+/// key name after switching providers or editing the name).
+#[tauri::command]
+pub async fn api_key_stored(key_ref: String) -> CmdResult<bool> {
+    blocking(move || {
+        let r = key_ref.trim();
+        Ok(!r.is_empty() && tidy_core::ai::keys::has_key(r))
+    })
+    .await
+}
+
+/// One tiny request to the classify model with the saved settings
+/// ("AI 연결 테스트").
 #[tauri::command]
 pub async fn test_ai(app: AppHandle) -> CmdResult<String> {
     blocking(move || {
         let state = app.state::<AppState>();
         let cfg = state.config();
+        if !cfg.ai.enabled {
+            return Err("AI 사용이 꺼져 있습니다".into());
+        }
         let rules = RuleSet::load(&cfg.classify.rules).unwrap_or_default();
         let ai = AiClassifier::from_config(&cfg, &rules).map_err(|e| e.to_string())?;
         // Own connection: the UI's shared one must not be held during a
@@ -1310,6 +1414,36 @@ pub async fn test_ai(app: AppHandle) -> CmdResult<String> {
             tidy_core::store::Store::open(&cfg.store.db_path()).map_err(|e| e.to_string())?;
         ai.test_connection(&store)
             .map(|m| format!("연결됨: {} / {m}", ai.provider_name()))
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/// One tiny request to the embedding model with the saved settings
+/// ("의미검색 연결 테스트").
+#[tauri::command]
+pub async fn test_embed(app: AppHandle) -> CmdResult<String> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let cfg = state.config();
+        if !cfg.ai.enabled {
+            return Err(
+                "AI 사용이 꺼져 있습니다 — 의미검색 모델도 AI 사용을 켜야 동작합니다".into(),
+            );
+        }
+        if !cfg.search.semantic {
+            return Err("의미검색이 꺼져 있습니다 ([search] semantic = false)".into());
+        }
+        let sem = tidy_core::search::SemanticSearch::from_config(&cfg).map_err(|e| match e {
+            tidy_core::ai::AiError::NoEmbedModel(_) => {
+                "의미검색 모델이 설정되지 않았습니다".to_string()
+            }
+            e => e.to_string(),
+        })?;
+        let store =
+            tidy_core::store::Store::open(&cfg.store.db_path()).map_err(|e| e.to_string())?;
+        sem.test_connection(&store)
+            .map(|dim| format!("연결됨: {} ({dim}차원 벡터)", sem.model_key()))
             .map_err(|e| e.to_string())
     })
     .await

@@ -1,6 +1,15 @@
 import { create } from "zustand";
 import * as ipc from "../ipc/commands";
-import type { AiProvider, AiSettings } from "../ipc/types";
+import type { AiProvider, AiSettings, ProviderSlot } from "../ipc/types";
+
+export type AiTestTarget = "classify" | "embed";
+
+/** Result of one section's "연결 테스트". */
+export interface AiTestResult {
+  busy: boolean;
+  ok?: boolean;
+  text?: string;
+}
 
 interface AiSettingsState {
   draft: AiSettings | null;
@@ -24,7 +33,10 @@ interface AiSettingsState {
   setEmbedApiKey: (k: string) => void;
   save: () => Promise<boolean>;
   deleteKey: (which?: "classify" | "embed") => Promise<void>;
-  test: () => Promise<void>;
+  /** Per-section connection test results (main AI / semantic search). */
+  tests: Record<AiTestTarget, AiTestResult>;
+  /** Save first if anything changed, then send one tiny request. */
+  test: (which?: AiTestTarget) => Promise<void>;
 }
 
 /** Sensible defaults per provider (model names are only suggestions). */
@@ -40,6 +52,30 @@ const EMBED_DEFAULTS: Record<"openai" | "ollama", Partial<AiSettings>> = {
   ollama: { embedModel: "nomic-embed-text", embedBaseUrl: "http://localhost:11434", embedKeyRef: "" },
 };
 
+const slotOf = (model: string, baseUrl: string, keyRef: string, effort: string, keyStored: boolean): ProviderSlot => ({
+  model,
+  baseUrl,
+  keyRef,
+  effort,
+  keyStored,
+});
+
+/** Turn raw provider errors into what to do next (the raw text stays below). */
+export function explainAiError(e: string): string | null {
+  if (/credit balance is too low/i.test(e))
+    return "Anthropic 계정의 크레딧(잔액)이 부족합니다. Tidy 문제가 아니라 계정 상태입니다 — console.anthropic.com의 Plans & Billing에서 충전하면 바로 됩니다.";
+  if (/insufficient_quota|exceeded your current quota/i.test(e))
+    return "OpenAI 계정의 사용 한도나 잔액이 부족합니다 — platform.openai.com의 Billing을 확인하세요.";
+  if (/HTTP 401|invalid x-api-key|invalid api key|incorrect api key|authentication/i.test(e))
+    return "API 키가 맞지 않습니다. 키를 다시 입력하고 저장하세요.";
+  if (/no API key stored/i.test(e)) return "키체인에 이 키 이름으로 저장된 키가 없습니다. API 키를 입력하고 저장하세요.";
+  if (/HTTP 404|model.*not.?found|not_found_error/i.test(e)) return "모델 이름이나 주소를 확인하세요.";
+  if (/HTTP 429|rate.?limit|overloaded/i.test(e)) return "요청이 많아 잠시 막혔습니다. 조금 뒤 다시 시도하세요.";
+  if (/network error|timed out|connection refused|error sending request/i.test(e))
+    return "서버에 닿지 않았습니다. 주소와 네트워크를 확인하세요 (Ollama면 실행 중인지).";
+  return null;
+}
+
 export const useAiSettings = create<AiSettingsState>((set, get) => ({
   draft: null,
   loaded: null,
@@ -48,6 +84,7 @@ export const useAiSettings = create<AiSettingsState>((set, get) => ({
   busy: false,
   message: null,
   error: null,
+  tests: { classify: { busy: false }, embed: { busy: false } },
   load: async (force = false) => {
     try {
       const fresh = await ipc.getAiSettings();
@@ -74,15 +111,56 @@ export const useAiSettings = create<AiSettingsState>((set, get) => ({
   setProvider: (provider) => {
     const d = get().draft;
     if (!d) return;
-    const defaults = provider ? DEFAULTS[provider] : {};
-    set({ draft: { ...d, ...defaults, provider, keyStored: false }, message: null });
+    // Remember the provider we leave; restore the one we go to (or its defaults).
+    const saved = { ...d.saved };
+    if (d.provider) saved[d.provider] = slotOf(d.model, d.baseUrl, d.keyRef, d.effort, d.keyStored);
+    const back = provider ? saved[provider] : undefined;
+    const next: Partial<AiSettings> = back
+      ? { ...back }
+      : provider
+        ? { ...DEFAULTS[provider], keyStored: false }
+        : {};
+    set({ draft: { ...d, ...next, provider, saved }, message: null, tests: { ...get().tests, classify: { busy: false } } });
+    if (!back && next.keyRef) {
+      const ref = next.keyRef;
+      void ipc.apiKeyStored(ref).then(
+        (has) => {
+          const cur = get().draft;
+          if (cur && cur.provider === provider && cur.keyRef === ref) set({ draft: { ...cur, keyStored: has } });
+        },
+        () => {},
+      );
+    }
   },
   setApiKey: (apiKey) => set({ apiKey, message: null }),
   setEmbedProvider: (embedProvider) => {
     const d = get().draft;
     if (!d) return;
-    const defaults = embedProvider ? EMBED_DEFAULTS[embedProvider] : {};
-    set({ draft: { ...d, ...defaults, embedProvider, embedKeyStored: false }, message: null });
+    const embedSaved = { ...d.embedSaved };
+    if (d.embedProvider)
+      embedSaved[d.embedProvider] = slotOf(d.embedModel, d.embedBaseUrl, d.embedKeyRef, "", d.embedKeyStored);
+    const back = embedProvider ? embedSaved[embedProvider] : undefined;
+    const next: Partial<AiSettings> = back
+      ? { embedModel: back.model, embedBaseUrl: back.baseUrl, embedKeyRef: back.keyRef, embedKeyStored: back.keyStored }
+      : embedProvider
+        ? { ...EMBED_DEFAULTS[embedProvider], embedKeyStored: false }
+        : {};
+    set({
+      draft: { ...d, ...next, embedProvider, embedSaved },
+      message: null,
+      tests: { ...get().tests, embed: { busy: false } },
+    });
+    if (!back && next.embedKeyRef) {
+      const ref = next.embedKeyRef;
+      void ipc.apiKeyStored(ref).then(
+        (has) => {
+          const cur = get().draft;
+          if (cur && cur.embedProvider === embedProvider && cur.embedKeyRef === ref)
+            set({ draft: { ...cur, embedKeyStored: has } });
+        },
+        () => {},
+      );
+    }
   },
   setEmbedApiKey: (embedApiKey) => set({ embedApiKey, message: null }),
   save: async () => {
@@ -123,14 +201,18 @@ export const useAiSettings = create<AiSettingsState>((set, get) => ({
       set({ error: String(e) });
     }
   },
-  test: async () => {
-    set({ busy: true, error: null, message: null });
+  test: async (which = "classify") => {
+    const setResult = (r: AiTestResult) => set({ tests: { ...get().tests, [which]: r } });
+    setResult({ busy: true });
+    if (get().dirty() && !(await get().save())) {
+      setResult({ busy: false, ok: false, text: `저장하지 못해 테스트하지 않았습니다: ${get().error ?? ""}` });
+      return;
+    }
     try {
-      set({ message: await ipc.testAi() });
+      const ok = await (which === "embed" ? ipc.testEmbed() : ipc.testAi());
+      setResult({ busy: false, ok: true, text: ok });
     } catch (e) {
-      set({ error: String(e) });
-    } finally {
-      set({ busy: false });
+      setResult({ busy: false, ok: false, text: String(e) });
     }
   },
 }));

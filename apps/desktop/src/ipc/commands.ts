@@ -96,6 +96,8 @@ export const saveAiSettings = (settings: AiSettings, apiKey: string | null, embe
   invoke<AiSettings>("save_ai_settings", { settings, apiKey, embedApiKey });
 export const deleteApiKey = (keyRef: string) => invoke<AiSettings>("delete_api_key", { keyRef });
 export const testAi = () => invoke<string>("test_ai");
+export const testEmbed = () => invoke<string>("test_embed");
+export const apiKeyStored = (keyRef: string) => invoke<boolean>("api_key_stored", { keyRef });
 
 export const listLearn = () => invoke<LearnSuggestion[]>("list_learn");
 export const acceptLearn = (key: string) => invoke<void>("accept_learn", { key });

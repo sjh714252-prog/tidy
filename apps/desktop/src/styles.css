@@ -101,6 +101,8 @@ h4 { margin: 10px 0 4px; font-size: 13px; }
 .nowrap { white-space: nowrap; }
 .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
 .actions { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ai-test-result { flex-basis: 100%; }
+.ai-test-result p { margin: 2px 0; }
 .wide { width: 100%; min-width: 220px; }
 input.narrow { width: 110px; }
 .clamp2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

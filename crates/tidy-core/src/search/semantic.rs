@@ -136,6 +136,18 @@ impl SemanticSearch {
         })
     }
 
+    /// One tiny embedding request ("연결 테스트" in the settings screen);
+    /// logged in `ai_log` like any other call. Returns the vector size.
+    pub fn test_connection(&self, store: &Store) -> Result<usize, AiError> {
+        let v = self.embed_logged(
+            store,
+            "test",
+            &["연결 테스트".to_string()],
+            self.embed_timeout,
+        )?;
+        Ok(v.first().map(Vec::len).unwrap_or(0))
+    }
+
     /// Embedder key stored with every vector (`provider/model[#name]`).
     pub fn model_key(&self) -> &str {
         &self.key
@@ -833,6 +845,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(names(&o)[0], "오사카_항공권.pdf");
+    }
+
+    #[test]
+    fn test_connection_reports_vector_size_and_errors() {
+        let s = Store::open_in_memory().unwrap();
+        let m = mock();
+        let sem = SemanticSearch::with_provider(m.clone(), &cfg(true)).unwrap();
+        assert!(sem.test_connection(&s).unwrap() > 0);
+        m.set_failing(true);
+        assert!(sem.test_connection(&s).is_err());
     }
 
     #[test]

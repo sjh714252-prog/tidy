@@ -481,6 +481,19 @@ export interface AiSettings {
   embedKeyStored: boolean;
   /** Where keys are stored on this machine. */
   keyStore: string;
+  /** Remembered settings per classify provider, restored when switching back. */
+  saved: Partial<Record<Exclude<AiProvider, "">, ProviderSlot>>;
+  /** Same for the embedding provider. */
+  embedSaved: Partial<Record<"openai" | "ollama", ProviderSlot>>;
+}
+
+/** One provider's remembered settings (AI 연결). Field order matches the backend. */
+export interface ProviderSlot {
+  model: string;
+  baseUrl: string;
+  keyRef: string;
+  effort: string;
+  keyStored: boolean;
 }
 
 /** Learner rule suggestion (SPEC §5.2). */

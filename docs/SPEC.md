@@ -1114,3 +1114,13 @@ send_content = false
 **4. 테스트**
 - 코어: duplicate_policy 3가지 × (같은 이름 같은 내용 / 같은 이름 다른 내용), `on_duplicate` 결정, replace의 trash 행, `trash_duplicates`(가짜 `TrashBackend`) + move_log + 되돌리기 안내 + `last_active_batch` 제외 + 바뀐 파일 건너뜀, 그룹 기본 선택 규칙·정리 위치 포함·하드링크 제외, `duplicate_at_dest`, hwp/hwpx 픽스처·암호·PrvText 폴백.
 - `e2e/m14.mjs`: 설정에서 정책 변경 → config.toml, 같은 파일 두 번 들어올 때 세 정책 동작(활동 문구), 확인 대기의 "똑같은 파일이 이미 있습니다" 세 버튼, 리포트 중복 그룹 → 남길 파일 선택 → 미리보기 → 적용 → 가짜 휴지통에 N개 + 되돌리기 탭에 trash 기록·휴지통 복원 안내, hwp/hwpx 본문 검색.
+
+### 14.10 AI 연결 — 섹션별 연결 테스트 + 제공자별 설정 기억 (0.7.2, 사용 피드백 2026-10-27)
+
+**배경**: "연결 테스트가 의미검색 모델에만 있는 것으로 보인다 — 일반 AI도 테스트가 필요", "제공자를 바꾸면 저장해 둔 제공자로 바로 바꿔 쓰게". 버튼은 의미검색 섹션 아래 하나뿐이었고 실제로는 분류 모델만 테스트했다.
+
+- **연결 테스트는 섹션마다**: 일반 AI 설정(제공자·모델·키·생각 깊이·자동 이동 기준·본문 보내기) 바로 아래 **[AI 연결 테스트]**(`test_ai`, 분류 모델에 작은 JSON 요청), 의미검색 모델을 고른 경우 그 섹션 아래 **[의미검색 연결 테스트]**(`test_embed`, `SemanticSearch::test_connection` — 한 문장 임베딩, 벡터 차원 표시). 둘 다 `ai_log`에 `purpose = test`로 남는다. 결과는 각 버튼 바로 아래에 따로 표시한다.
+- 저장하지 않은 변경이 있으면 버튼 이름이 "저장 후 …"로 바뀌고, 누르면 AI 설정을 저장한 뒤 테스트한다(키는 키체인에만 있으므로 저장된 설정으로만 테스트할 수 있다).
+- 실패 문구는 "✗ 연결 실패 — <할 일>" + 원문. 할 일은 알려진 오류만: 크레딧 부족(Anthropic "credit balance is too low" → 계정 Plans & Billing, Tidy 문제 아님), OpenAI 한도, 401(키 확인), 키체인에 키 없음, 404(모델·주소), 429/과부하, 네트워크·시간 초과(주소·Ollama 실행 확인).
+- **제공자별 설정 기억**: 프로필마다 `[ai.profiles.<p>.saved]`(분류)·`[ai.profiles.<p>.embed_saved]`(의미검색)에 제공자 이름 → `{ provider, model, key_ref, base_url, effort }`. 저장할 때 현재 제공자 설정도 여기에 넣는다. 화면에서 제공자를 바꾸면 떠나는 제공자의 입력값을 기억하고, 가는 제공자에 기억된 값이 있으면 그대로 복원(없으면 기본값 + 키체인에 키가 있는지 `api_key_stored`로 확인). 목록에는 기억된 제공자에 "· 저장된 설정"을 붙인다. 키 자체는 키 이름별로 키체인에 남아 있으므로 다시 입력할 필요가 없다.
+- DTO: `AiSettingsDto.saved` / `embedSaved`: `{ [provider]: { model, baseUrl, keyRef, effort, keyStored } }`. 코어 `AiPatch.saved`/`embed_saved`, `AiProfile.saved`/`embed_saved`.
