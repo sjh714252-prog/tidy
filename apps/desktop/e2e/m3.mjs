@@ -50,6 +50,7 @@ await sleep(1500);
     // M8: no example rules are applied any more; the txt rule is explicit.
     `[[rule]]\nname = "설치 확인"\nmatch = { ext = ["exe"] }\ndest = '${T}/설치 파일'\nconfirm = true\n\n` +
       `[[rule]]\nname = "Tidy 테스트"\nmatch = { ext = ["txt"], name_regex = "^tidy-test" }\ndest = "~/Documents/Tidy/테스트 결과/{yyyy}/{mm}"\n\n` +
+      `[[rule]]\nname = "바로가기 함정"\nmatch = { ext = ["lnk", "url"] }\ndest = '${T}/함정'\n\n` +
       cur,
   );
   await sleep(800);
@@ -75,6 +76,26 @@ await sleep(1500);
   const moved = today.includes("보안점검") && /이동 1/.test(today) && feed.includes("이동") && feed.includes("보안점검");
   ok(4, "txt 자동 이동이 홈(오늘 한 일 + 전체 활동)에 표시", moved, today.split("\n").slice(0, 6).join(" | "));
   await main.screenshot({ path: `${SHOT}/04-activity-moved.png` });
+  // 0.7.1: shortcuts stay put even though a rule matches .lnk/.url (keep_shortcuts on by default)
+  fs.writeFileSync(path.join(DESK, "회사 포털.url"), "[InternetShortcut]\nURL=https://example.com\n");
+  fs.writeFileSync(path.join(DESK, "한글.lnk"), "L");
+  await sleep(5000);
+  const kept = fs.existsSync(path.join(DESK, "회사 포털.url")) && fs.existsSync(path.join(DESK, "한글.lnk")) && !fs.existsSync(path.join(T, "함정"));
+  ok(4, "바로가기(.url/.lnk)는 규칙이 있어도 제자리", kept);
+  const cfgTxt = fs.readFileSync(path.join(T, "config.toml"), "utf8");
+  ok(4, "config.toml keep_shortcuts = true", /keep_shortcuts *= *true/.test(cfgTxt));
+  await gotoSettings(main, "advanced");
+  const ks = main.locator("[data-testid=keep-shortcuts]");
+  ok(4, "설정 고급에 '바로가기는 그대로 두기' 켜짐", await ks.isChecked());
+  await ks.uncheck();
+  await saveSettings(main);
+  fs.writeFileSync(path.join(DESK, "회사 포털2.url"), "[InternetShortcut]\nURL=https://example.com\n");
+  await sleep(5000);
+  ok(4, "끄면 바로가기도 규칙대로 이동", fs.existsSync(path.join(T, "함정", "회사 포털2.url")));
+  await gotoSettings(main, "advanced");
+  await main.locator("[data-testid=keep-shortcuts]").check();
+  await saveSettings(main);
+  await tab(main, "홈").click();
 }
 
 // 5. search window
