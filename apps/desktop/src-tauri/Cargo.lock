@@ -577,6 +577,17 @@ checksum = "6d43a04d8753f35258c91f8ec639f792891f748a1edbd759cf1dcea3382ad83c"
 
 [[package]]
 name = "cfb"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8a4f8e55be323b378facfcf1f06aa97f6ec17cf4ac84fb17325093aaf62da41"
+dependencies = [
+ "byteorder",
+ "fnv",
+ "uuid",
+]
+
+[[package]]
+name = "cfb"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a347dcabdae9c31b0825fd6a8bed285ec9c2acb89c47827126d52fa4f59cece3"
@@ -2266,7 +2277,7 @@ version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f4200d433cbd5178df7797c9c2e75b348b728e39631cf14520d1e2fc424201f4"
 dependencies = [
- "cfb",
+ "cfb 0.14.0",
 ]
 
 [[package]]
@@ -5242,16 +5253,18 @@ dependencies = [
 
 [[package]]
 name = "tidy-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "blake3",
  "calamine",
+ "cfb 0.10.0",
  "chrono",
  "dirs 5.0.1",
  "dunce",
  "encoding_rs",
+ "flate2",
  "globset",
  "humansize",
  "keyring",
@@ -5262,6 +5275,7 @@ dependencies = [
  "regex",
  "reqwest 0.12.28",
  "rusqlite",
+ "same-file",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -5279,7 +5293,7 @@ dependencies = [
 
 [[package]]
 name = "tidy-desktop"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "dirs 6.0.0",
  "dunce",
