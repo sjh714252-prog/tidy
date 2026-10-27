@@ -1106,7 +1106,7 @@ send_content = false
 
 **3. 한글 문서 본문 검색 (§13 `.hwp` 결정)**
 - `.hwpx`: ZIP + XML. `Contents/section<N>.xml`을 번호순으로 읽어 `<hp:t>`(네임스페이스 접두사 무관, 로컬 이름 `t`) 텍스트를 모으고 `<hp:p>`마다 줄바꿈, `<hp:tab/>`·`<hp:lineBreak/>`는 공백/줄바꿈. 표 안 문단도 같은 `p`/`t`라 함께 나온다. 기존 docx 추출기와 같은 구조(`zip` + `quick-xml`).
-- `.hwp`(5.0 바이너리): `cfb`로 복합 문서를 열고 `FileHeader`(시그니처 "HWP Document File", 속성 비트 0 압축·1 암호·2 배포용) 확인 → `BodyText/Section<N>`을 번호순으로 읽어 압축이면 raw deflate(`flate2::DeflateDecoder`) 해제 → 레코드(헤더 32비트: tag 10비트·level 10비트·size 12비트, size = 0xFFF면 다음 4바이트) 순회 → `HWPTAG_PARA_TEXT`(tag 67)의 UTF-16LE만 추출. 제어 문자(0~31): 확장 컨트롤(1~3, 11~12, 14~18, 21~23)·인라인 컨트롤(4~9, 19~20)은 8 WCHAR를 건너뛰고, 그 외(0, 10 줄바꿈, 13 문단 끝, 24~31)는 1 WCHAR(10·13은 줄바꿈, 9 탭은 인라인이지만 공백으로 바꾼다). 문단마다 줄바꿈. 표 셀 문단도 같은 PARA_TEXT라 함께 나온다.
+- `.hwp`(5.0 바이너리): `cfb`로 복합 문서를 열고 `FileHeader`(시그니처 "HWP Document File", 속성 비트 0 압축·1 암호·2 배포용) 확인 → `BodyText/Section<N>`을 번호순으로 읽어 압축이면 raw deflate(`flate2::DeflateDecoder`) 해제 → 레코드(헤더 32비트: tag 10비트·level 10비트·size 12비트, size = 0xFFF면 다음 4바이트) 순회 → `HWPTAG_PARA_TEXT`(tag 67)의 UTF-16LE만 추출. 제어 문자(0~31): 확장 컨트롤(1~3, 11~12, 14~18, 21~23)·인라인 컨트롤(4~9, 19~20)은 8 WCHAR를 건너뛰고, 그 외(0, 10 줄바꿈, 13 문단 끝, 24~31)는 1 WCHAR(10은 줄바꿈, 13은 문단 끝, 9 탭은 인라인이지만 공백으로 바꾼다). 문단마다 줄바꿈. 표 셀 문단도 같은 PARA_TEXT라 함께 나온다.
 - 암호·배포용 문서는 `ExtractError::Encrypted`("본문 추출 불가(암호)") → `text_status = failed`, 메타데이터만 인덱싱. 압축 해제·레코드 해석이 실패하거나 본문이 비면 `PrvText`(미리보기 텍스트, UTF-16LE) 스트림으로 폴백.
 - 픽스처: `tests/fixtures/한글 문서.hwp`·`한글 문서.hwpx`(한글·영문·숫자·표 안 텍스트) + `expected/*.txt`. 최소 구조를 코드로 만든다(`cargo test -p tidy-core --test extractors make_hwp_fixtures -- --ignored`로 다시 생성, 같은 생성기가 암호·PrvText 폴백 테스트 파일도 만든다).
 - 개인정보 탐지(M9)는 같은 추출기를 쓰므로 hwp/hwpx 본문도 검사한다. 검색 단축어 "문서" 종류에 hwp/hwpx는 이미 있다.

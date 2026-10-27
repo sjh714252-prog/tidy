@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::config::DuplicatePolicy;
 use crate::engine::{prepare_vault_index, reindex_for, Action};
 use crate::index::IndexOptions;
 use crate::mover::{MoveOutcome, MoveRequest, Mover, MoverError};
@@ -59,6 +60,10 @@ pub enum Decision {
         dest_dir: Option<PathBuf>,
         #[serde(default)]
         new_name: Option<String>,
+        /// (M14) The user's answer to "똑같은 파일이 이미 있습니다"
+        /// (그대로 두기 / 번호 붙여 이동 / 기존 것 휴지통 후 이동).
+        #[serde(default)]
+        on_duplicate: Option<DuplicatePolicy>,
     },
     /// Leave the file and drop it from the queue, this time only ("건너뜀").
     Skip,
@@ -97,6 +102,79 @@ pub enum Resolution {
     },
 }
 
+/// Above this size the "already there?" check compares sizes only (SPEC
+/// §14.9 1: "500MB 초과는 크기+이름만").
+pub const DUP_HASH_LIMIT: u64 = 500 * 1024 * 1024;
+
+type DupKey = (
+    PathBuf,
+    PathBuf,
+    u64,
+    u64,
+    Option<std::time::SystemTime>,
+    Option<std::time::SystemTime>,
+);
+
+static DUP_CACHE: std::sync::Mutex<Option<std::collections::HashMap<DupKey, bool>>> =
+    std::sync::Mutex::new(None);
+
+/// (M14) The file already at `dest_dir/<name>` (`new_name` or the source's
+/// name, as the mover would name it) when it has the same content as `src`
+/// — what the confirm popup / queue warns about before the user decides.
+/// Files over [`DUP_HASH_LIMIT`] count as the same when the sizes match.
+/// Results are cached by both files' size and mtime.
+pub fn duplicate_at_dest(src: &Path, dest_dir: &Path, new_name: Option<&str>) -> Option<PathBuf> {
+    let name: std::ffi::OsString = match new_name.map(str::trim).filter(|n| !n.is_empty()) {
+        Some(n) => match (Path::new(n).extension(), src.extension()) {
+            (None, Some(ext)) => format!("{n}.{}", ext.to_string_lossy()).into(),
+            _ => n.into(),
+        },
+        None => src.file_name()?.to_os_string(),
+    };
+    let existing = normalize_lexical(dest_dir).join(name);
+    if existing == src {
+        return None;
+    }
+    let (a, b) = (
+        std::fs::metadata(src).ok()?,
+        std::fs::metadata(&existing).ok()?,
+    );
+    if !a.is_file() || !b.is_file() || a.len() != b.len() {
+        return None;
+    }
+    let key: DupKey = (
+        src.to_path_buf(),
+        existing.clone(),
+        a.len(),
+        b.len(),
+        a.modified().ok(),
+        b.modified().ok(),
+    );
+    let cached = DUP_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|m| m.get(&key).copied());
+    let same = match cached {
+        Some(v) => v,
+        None => {
+            let v = a.len() > DUP_HASH_LIMIT
+                || matches!(
+                    (crate::mover::hash_file(src), crate::mover::hash_file(&existing)),
+                    (Ok(x), Ok(y)) if x == y
+                );
+            let mut g = DUP_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+            let m = g.get_or_insert_with(Default::default);
+            if m.len() > 4096 {
+                m.clear();
+            }
+            m.insert(key, v);
+            v
+        }
+    };
+    same.then_some(existing)
+}
+
 /// Apply `decision` to pending entry `id`. The entry is removed from the
 /// queue unless the move fails (then it stays for another try).
 pub fn resolve(
@@ -129,7 +207,11 @@ pub fn resolve(
                 None,
             )
         }
-        Decision::Move { dest_dir, new_name } => {
+        Decision::Move {
+            dest_dir,
+            new_name,
+            on_duplicate,
+        } => {
             let dest_dir = dest_dir
                 .clone()
                 .or(entry.suggested_dest.clone())
@@ -153,6 +235,7 @@ pub fn resolve(
                 ai_confidence: entry.confidence,
                 new_name: new_name.clone(),
                 encrypt: entry.encrypt,
+                on_duplicate: *on_duplicate,
             })?;
             let label = rule.unwrap_or_else(|| "확인".into());
             let (resolution, action) = match out {
@@ -233,7 +316,6 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::config::DuplicatePolicy;
     use crate::store::Store;
 
     fn setup() -> (tempfile::TempDir, Mover, PathBuf) {
@@ -266,6 +348,7 @@ mod tests {
             &Decision::Move {
                 dest_dir: None,
                 new_name: None,
+                on_duplicate: None,
             },
             "b1",
             None,
@@ -297,6 +380,7 @@ mod tests {
             &Decision::Move {
                 dest_dir: None,
                 new_name: Some("설치 v1 (보관)".into()),
+                on_duplicate: None,
             },
             "b",
             None,
@@ -336,6 +420,7 @@ mod tests {
             &Decision::Move {
                 dest_dir: Some(other.clone()),
                 new_name: None,
+                on_duplicate: None,
             },
             "b",
             None,
@@ -386,7 +471,8 @@ mod tests {
                 id,
                 &Decision::Move {
                     dest_dir: None,
-                    new_name: None
+                    new_name: None,
+                    on_duplicate: None,
                 },
                 "b",
                 None
@@ -417,5 +503,64 @@ mod user_message_tests {
         assert!(m.contains("다시 '이동'"), "{m}");
         let gone = PendingError::NotFound(3).user_message();
         assert_eq!(gone, "이미 처리된 항목입니다.");
+    }
+
+    /// (M14) The queue warns before the decision; the three answers.
+    #[test]
+    fn duplicate_at_dest_and_on_duplicate_answers() {
+        use crate::config::DuplicatePolicy;
+        use crate::store::Store;
+        use std::fs;
+        use std::sync::Arc;
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("정리").join("문서");
+        fs::create_dir_all(&dest).unwrap();
+        let bin = dir.path().join("bin");
+        let mover = Mover::new(Store::open_in_memory().unwrap(), DuplicatePolicy::Skip)
+            .with_trash(Arc::new(crate::mover::FolderTrash(bin.clone())));
+        let src = dir.path().join("보고서.pdf");
+        fs::write(&src, "same").unwrap();
+        fs::write(dest.join("보고서.pdf"), "same").unwrap();
+        assert_eq!(
+            duplicate_at_dest(&src, &dest, None),
+            Some(dest.join("보고서.pdf"))
+        );
+        assert_eq!(duplicate_at_dest(&src, &dest, Some("다른 이름")), None);
+        fs::write(dest.join("다른 이름.pdf"), "diff").unwrap();
+        assert_eq!(duplicate_at_dest(&src, &dest, Some("다른 이름")), None);
+
+        let queue = |m: &Mover| {
+            m.store()
+                .upsert_pending(&src, Some(&dest), Some("문서"))
+                .unwrap();
+            m.store().list_pending().unwrap()[0].id
+        };
+        let mv = |on| Decision::Move {
+            dest_dir: None,
+            new_name: None,
+            on_duplicate: Some(on),
+        };
+        // 그대로 두기
+        let id = queue(&mover);
+        let r = resolve(&mover, id, &mv(DuplicatePolicy::Skip), "b0", None).unwrap();
+        assert!(matches!(r, Resolution::Duplicate { .. }), "{r:?}");
+        assert!(src.exists());
+        assert_eq!(mover.store().pending_count().unwrap(), 0);
+        // 번호 붙여 이동
+        let id = queue(&mover);
+        let r = resolve(&mover, id, &mv(DuplicatePolicy::Rename), "b1", None).unwrap();
+        let Resolution::Moved { dst, .. } = r else {
+            panic!("{r:?}")
+        };
+        assert_eq!(dst, dest.join("보고서 (1).pdf"));
+        // 기존 것 휴지통 후 이동
+        fs::write(&src, "same").unwrap();
+        let id = queue(&mover);
+        let r = resolve(&mover, id, &mv(DuplicatePolicy::Replace), "b2", None).unwrap();
+        let Resolution::Moved { dst, .. } = r else {
+            panic!("{r:?}")
+        };
+        assert_eq!(dst, dest.join("보고서.pdf"));
+        assert_eq!(fs::read_dir(&bin).unwrap().count(), 1);
     }
 }

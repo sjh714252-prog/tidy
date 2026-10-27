@@ -35,6 +35,8 @@ pub struct BatchSummary {
     pub label: Option<String>,
     /// Example source path.
     pub example: PathBuf,
+    /// (M14) Rows that sent a duplicate to the trash (`op = trash`).
+    pub trashed: u64,
 }
 
 impl Store {
@@ -85,7 +87,7 @@ impl Store {
                     SUM(undone_at IS NOT NULL),
                     (SELECT decided_by FROM move_log m2 WHERE m2.batch_id = m.batch_id
                        GROUP BY decided_by ORDER BY COUNT(*) DESC LIMIT 1),
-                    MAX(rule_name), MIN(src_path)
+                    MAX(rule_name), MIN(src_path), SUM(op = 'trash')
              FROM move_log m GROUP BY batch_id ORDER BY MAX(id) DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map([limit as i64], |r| {
@@ -98,6 +100,7 @@ impl Store {
                 decided_by: r.get(5)?,
                 label: r.get(6)?,
                 example: PathBuf::from(r.get::<_, String>(7)?),
+                trashed: r.get::<_, i64>(8)? as u64,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)

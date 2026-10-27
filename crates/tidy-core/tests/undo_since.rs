@@ -17,6 +17,7 @@ fn req(src: &std::path::Path, dest: &std::path::Path, by: DecidedBy, batch: &str
         ai_confidence: None,
         new_name: None,
         encrypt: false,
+        on_duplicate: None,
     }
 }
 
