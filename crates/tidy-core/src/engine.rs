@@ -665,6 +665,7 @@ impl Engine {
             ai_confidence: confidence,
             new_name: None,
             encrypt,
+            on_duplicate: None,
         })?;
         Ok(match out {
             MoveOutcome::Moved { log_id, src, dst } => Action::Moved {

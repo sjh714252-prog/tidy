@@ -123,6 +123,7 @@ impl Mover {
                 ai_confidence: req.ai_confidence,
                 new_name: None,
                 encrypt: false,
+                on_duplicate: None,
             };
             match self.move_file(&r) {
                 Ok(o) => report.outcomes.push(o),

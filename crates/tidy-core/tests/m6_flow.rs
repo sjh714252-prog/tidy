@@ -198,6 +198,7 @@ fn copy_verify_move_to_share_reports_progress_and_undoes() {
             ai_confidence: None,
             new_name: None,
             encrypt: false,
+            on_duplicate: None,
         })
         .unwrap();
     let MoveOutcome::Moved { dst, .. } = out else {

@@ -6,6 +6,7 @@
 //! `tests/fixtures/` (CLAUDE.md).
 
 mod html;
+mod hwp;
 mod office;
 mod pdf;
 mod text;
@@ -15,6 +16,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 pub use html::HtmlExtractor;
+pub use hwp::{testgen as hwp_testgen, HwpExtractor, HwpxExtractor};
 pub use office::{DocxExtractor, PptxExtractor, XlsxExtractor};
 pub use pdf::PdfExtractor;
 pub use text::PlainTextExtractor;
@@ -31,6 +33,9 @@ pub enum ExtractError {
     Binary(PathBuf),
     #[error("{path}: {msg}")]
     Format { path: PathBuf, msg: String },
+    /// (M14) Password-protected or distribution-only document: metadata only.
+    #[error("{0}: 본문 추출 불가(암호)")]
+    Encrypted(PathBuf),
     #[error("{path}: extractor panicked ({msg})")]
     Panic { path: PathBuf, msg: String },
 }
@@ -72,6 +77,8 @@ impl Extractors {
                 Box::new(DocxExtractor),
                 Box::new(PptxExtractor),
                 Box::new(XlsxExtractor),
+                Box::new(HwpExtractor),
+                Box::new(HwpxExtractor),
             ],
         }
     }

@@ -12,7 +12,11 @@
 //! - the source of an interrupted move whose verified copy is already in
 //!   place with the same logged hash (finishing that move),
 //! - `duplicate_policy = "replace"`, which sends the identical existing copy
-//!   to the OS trash (`trash` crate), never `remove_file`.
+//!   to the OS trash (`trash` crate), never `remove_file`; logged as a
+//!   `trash` row (M14).
+//! - (M14) [`Mover::trash_duplicates`]: identical copies the user chose to
+//!   drop go to the OS trash after both they and the kept copy were
+//!   re-hashed; each is a `trash` row in `move_log`.
 //! - (M9) the original of an encrypt, after its zip was decrypted and
 //!   hash-verified; the zip of an undone encrypt, after the original was
 //!   restored and verified; our own unfinished zip when recovery keeps
@@ -22,6 +26,7 @@
 mod dir;
 mod recover;
 mod transfer;
+mod trash;
 mod undo;
 mod vault;
 
@@ -37,6 +42,9 @@ use thiserror::Error;
 pub use dir::{DirMoveReport, DirMoveRequest};
 pub use recover::{RecoveryReport, DEFAULT_RECOVERY_GRACE};
 pub use transfer::{ProgressFn, TransferProgress};
+pub use trash::{
+    open_trash, DupTrash, FolderTrash, OsTrash, TrashBackend, TrashReport, TRASH_UNDO_HINT,
+};
 pub use undo::{UndoConflict, UndoReport};
 pub use vault::{open_dir, open_temp_copy, sweep_open_copies, zip_name_for};
 
@@ -160,6 +168,9 @@ pub struct MoveRequest {
     /// (M9) Lock the file into `<dest_dir>/<name>.zip` (AES-256) instead
     /// of moving it as is.
     pub encrypt: bool,
+    /// (M14) What to do when an identical file already has the name at the
+    /// destination, for this move only (`None` = the configured policy).
+    pub on_duplicate: Option<DuplicatePolicy>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -249,6 +260,7 @@ pub struct Mover {
     expected: Arc<ExpectedMoves>,
     transfer: TransferOpts,
     vault: VaultSource,
+    trash: Arc<dyn TrashBackend>,
 }
 
 impl Mover {
@@ -259,7 +271,20 @@ impl Mover {
             expected: ExpectedMoves::new(),
             transfer: TransferOpts::default(),
             vault: VaultSource::Keychain,
+            trash: trash::default_backend(),
         }
+    }
+
+    /// (M14) Where "휴지통으로" sends files (tests and the headless e2e use
+    /// a folder instead of the OS trash).
+    pub fn with_trash(mut self, trash: Arc<dyn TrashBackend>) -> Self {
+        self.trash = trash;
+        self
+    }
+
+    /// (M14) The configured duplicate policy (`[mover] duplicate_policy`).
+    pub fn policy(&self) -> DuplicatePolicy {
+        self.policy
     }
 
     /// Use these vault passwords instead of the keychain (tests, CLI with
@@ -341,7 +366,7 @@ impl Mover {
         let mut dst = dest_dir.join(&name);
         if dst.exists() {
             if hash_file(&dst)? == hash {
-                match self.policy {
+                match req.on_duplicate.unwrap_or(self.policy) {
                     DuplicatePolicy::Skip => {
                         return Ok(MoveOutcome::SkippedDuplicate {
                             src: src.clone(),
@@ -349,11 +374,9 @@ impl Mover {
                         })
                     }
                     DuplicatePolicy::Replace => {
-                        self.expected.expect(&dst);
-                        trash::delete(&dst).map_err(|e| MoverError::Trash {
-                            path: dst.clone(),
-                            msg: e.to_string(),
-                        })?;
+                        // The identical copy goes to the trash, logged in the
+                        // same batch; the incoming file takes its place.
+                        self.trash_logged(&dst, src, &hash, req.batch_id.as_str(), req.decided_by)?;
                     }
                     DuplicatePolicy::Rename => dst = unique_name(&dst),
                 }
@@ -391,6 +414,21 @@ impl Mover {
             dst,
         })
     }
+}
+
+/// (M14) Why a file stayed: "똑같은 파일이 이미 D:\정리\문서\에 있어 그대로 둠".
+pub fn duplicate_message(existing: &Path) -> String {
+    let dir = existing
+        .parent()
+        .map(|d| {
+            let mut s = d.display().to_string();
+            if !s.ends_with(['/', '\\']) {
+                s.push(std::path::MAIN_SEPARATOR);
+            }
+            s
+        })
+        .unwrap_or_default();
+    format!("똑같은 파일이 이미 {dir}에 있어 그대로 둠")
 }
 
 /// Validate a user/AI-supplied new name; keep the original extension when
@@ -497,6 +535,7 @@ mod tests {
             ai_confidence: None,
             new_name: None,
             encrypt: false,
+            on_duplicate: None,
         }
     }
 
@@ -681,5 +720,109 @@ mod tests {
         assert_eq!(fs::read(&src).unwrap().len(), 2_000_000);
         assert_eq!(fs::read_dir(&nas).unwrap().count(), 0);
         assert_eq!(m.store().placed_hash(&dst).unwrap(), None);
+    }
+
+    /// (M14) duplicate_policy × (same name same content / same name other
+    /// content), the per-move override, and the trash row of `replace`.
+    #[test]
+    fn duplicate_policy_matrix() {
+        use std::sync::Arc;
+        for policy in [
+            DuplicatePolicy::Skip,
+            DuplicatePolicy::Rename,
+            DuplicatePolicy::Replace,
+        ] {
+            for same in [true, false] {
+                let dir = tempfile::tempdir().unwrap();
+                let bin = dir.path().join("bin");
+                let dest = dir.path().join("dest");
+                fs::create_dir(&dest).unwrap();
+                fs::write(dest.join("x.txt"), if same { "new" } else { "old" }).unwrap();
+                let src = dir.path().join("x.txt");
+                fs::write(&src, "new").unwrap();
+                let m = Mover::new(Store::open_in_memory().unwrap(), policy)
+                    .with_trash(Arc::new(FolderTrash(bin.clone())));
+                let out = m.move_file(&req(&src, &dest)).unwrap();
+                let rows = m.store().moves_in_batch("b1").unwrap();
+                match (policy, same) {
+                    (DuplicatePolicy::Skip, true) => {
+                        assert!(matches!(out, MoveOutcome::SkippedDuplicate { .. }));
+                        assert!(src.exists());
+                        assert!(rows.is_empty());
+                    }
+                    (DuplicatePolicy::Replace, true) => {
+                        let MoveOutcome::Moved { dst, .. } = out else {
+                            panic!("{out:?}")
+                        };
+                        assert_eq!(dst, dest.join("x.txt"));
+                        assert_eq!(fs::read_dir(&bin).unwrap().count(), 1);
+                        assert_eq!(rows.len(), 2);
+                        assert_eq!(rows[1].op, MoveOp::Trash, "trash first, then the move");
+                        assert_eq!(rows[0].op, MoveOp::Move);
+                        // Undo: the move goes back; the trashed copy is pointed at.
+                        let u = m.undo_batch("b1").unwrap();
+                        assert_eq!(u.restored.len(), 1);
+                        assert_eq!(u.conflicts.len(), 1);
+                        assert_eq!(u.conflicts[0].reason, TRASH_UNDO_HINT);
+                        assert!(src.exists());
+                    }
+                    // Rename policy, or any name clash with other content:
+                    // a numbered name, nothing overwritten or trashed.
+                    _ => {
+                        let MoveOutcome::Moved { dst, .. } = out else {
+                            panic!("{out:?}")
+                        };
+                        assert_eq!(dst, dest.join("x (1).txt"), "{policy:?} {same}");
+                        assert_eq!(
+                            fs::read_to_string(dest.join("x.txt")).unwrap(),
+                            if same { "new" } else { "old" }
+                        );
+                        assert!(!bin.exists());
+                        assert_eq!(rows.len(), 1);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn on_duplicate_overrides_the_policy_for_one_move() {
+        use std::sync::Arc;
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        let dest = dir.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+        let m = Mover::new(Store::open_in_memory().unwrap(), DuplicatePolicy::Skip)
+            .with_trash(Arc::new(FolderTrash(bin.clone())));
+        for (i, (over, want)) in [
+            (DuplicatePolicy::Rename, Some("x (1).txt")),
+            (DuplicatePolicy::Replace, Some("x.txt")),
+            (DuplicatePolicy::Skip, None),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            fs::write(dest.join("x.txt"), "same").unwrap();
+            let src = dir.path().join("x.txt");
+            fs::write(&src, "same").unwrap();
+            let mut r = req(&src, &dest);
+            r.batch_id = format!("b{i}");
+            r.on_duplicate = Some(over);
+            let out = m.move_file(&r).unwrap();
+            match want {
+                Some(name) => {
+                    let MoveOutcome::Moved { dst, .. } = out else {
+                        panic!()
+                    };
+                    assert_eq!(dst, dest.join(name));
+                }
+                None => assert!(matches!(out, MoveOutcome::SkippedDuplicate { .. })),
+            }
+            let _ = fs::remove_file(&src);
+            for e in fs::read_dir(&dest).unwrap() {
+                fs::remove_file(e.unwrap().path()).unwrap();
+            }
+        }
+        assert_eq!(fs::read_dir(&bin).unwrap().count(), 1);
     }
 }

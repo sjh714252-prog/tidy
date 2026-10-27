@@ -149,9 +149,9 @@ fn cell_text(c: &Data) -> String {
 
 // ── helpers ─────────────────────────────────────────────────────────────
 
-type Zip = zip::ZipArchive<std::fs::File>;
+pub(super) type Zip = zip::ZipArchive<std::fs::File>;
 
-fn open_zip(path: &Path) -> Result<Zip, ExtractError> {
+pub(super) fn open_zip(path: &Path) -> Result<Zip, ExtractError> {
     let f = std::fs::File::open(path).map_err(|source| ExtractError::Io {
         path: path.to_path_buf(),
         source,
@@ -159,7 +159,11 @@ fn open_zip(path: &Path) -> Result<Zip, ExtractError> {
     zip::ZipArchive::new(f).map_err(|e| ExtractError::format(path, e))
 }
 
-fn read_part(zip: &mut Zip, name: &str, path: &Path) -> Result<Option<String>, ExtractError> {
+pub(super) fn read_part(
+    zip: &mut Zip,
+    name: &str,
+    path: &Path,
+) -> Result<Option<String>, ExtractError> {
     let mut entry = match zip.by_name(name) {
         Ok(e) => e,
         Err(zip::result::ZipError::FileNotFound) => return Ok(None),
@@ -174,7 +178,7 @@ fn read_part(zip: &mut Zip, name: &str, path: &Path) -> Result<Option<String>, E
 
 /// Collect text of `text_tags` elements (by local name); `break_tags`
 /// produce a newline (or a tab for `tab`).
-fn ooxml_text(
+pub(super) fn ooxml_text(
     xml: &str,
     break_tags: &[&str],
     text_tags: &[&str],

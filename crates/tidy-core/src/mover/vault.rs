@@ -486,6 +486,7 @@ mod tests {
             ai_confidence: None,
             new_name: None,
             encrypt: true,
+            on_duplicate: None,
         }
     }
 

@@ -163,6 +163,9 @@ pub struct ApplyReport {
     pub moved: Vec<(PathBuf, PathBuf)>,
     /// (path, why) — gone, identical copy already there, protected…
     pub skipped: Vec<(PathBuf, String)>,
+    /// (M14) (path, existing) of the skipped ones whose identical copy is
+    /// already at the destination ("기존 파일 열기").
+    pub duplicates: Vec<(PathBuf, PathBuf)>,
     pub errors: Vec<(PathBuf, String)>,
 }
 
@@ -766,10 +769,12 @@ pub fn apply(
             }
             report.moved.push((src, dst));
         }
-        Ok(MoveOutcome::SkippedDuplicate { src, existing }) => report.skipped.push((
-            src,
-            format!("같은 내용이 이미 있음: {}", existing.display()),
-        )),
+        Ok(MoveOutcome::SkippedDuplicate { src, existing }) => {
+            report
+                .skipped
+                .push((src.clone(), crate::mover::duplicate_message(&existing)));
+            report.duplicates.push((src, existing));
+        }
         Ok(MoveOutcome::AlreadyInPlace(p)) => report.skipped.push((p, "이미 그 자리".into())),
         Err(e) => report.errors.push((src.to_path_buf(), e)),
     };
@@ -842,6 +847,7 @@ pub fn apply(
             ai_confidence: fm.context.as_ref().map(|c| c.confidence),
             new_name: fm.new_name.clone(),
             encrypt: fm.encrypt,
+            on_duplicate: None,
         };
         if fm.encrypt {
             if let Some(opts) = index {

@@ -79,6 +79,18 @@ impl Mover {
         report: &mut RecoveryReport,
     ) -> Result<(), MoverError> {
         let (src, dst) = (&e.src_path, &e.dst_path);
+        if e.op == MoveOp::Trash {
+            // (M14) Gone = it reached the trash; still there = it never
+            // left. Never the "remove the source" path below.
+            if src.exists() {
+                self.store.withdraw_move(e.id)?;
+                report.rolled_back.push(src.clone());
+            } else {
+                self.store.complete_move(e.id)?;
+                report.completed.push(src.clone());
+            }
+            return Ok(());
+        }
         match (src.is_file(), dst.is_file()) {
             (false, true) => {
                 self.store.complete_move(e.id)?;

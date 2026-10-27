@@ -11,7 +11,7 @@ import { PendingCard, splitReason } from "../components/PendingItems";
  * same card and ⋯ menu as the queue tab. Hides itself when the queue is empty.
  */
 export function ConfirmPopup() {
-  const { items, busy, error, lastResult, refresh, resolve } = usePending();
+  const { items, busy, error, lastResult, lastExisting, refresh, resolve } = usePending();
   const refreshStatus = useStatus((s) => s.refresh);
 
   useEffect(() => {
@@ -39,7 +39,16 @@ export function ConfirmPopup() {
       </header>
       <PendingCard key={item.id} p={item} a={{ busy, resolve, defer: () => void hideCurrentWindow() }} popup />
       {error && <div className="error small">{error}</div>}
-      {lastResult && <div className="muted small">방금: {lastResult}</div>}
+      {lastResult && (
+        <div className="muted small">
+          방금: {lastResult}
+          {lastExisting && (
+            <button className="link small" style={{ marginLeft: 6 }} onClick={() => void ipc.revealPath(lastExisting)}>
+              기존 파일 열기
+            </button>
+          )}
+        </div>
+      )}
       <p className="muted small hint">건너뜀 = 이번만 그대로 둠 · 무시 = 이 파일은 앞으로 묻지 않음 (설정 → 고급에서 해제)</p>
       <footer>
         <button className="link" onClick={() => void ipc.showWindow("main:pending")}>

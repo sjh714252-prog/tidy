@@ -107,6 +107,9 @@ impl Mover {
             ));
             return Ok(());
         }
+        if e.op == MoveOp::Trash {
+            return self.undo_trash(e, report);
+        }
         if !e.dst_path.is_file() {
             report
                 .conflicts
@@ -135,6 +138,27 @@ impl Mover {
                 report.restored.push((e.dst_path, e.src_path));
             }
             Err(err) => report.conflicts.push(conflict(&e, &err.to_string())),
+        }
+        Ok(())
+    }
+}
+
+impl Mover {
+    /// (M14) A file sent to the OS trash cannot be brought back from here
+    /// (no restore API on Windows/macOS). If the user already restored it
+    /// (same content back at its place, and no other active move put a file
+    /// there), the row counts as undone; otherwise undo says where it is.
+    fn undo_trash(&self, e: MoveLogEntry, report: &mut UndoReport) -> Result<(), MoverError> {
+        let back = e.src_path.is_file()
+            && self.store.active_move_to(&e.src_path)?.is_none()
+            && e.hash
+                .as_deref()
+                .is_some_and(|h| super::hash_file(&e.src_path).is_ok_and(|x| x == h));
+        if back {
+            self.store.mark_undone(e.id)?;
+            report.restored.push((e.src_path.clone(), e.src_path));
+        } else {
+            report.conflicts.push(conflict(&e, super::TRASH_UNDO_HINT));
         }
         Ok(())
     }
@@ -169,6 +193,7 @@ mod tests {
                 ai_confidence: None,
                 new_name: None,
                 encrypt: false,
+                on_duplicate: None,
             })
             .unwrap()
         {
