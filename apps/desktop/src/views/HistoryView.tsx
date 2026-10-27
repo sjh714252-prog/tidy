@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import * as ipc from "../ipc/commands";
 import type { BatchSummary, MoveLogEntry } from "../ipc/types";
 import { formatTime } from "../components/format";
+import { PathText } from "../components/PathText";
 
 const BY: Record<string, string> = { rule: "규칙", ai: "AI", user: "확인", restructure: "정리 제안" };
 
@@ -52,72 +53,73 @@ export function HistoryView() {
   };
 
   return (
-    <div className="history">
+    <div className="page history">
+      <section className="card" data-testid="bulk-undo">
+        <div className="card-head">
+          <h2>자동 이동 한꺼번에 되돌리기</h2>
+          <span className="sub">규칙·AI가 자동으로 옮긴 것만 — 직접 확인해서 옮긴 것은 건드리지 않습니다</span>
+        </div>
+        <div className="toolbar">
+          <select value={bulkHours} onChange={(e) => setBulkHours(Number(e.target.value))} aria-label="되돌릴 기간">
+            <option value={1}>최근 1시간</option>
+            <option value={3}>최근 3시간</option>
+            <option value={24}>최근 24시간</option>
+            <option value={24 * 7}>최근 7일</option>
+          </select>
+          <button className="primary" disabled={!bulkCount} onClick={() => void undoBulk()}>
+            {bulkCount == null ? "…" : `규칙·AI 이동 ${bulkCount}개 되돌리기`}
+          </button>
+        </div>
+      </section>
       <div className="toolbar">
-        <span>이동 기록 — 묶음마다 되돌릴 수 있습니다 (보관 기간: 설정의 undo_retention_days)</span>
+        <h2>이동 기록</h2>
+        <span className="muted small">묶음마다 되돌릴 수 있습니다 (보관 기간: 설정의 undo_retention_days)</span>
         <div className="spacer" />
         <button className="link" onClick={refresh}>
           새로고침
         </button>
       </div>
-      <div className="bulk-undo" data-testid="bulk-undo">
-        <span>자동 이동 한꺼번에 되돌리기:</span>{" "}
-        <select value={bulkHours} onChange={(e) => setBulkHours(Number(e.target.value))} aria-label="되돌릴 기간">
-          <option value={1}>최근 1시간</option>
-          <option value={3}>최근 3시간</option>
-          <option value={24}>최근 24시간</option>
-          <option value={24 * 7}>최근 7일</option>
-        </select>{" "}
-        <button disabled={!bulkCount} onClick={() => void undoBulk()}>
-          {bulkCount == null ? "…" : `규칙·AI 이동 ${bulkCount}개 되돌리기`}
-        </button>
-        <span className="muted small"> — 직접 확인해서 옮긴 것은 건드리지 않습니다</span>
-      </div>
       {msg && <div className="notice">{msg}</div>}
       {batches.length === 0 ? (
-        <p className="muted pad">아직 이동 기록이 없습니다.</p>
+        <p className="muted">아직 이동 기록이 없습니다.</p>
       ) : (
-        <table className="grid">
-          <tbody>
-            {batches.map((b) => (
-              <Fragment key={b.batch_id}>
-                <tr className={b.undone === b.moves ? "gone" : ""}>
-                  <td className="nowrap muted">{formatTime(b.last_at)}</td>
-                  <td className="nowrap">
-                    <span className="tag">{BY[b.decided_by] ?? b.decided_by}</span>
-                  </td>
-                  <td className="nowrap">
-                    {b.moves}개{b.undone > 0 && <span className="muted"> ({b.undone === b.moves ? "되돌림" : `${b.undone}개 되돌림`})</span>}
-                  </td>
-                  <td className="path" title={b.example}>
-                    {b.label && <b>{b.label} </b>}
-                    <span className="muted">{b.example}</span>
-                  </td>
-                  <td className="nowrap">
-                    <button className="link" onClick={() => setOpen(open === b.batch_id ? null : b.batch_id)}>
-                      {open === b.batch_id ? "접기" : "파일 보기"}
-                    </button>
-                    {b.undone < b.moves && <button onClick={() => void undo(b)}>되돌리기</button>}
-                  </td>
-                </tr>
-                {open === b.batch_id && (
-                  <tr>
-                    <td colSpan={5}>
-                      <ul className="small">
-                        {moves.map((m) => (
-                          <li key={m.id} className={m.undone_at ? "muted" : ""}>
-                            {m.src_path} → {m.dst_path}
-                            {m.undone_at ? " (되돌림)" : m.in_progress ? " (진행 중 / 중단됨)" : ""}
-                          </li>
-                        ))}
-                      </ul>
-                    </td>
-                  </tr>
-                )}
-              </Fragment>
-            ))}
-          </tbody>
-        </table>
+        <section className="table">
+          {batches.map((b) => (
+            <Fragment key={b.batch_id}>
+              <div className={`t-row history-row${b.undone === b.moves ? " gone" : ""}`} data-testid="batch-row">
+                <span className="muted small hide-narrow">{formatTime(b.last_at)}</span>
+                <span className="hide-narrow">
+                  <span className="tag" style={{ marginLeft: 0 }}>
+                    {BY[b.decided_by] ?? b.decided_by}
+                  </span>
+                </span>
+                <span className="small hide-narrow">
+                  {b.moves}개{b.undone > 0 && <span className="muted"> ({b.undone === b.moves ? "되돌림" : `${b.undone}개 되돌림`})</span>}
+                </span>
+                <div className="cell">
+                  {b.label && <span className="name">{b.label}</span>}
+                  <PathText path={b.example} file className="sub-path" />
+                </div>
+                <span className="cell right">
+                  <button className="link" onClick={() => setOpen(open === b.batch_id ? null : b.batch_id)}>
+                    {open === b.batch_id ? "접기" : "파일 보기"}
+                  </button>
+                  {b.undone < b.moves && <button onClick={() => void undo(b)}>되돌리기</button>}
+                </span>
+              </div>
+              {open === b.batch_id && (
+                <ul className="history-files">
+                  {moves.map((m) => (
+                    <li key={m.id} className={m.undone_at ? "muted" : ""}>
+                      <span className="mono">{m.src_path}</span> → <span className="mono">{m.dst_path}</span>
+                      {m.undone_at ? " (되돌림)" : m.in_progress ? " (진행 중 / 중단됨)" : ""}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Fragment>
+          ))}
+        </section>
       )}
     </div>
   );

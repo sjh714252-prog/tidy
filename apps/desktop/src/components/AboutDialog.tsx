@@ -119,7 +119,7 @@ export function AboutDialog() {
           </button>{" "}
           {upd && <UpdateLine u={upd} onErr={setErr} />}
           {!upd && info && !info.checkUpdates && (
-            <span className="muted small">하루 한 번 자동 확인이 꺼져 있습니다(설정 ⑥ 고급).</span>
+            <span className="muted small">하루 한 번 자동 확인이 꺼져 있습니다(설정 → 고급).</span>
           )}
         </div>
         {err && <p className="error small">{err}</p>}

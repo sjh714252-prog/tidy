@@ -19,6 +19,7 @@
 import { chromium } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
+import { gotoSettings, openRule, openToml, ruleCard, saveSettings } from "./lib.mjs";
 
 const T = process.env.T;
 const DESK = path.join(T, "바탕 화면");
@@ -50,7 +51,6 @@ const waitFor = async (fn, ms, step = 500) => {
   }
   return false;
 };
-const tab = (page, name) => page.getByRole("button", { name, exact: true }).click();
 
 // Files that are already there before setup.
 fs.writeFileSync(path.join(DESK, "보고서 A.pdf"), "old report");
@@ -59,10 +59,6 @@ fs.writeFileSync(path.join(DOWN, "옛 압축.zip"), "zip");
 
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1100, height: 900 } });
-// M10: settings sections are foldable; these older tests expect everything open.
-await ctx.addInitScript(() =>
-  localStorage.setItem("tidy.settings.sections", JSON.stringify({ watch: true, rules: true, context: true, ai: true, security: true, advanced: true })),
-);
 const answers = [];
 const onDialog = (d) => d.accept(answers.shift() ?? "");
 const main = await ctx.newPage();
@@ -79,7 +75,7 @@ await sleep(1000);
 {
   const st = await bridge("get_status");
   ok("A", "첫 실행: onboarded = false", st.onboarded === false);
-  const bar = await main.locator(".statusbar").innerText();
+  const bar = await main.locator("[data-testid=statusbar]").innerText();
   ok("A", "상태바: 마법사를 마치면 감시 시작", bar.includes("마법사를 마치면"), bar.replace(/\n/g, " | "));
   ok("A", "설정·규칙 파일 아직 없음", !fs.existsSync(CFG) && !fs.existsSync(RULES));
   ok("A", "마법사 1단계 표시", await wiz.locator("[data-testid=step-folders]").isVisible());
@@ -179,8 +175,8 @@ await sleep(1000);
     "기존 파일은 그대로 (보고서 A.pdf, 마법사 중 문서.pdf, 옛 압축.zip)",
     fs.existsSync(path.join(DESK, "보고서 A.pdf")) && fs.existsSync(path.join(DESK, "마법사 중 문서.pdf")) && fs.existsSync(path.join(DOWN, "옛 압축.zip")),
   );
-  const bar = await main.locator(".statusbar").innerText();
-  ok("D", "상태바: 감시 중", bar.includes("감시 중"), bar.replace(/\n/g, " | "));
+  const bar = await main.locator("[data-testid=statusbar]").innerText();
+  ok("D", "상태바: 자동 정리 중", bar.includes("자동 정리 중"), bar.replace(/\n/g, " | "));
 }
 
 // E. "기존 파일 미리보기" → report tab rules plan, nothing applied
@@ -199,14 +195,20 @@ await sleep(1000);
 {
   fs.writeFileSync(path.join(DESK, "로고.psd"), "psd"); // no rule yet → stays
   await sleep(11000); // past the editor's 10 s listing cache
-  await tab(main, "설정");
-  await sleep(1500);
+  await gotoSettings(main, "rules");
+  await sleep(1200);
   const cards = main.locator("[data-testid=rule-card]");
   ok("F", "규칙 카드 2개 (문서, 압축)", (await cards.count()) === 2, `${await cards.count()}`);
-  const names = async () => main.locator("[data-testid=rule-card] input.rule-name").evaluateAll((els) => els.map((e) => e.value));
+  ok("F", "규칙은 한 줄로 접힌 채 시작 (M13)", (await main.locator("[data-testid=rule-card][data-open=true]").count()) === 0);
+  // Names of all cards: the collapsed line's text, or the open card's input.
+  const names = async () =>
+    cards.evaluateAll((els) =>
+      els.map((e) => e.querySelector("input.rule-name")?.value ?? e.querySelector("[data-testid=rule-name]")?.firstChild?.textContent?.trim() ?? ""),
+    );
   await main.getByRole("button", { name: "+ 규칙 추가" }).click();
   await sleep(500);
   const card = cards.nth(2);
+  ok("F", "+ 규칙 추가 → 새 카드가 펼쳐짐", (await card.getAttribute("data-open")) === "true");
   await card.locator("input.rule-name").fill("디자인");
   const extIn = card.locator("input[placeholder='확장자 + Enter']");
   await extIn.fill("PSD");
@@ -236,34 +238,34 @@ await sleep(1000);
   await sleep(1500);
   const count = await card.locator("[data-testid=match-count]").innerText();
   ok("F", "실시간 매치 수: 지금 1개 · 예: 로고.psd", count.includes("지금 1개") && count.includes("로고.psd"), count);
-  // Reorder by dragging the handle (all cards on screen: tall viewport),
-  // then with the ↑/↓ buttons.
-  await main.setViewportSize({ width: 1100, height: 2400 });
-  // The settings page is long (M9 security section): start with the first
-  // card at the top so both ends of the drag are on screen.
-  await cards.nth(0).evaluate((e) => e.scrollIntoView({ block: "start" }));
+  // Reorder by dragging the handle of the collapsed line, then with the
+  // ↑ 위로 / ↓ 아래로 buttons (under "조건 더 보기" of the open card).
+  await card.getByRole("button", { name: "접기", exact: true }).click();
   await sleep(300);
-  await card.locator(".handle").dragTo(cards.nth(0).locator("header"));
+  await cards.nth(2).locator(".rule-line .handle").dragTo(cards.nth(0).locator(".rule-line"));
   await sleep(1200);
   let order = await names();
   ok("F", "드래그로 순서 변경 → 디자인이 맨 위", order[0] === "디자인", order.join(","));
-  await cards.nth(0).getByRole("button", { name: "↓" }).click();
-  await sleep(600);
-  await cards.nth(2).getByRole("button", { name: "↑" }).click();
-  await sleep(1200);
+  const step = async (i, label) => {
+    const c = await openRule(main, i);
+    if (!(await c.locator("[data-testid=rule-more]").count())) await c.locator("[data-testid=more-conds]").click();
+    await sleep(200);
+    await c.getByRole("button", { name: label }).click();
+    await sleep(800);
+  };
+  await step(0, "↓ 아래로");
+  await step(2, "↑ 위로");
+  await sleep(400);
   order = await names();
   ok("F", "↓/↑ 버튼으로 순서 변경", order.join(",") === "문서,압축 파일,디자인", order.join(","));
-  await cards.nth(2).getByRole("button", { name: "↑" }).click();
-  await sleep(1200);
+  await step(2, "↑ 위로");
+  await sleep(400);
   order = await names();
   ok("F", "↑ 버튼 → 문서, 디자인, 압축", order[1] === "디자인", order.join(","));
-  await main.setViewportSize({ width: 1100, height: 900 });
   // TOML synced (advanced, collapsed by default).
-  const adv = main.locator("details.advanced");
+  const adv = main.locator("details.toml-edit");
   ok("F", "고급(TOML)은 접힌 상태", !(await adv.evaluate((d) => d.open)));
-  await adv.locator("summary").click();
-  await sleep(300);
-  const ta = main.locator("textarea.rules");
+  const ta = await openToml(main);
   let toml = await ta.inputValue();
   const iDoc = toml.indexOf('name = "문서"');
   const iDes = toml.indexOf('name = "디자인"');
@@ -279,18 +281,18 @@ await sleep(1000);
   toml = await ta.inputValue();
   await ta.fill(toml.replace('dest = "문서/디자인"', 'dest = "문서/{year}"'));
   await sleep(1200);
-  const err = await main.locator(".rules-section .error").innerText().catch(() => "");
-  const disabled = await main.locator("[data-testid=rule-card] input.rule-name").first().isDisabled();
+  const err = await main.locator("[data-testid=rules-check]").innerText().catch(() => "");
+  await openRule(main, 0);
+  const disabled = await ruleCard(main, 0).locator("input.rule-name").isDisabled();
   ok("F", "TOML 오류 → 카드 읽기 전용 + 오류 표시", disabled && err.includes("year"), err);
-  ok("F", "오류 중 저장 불가", await main.getByRole("button", { name: "저장", exact: true }).isDisabled());
+  ok("F", "오류 중 저장 불가", await main.locator("[data-testid=savebar]").getByRole("button", { name: "저장", exact: true }).isDisabled());
   await ta.fill(toml);
   await sleep(1200);
-  ok("F", "고치면 카드 다시 편집 가능", !(await main.locator("[data-testid=rule-card] input.rule-name").first().isDisabled()));
+  ok("F", "고치면 카드 다시 편집 가능", !(await ruleCard(main, 0).locator("input.rule-name").isDisabled()));
   // M8 left a disabled placeholder here; M9 made it the real option (e2e/m9.mjs).
   ok("F", "카드 옵션: 개인정보면 암호화 (M9, 꺼진 채 시작)", !(await main.locator("[data-testid=encrypt-toggle]").first().isChecked()));
   await main.screenshot({ path: `${SHOT}/m8-F-editor.png`, fullPage: true });
-  await main.getByRole("button", { name: "저장", exact: true }).click();
-  await sleep(3000);
+  await saveSettings(main, 3000);
   const saved = fs.readFileSync(RULES, "utf8");
   ok("F", "저장: rules.toml에 사용자 주석·새 규칙", saved.startsWith("# 내 메모") && saved.includes('name = "디자인 파일"'));
   ok("F", "저장 전후 기존 psd는 그대로", fs.existsSync(path.join(DESK, "로고.psd")));
@@ -301,6 +303,7 @@ await sleep(1000);
 
 // G. rerun wizard
 {
+  await gotoSettings(main, "advanced");
   await main.getByRole("button", { name: "마법사 다시 실행" }).click();
   await sleep(2000);
   const txt = await wiz.locator("[data-testid=wizard]").innerText();

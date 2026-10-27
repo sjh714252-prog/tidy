@@ -6,7 +6,7 @@ members = ["crates/tidy-core", "crates/tidy-cli"]
 exclude = ["apps/desktop/src-tauri"]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/sjh714252-prog/tidy"

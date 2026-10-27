@@ -23,6 +23,7 @@ import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { addWatchFolder, gotoSettings, openWatchEdit, saveSettings } from "./lib.mjs";
 
 const T = process.env.T;
 const S = process.env.S;
@@ -96,9 +97,6 @@ fs.writeFileSync(CONTEXT, '[[entity]]\nname = "바다정보"\naliases = ["BADA"]
 // ── browser ─────────────────────────────────────────────────────────────
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 960 } });
-await ctx.addInitScript(() =>
-  localStorage.setItem("tidy.settings.sections", JSON.stringify({ watch: true, rules: false, context: true, ai: true, security: false, advanced: false })),
-);
 const main = await ctx.newPage();
 const dialogs = [];
 main.on("dialog", (d) => {
@@ -109,25 +107,21 @@ main.on("dialog", (d) => {
 await main.goto("http://localhost:1420/#/main");
 await main.waitForSelector(".topbar");
 await sleep(1000);
-const tab = (name) => main.locator(".topbar nav").getByRole("button", { name });
-const save = async () => {
-  await main.getByRole("button", { name: "저장", exact: true }).click();
-  await sleep(3000);
-};
+const tab = (name) => main.locator(".topbar nav").getByRole("button", { name, exact: name !== "확인 대기" });
+const save = () => saveSettings(main, 3000);
 const panel = main.locator(".restructure");
 const folderRow = () => panel.locator("[data-testid=context-row][data-kind=folder]");
 const fileRows = () => panel.locator("[data-testid=context-row][data-kind=file]");
 
 // A. settings
 {
-  await tab("설정").click();
-  await sleep(800);
-  process.env.PROMPT_ANSWER = DESK;
-  await main.getByRole("button", { name: "폴더 추가…", exact: true }).click();
+  await gotoSettings(main, "watch");
+  await addWatchFolder(main, DESK);
+  // 공통 정리 위치 (none yet → every folder collects there).
+  process.env.PROMPT_ANSWER = ORG;
+  await main.locator("[data-testid=common-root]").getByRole("button", { name: "찾아보기…" }).click();
   await sleep(500);
-  const row = main.locator(".settings tbody tr:not(.subrow)").first();
-  await row.locator("select[aria-label='정리 방식']").selectOption("collect");
-  await row.locator("input.organize-root").fill(ORG);
+  await gotoSettings(main, "ai");
   const ai = main.locator("[data-testid=ai-section]");
   await ai.locator("label.row", { hasText: "AI 사용" }).locator("input[type=checkbox]").check();
   await ai.locator("select").first().selectOption("openai");
@@ -140,6 +134,7 @@ const fileRows = () => panel.locator("[data-testid=context-row][data-kind=file]"
   const ready = await waitFor(async () => (await bridge("get_status")).aiState === "ready", 20000);
   ok("A", "AI 준비됨 (가짜 서버)", ready, (await bridge("get_status")).aiDetail ?? "");
   // Watch-time curation needs the AI on first.
+  await gotoSettings(main, "context");
   await main.locator("[data-testid=curate-enabled]").check();
   await save();
   const cfg = fs.readFileSync(CFG, "utf8");
@@ -168,12 +163,12 @@ const fileRows = () => panel.locator("[data-testid=context-row][data-kind=file]"
   await tab("홈").click();
   const nf = main.locator("[data-testid=new-folders]");
   const shown = await waitFor(async () => (await nf.count()) === 1, 30000);
-  ok("C", "홈: 새 폴더 1개 — 지금 정리", shown && (await nf.innerText()).includes("새 폴더 1개"), (await main.locator("[data-testid=organize-card]").innerText().catch(() => "")).replace(/\n/g, " | "));
+  ok("C", "홈: 바탕화면 카드에 '새 폴더 1'", shown && (await nf.innerText()).includes("새 폴더 1"), (await main.locator("[data-testid=organize-card]").innerText().catch(() => "")).replace(/\n/g, " | "));
   await main.screenshot({ path: `${SHOT}/m12-C-home.png` });
   dialogs.length = 0;
-  await nf.getByRole("button", { name: "지금 정리" }).click();
+  await nf.click();
   const planned = await waitFor(async () => (await panel.locator("[data-testid=context-plan]").count()) === 1, 60000);
-  ok("C", "지금 정리 → 정리하기 탭 + 업무 맥락 미리보기", planned && ((await tab("정리하기").getAttribute("class")) ?? "").includes("on"));
+  ok("C", "지금 정리 → 정리하기 탭 + 업무 맥락 미리보기", planned && (await tab("정리하기").getAttribute("aria-current")) === "page");
   ok("C", "비용 안내: 항목 4개(폴더 1개는 통째로…)", dialogs.some((d) => d.includes("항목 4개") && d.includes("폴더 1개")), dialogs[0]?.replace(/\n/g, " ").slice(0, 120));
 }
 
@@ -224,7 +219,7 @@ const DEST = path.join(ORG, "중앙선관위", "20261019_로그분석", "개발"
   await waitFor(async () => (await card.count()) === 1, 15000);
   const row = card.locator("[data-testid=customer-row][data-name=중앙선관위]");
   const text = await row.innerText().catch(() => "");
-  ok("F", "고객사별 보기: 중앙선관위 · 이슈 폴더 2개 · 파일 32개 · 마지막 작업", text.includes("이슈 폴더 2개") && text.includes("파일 32개") && text.includes("마지막 작업"), text.replace(/\n/g, " "));
+  ok("F", "고객사별 보기: 중앙선관위 · 폴더 2 · 파일 32 · 마지막 작업 날짜", text.includes("폴더 2") && text.includes("파일 32") && /\d+\/\d+/.test(text), text.replace(/\n/g, " "));
   ok("F", "고객사별 보기: 바다정보도", (await card.locator("[data-testid=customer-row][data-name=바다정보]").count()) === 1);
   await main.screenshot({ path: `${SHOT}/m12-F-customers.png` });
   await row.getByRole("button").first().click();
@@ -248,7 +243,7 @@ const DEST = path.join(ORG, "중앙선관위", "20261019_로그분석", "개발"
   ok("F", "검색창: 필터 적용 결과는 중앙선관위만", dirs.length > 0 && dirs.every((d) => d.includes("중앙선관위")), `${dirs.length} hits`);
   await s.screenshot({ path: `${SHOT}/m12-F-search.png` });
   await s.close();
-  await main.getByRole("button", { name: "도움말 ▾" }).click();
+  await main.getByRole("button", { name: "도움말", exact: true }).click();
   await main.getByRole("menuitem", { name: "고객사 자료는 어디 있나요?" }).click();
   await sleep(500);
   const h = await bridge("debug_opened");
@@ -259,7 +254,7 @@ const DEST = path.join(ORG, "중앙선관위", "20261019_로그분석", "개발"
 {
   await tab("되돌리기").click();
   await sleep(1000);
-  const row = main.locator(".grid tbody tr").filter({ hasText: "업무 맥락" }).first();
+  const row = main.locator("[data-testid=batch-row]").filter({ hasText: "업무 맥락" }).first();
   dialogs.length = 0;
   await row.getByRole("button", { name: "되돌리기", exact: true }).click();
   const back = await waitFor(() => GO_FILES.every((n) => fs.existsSync(path.join(GO, n))) && TOP.every((n) => fs.existsSync(path.join(DESK, n))), 20000);
@@ -296,9 +291,9 @@ const DEST = path.join(ORG, "중앙선관위", "20261019_로그분석", "개발"
 
 // I. watching: sub-folder files never move; top-level files are curated
 {
-  await tab("설정").click();
-  await sleep(800);
-  await main.locator(".settings tbody tr:not(.subrow)").first().locator("td").nth(1).locator("input[type=checkbox]").check();
+  await gotoSettings(main, "watch");
+  const wc = await openWatchEdit(main, 0);
+  await wc.getByRole("checkbox", { name: /하위 폴더 안의 파일도 정리/ }).check();
   await save();
   ok("I", "감시: 하위 폴더 포함 켬 (그래도 하위 폴더 파일은 안 옮김)", /recursive = true/.test(fs.readFileSync(CFG, "utf8")));
   await sleep(1500);

@@ -17,20 +17,12 @@ const ok = (step, what, pass, note = "") => {
   console.log(`${pass ? "PASS" : "FAIL"} [${step}] ${what} ${note}`);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// M8: the rules TOML editor sits in the collapsed "고급" section.
-const openAdvanced = async (page) => {
-  const d = page.locator("details.advanced");
-  if (!(await d.evaluate((e) => e.open))) await d.locator("summary").click();
-};
+import { addWatchFolder, gotoSettings, openToml, saveSettings, statusText, tab } from "./lib.mjs";
 const bridge = async (cmd, args = {}) =>
   (await (await fetch(`http://127.0.0.1:1421/invoke/${cmd}`, { method: "POST", body: JSON.stringify(args) })).json()).value;
 
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 960, height: 800 } });
-// M10: settings sections are foldable; these older tests expect everything open.
-await ctx.addInitScript(() =>
-  localStorage.setItem("tidy.settings.sections", JSON.stringify({ watch: true, rules: true, context: true, ai: true, security: true, advanced: true })),
-);
 const main = await ctx.newPage();
 main.on("dialog", (d) => d.accept(process.env.PROMPT_ANSWER ?? ""));
 await main.goto("http://localhost:1420/#/main");
@@ -39,47 +31,42 @@ await sleep(1000);
 
 // A. watch folder + rules via settings (same as M3 step 3)
 {
-  await main.getByRole("button", { name: "설정", exact: true }).click();
-  await sleep(600);
-  process.env.PROMPT_ANSWER = DESK;
-  await main.getByRole("button", { name: "폴더 추가…" }).click();
-  await sleep(300);
-  await openAdvanced(main);
-  const ta = main.locator("textarea.rules");
+  await gotoSettings(main, "watch");
+  await addWatchFolder(main, DESK);
+  const ta = await openToml(main);
   await ta.fill(
     `[[rule]]\nname = "설치 확인"\nmatch = { ext = ["exe"] }\ndest = '${T}/설치 파일'\nconfirm = true\n\n` +
       `[[rule]]\nname = "Tidy 테스트"\nmatch = { ext = ["txt"], name_regex = "^tidy-test" }\ndest = "~/Documents/Tidy/테스트 결과/{yyyy}/{mm}"\n\n` +
       (await ta.inputValue()),
   );
-  await main.getByRole("button", { name: "저장", exact: true }).click();
-  await sleep(2500);
-  const bar = await main.locator(".statusbar").innerText();
-  ok("A", "감시 설정 저장", bar.includes("바탕 화면"), bar.replace(/\n/g, " | "));
+  await saveSettings(main);
+  const bar = await statusText(main);
+  ok("A", "감시 설정 저장", bar.includes("감시 1곳"), bar.replace(/\n/g, " | "));
   ok("A", "상태바 AI 표시 (꺼짐)", bar.includes("AI"), "");
 }
 
 // B. AI section: enable with an unreachable Ollama → saved, test fails gracefully
 {
+  await gotoSettings(main, "ai");
   const ai = main.locator("[data-testid=ai-section]");
-  ok("B", "AI 설정 섹션 표시", (await ai.count()) === 1, `sections=${await main.locator("section").count()}`);
+  ok("B", "설정 → AI 연결 화면 표시", (await ai.count()) === 1 && main.url().endsWith("#/main/settings/ai"), main.url());
   await ai.locator("label.row", { hasText: "AI 사용" }).locator("input[type=checkbox]").check();
   // Issue #8: unsaved AI edits survive a tab round-trip (dialog: stay / leave) …
   // (the page-level dialog handler accepts the "leave without saving?" confirm)
-  await main.locator(".topbar nav").getByRole("button", { name: "홈" }).click();
+  await tab(main, "홈").click();
   await sleep(300);
-  await main.getByRole("button", { name: "설정", exact: true }).click();
+  await tab(main, "설정").click();
   await sleep(800);
   const kept = await ai.locator("label.row", { hasText: "AI 사용" }).locator("input[type=checkbox]").isChecked();
   ok("B", "#8 저장 전 탭 이동해도 AI 입력 유지", kept);
-  const hint = await main.locator(".savebar").innerText();
+  const hint = await main.locator("[data-testid=savebar]").innerText();
   ok("B", "#8 저장바에 '저장하지 않은 변경' 표시", hint.includes("저장하지 않은"), hint);
   await ai.locator("select").first().selectOption("ollama");
   await sleep(300);
   const base = ai.locator("label.row", { hasText: "주소" }).locator("input");
   if (await base.count()) await base.fill("http://127.0.0.1:9");
   // Issue #8: the single bottom "저장" saves the AI section too.
-  await main.getByRole("button", { name: "저장", exact: true }).click();
-  await sleep(2500);
+  await saveSettings(main);
   const msg = await ai.locator("p.ok").innerText().catch(() => "");
   const err = await ai.locator("p.error").innerText().catch(() => "");
   ok("B", "AI 설정 저장 메시지", msg.length > 0 && !err, `msg=${msg} err=${err}`);
@@ -87,8 +74,8 @@ await sleep(1000);
   ok("B", "config.toml [ai] 기록, 키 문자열 없음", /\[ai/.test(cfg) && !/sk-|api_key *= *"[^"]+"/.test(cfg), cfg.match(/\[ai[^\n]*/)?.[0] ?? "");
   await main.reload();
   await main.waitForSelector(".topbar");
-  await main.getByRole("button", { name: "설정", exact: true }).click();
   await sleep(1000);
+  ok("B", "새로고침해도 설정 → AI 연결 화면 그대로 (#/main/settings/ai)", (await ai.count()) === 1);
   const persisted = await main.locator("label.row", { hasText: "AI 사용" }).locator("input[type=checkbox]").isChecked();
   const prov = await main.locator("[data-testid=ai-section]").locator("select").first().inputValue();
   ok("B", "#8 하단 저장 → 재진입 후 AI 설정 유지", persisted && prov === "ollama", `enabled=${persisted} provider=${prov}`);
@@ -107,12 +94,13 @@ await sleep(1000);
 // C. Rule 4: with AI enabled but unreachable, rules still move files, and a
 //    no-rule file is reported (no hang) within a few seconds.
 {
-  await main.locator(".topbar nav").getByRole("button", { name: "홈" }).click();
-  await main.locator("label", { hasText: "규칙 없는 파일 숨기기" }).locator("input").uncheck();
+  await tab(main, "홈").click();
+  await main.getByRole("button", { name: "전체 보기" }).click();
+  await main.getByRole("checkbox", { name: /규칙 없는 파일 숨기기/ }).uncheck();
   fs.writeFileSync(path.join(DESK, "tidy-test ai폴백.txt"), "AI 없이도 규칙으로");
   fs.writeFileSync(path.join(DESK, "무규칙.unknownext"), "no rule");
   await sleep(8000);
-  const feed = await main.locator(".activity").innerText();
+  const feed = await main.locator("[data-testid=activity-feed]").innerText();
   ok("C", "규칙 매치 파일은 AI와 무관하게 이동", /이동[\s\S]*ai폴백/.test(feed), "");
   ok("C", "규칙 없는 파일: 규칙 없음/확인 대기로 기록 (AI 실패 폴백)", /무규칙\.unknownext/.test(feed) && /(규칙 없음|확인 대기|오류)/.test(feed), feed.split("\n").filter((l) => l.includes("무규칙")).join(" | ").slice(0, 160));
   ok("C", "규칙 없는 파일은 제자리", fs.existsSync(path.join(DESK, "무규칙.unknownext")));
@@ -136,7 +124,7 @@ await sleep(1000);
   ok("D", "같은 폴더로 3회 이동", moved === 3, `moved=${moved}`);
   await c.close();
 
-  await main.locator(".topbar nav").getByRole("button", { name: "확인 대기" }).click();
+  await tab(main, "확인 대기").click();
   await sleep(1500);
   const card = main.locator(".learn-card").first();
   const shown = (await card.count()) > 0;

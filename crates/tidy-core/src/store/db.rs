@@ -619,6 +619,17 @@ impl Store {
             .collect())
     }
 
+    /// (M13) Finished moves made, or undone, at or after `since` (unix
+    /// seconds), newest first — the home tab's "오늘 한 일".
+    pub fn moves_since(&self, since: i64) -> Result<Vec<MoveLogEntry>, StoreError> {
+        let mut stmt = self.conn.prepare(&format!(
+            "{SELECT_MOVE} WHERE (moved_at >= ?1 OR undone_at >= ?1) AND state = 'done' \
+             ORDER BY id DESC"
+        ))?;
+        let rows = stmt.query_map([since], move_from_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     pub fn recent_moves(&self, limit: usize) -> Result<Vec<MoveLogEntry>, StoreError> {
         let mut stmt = self
             .conn

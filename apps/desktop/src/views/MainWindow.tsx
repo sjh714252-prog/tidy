@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import * as ipc from "../ipc/commands";
 import { onActivity, onNavigate, onPending, onProgress, onStatus } from "../ipc/events";
 import { useProgress } from "../store/progress";
@@ -14,9 +14,13 @@ import { useCurate } from "../store/curate";
 import { useNav } from "../store/nav";
 import { useReport } from "../store/report";
 import { ActivityView } from "./ActivityView";
-import { HelpMenu } from "../components/HelpMenu";
+import { HelpMenu, helpItems } from "../components/HelpMenu";
+import { MoreMenu } from "../components/MoreMenu";
+import { PathText } from "../components/PathText";
+import { baseName } from "../components/paths";
+import { useNarrow } from "../components/useNarrow";
 import { AboutDialog } from "../components/AboutDialog";
-import { baseName, shortPath, useHome } from "../store/home";
+import { useHome } from "../store/home";
 import { HistoryView } from "./HistoryView";
 import { PendingView } from "./PendingView";
 import { ReportView } from "./ReportView";
@@ -60,7 +64,7 @@ export function MainWindow() {
         setTab(t);
         // Tray "정보…".
         if (q.get("about")) useHome.getState().openAbout(false);
-        // "AI 연결에서 켜기" from another window: open that settings section.
+        // "AI 연결에서 켜기" from another window: open that settings page.
         if (t === "settings" && q.get("section")) useNav.getState().goSettings(q.get("section") ?? "");
         // Wizard "기존 파일 미리보기": rules plan of a watch folder (nothing
         // moves until the user applies selected items).
@@ -88,28 +92,64 @@ export function MainWindow() {
     };
   }, [refresh, refreshPending, push, updateProgress]);
 
+  const narrow = useNarrow();
+  const openAbout = useHome((s) => s.openAbout);
+  const [helpErr, setHelpErr] = useState<string | null>(null);
+  const searchLabel = `검색 ${status?.hotkey?.replace(/CmdOrCtrl/i, "Ctrl") ?? ""}`.trim();
+
   return (
     <div className="main">
       <header className="topbar">
         <div className="brand">Tidy</div>
         <nav aria-label="탭">
           {TABS.map((t) => (
-            <button key={t.id} className={tab === t.id ? "tab on" : "tab"} onClick={() => switchTab(t.id)}>
+            <button
+              key={t.id}
+              className={tab === t.id ? "tab on" : "tab"}
+              aria-current={tab === t.id ? "page" : undefined}
+              data-testid={`tab-${t.id}`}
+              onClick={() => switchTab(t.id)}
+            >
               {t.label}
               {t.id === "pending" && status?.pendingCount ? <span className="badge">{status.pendingCount}</span> : null}
             </button>
           ))}
         </nav>
         <div className="spacer" />
-        <button onClick={() => void ipc.showWindow("search")} title={status?.hotkey}>
-          검색 ({status?.hotkey ?? "…"})
-        </button>
-        {status && (
-          <button onClick={() => void setPaused(!status.paused)}>{status.paused ? "감시 재개" : "일시정지"}</button>
-        )}
-        <HelpMenu />
+        <div className="tools">
+          {narrow ? (
+            <>
+              <button className="icon" aria-label="검색" title={status?.hotkey} onClick={() => void ipc.showWindow("search")}>
+                ⌕
+              </button>
+              <MoreMenu
+                label="메뉴"
+                testid="narrow-menu"
+                items={[
+                  ...(status
+                    ? [{ label: status.paused ? "감시 재개" : "일시정지", onClick: () => void setPaused(!status.paused) }]
+                    : []),
+                  ...helpItems(openAbout, setHelpErr).map((x, i) => ({ ...x, sep: i === 0 })),
+                ]}
+              >
+                ≡
+              </MoreMenu>
+            </>
+          ) : (
+            <>
+              <button onClick={() => void ipc.showWindow("search")} title={status?.hotkey}>
+                {searchLabel}
+              </button>
+              {status && (
+                <button onClick={() => void setPaused(!status.paused)}>{status.paused ? "감시 재개" : "일시정지"}</button>
+              )}
+              <HelpMenu />
+            </>
+          )}
+          {helpErr && <span className="error small" title={helpErr}>열지 못했습니다</span>}
+        </div>
       </header>
-      <StatusBar />
+      {tab !== "settings" && <StatusBar />}
       <section className="content">
         {tab === "activity" && <ActivityView />}
         {tab === "pending" && <PendingView />}
@@ -140,23 +180,32 @@ function StatusBar() {
   const n = status.watchTotal;
   const roots = status.organizeRoots;
   const places = status.organizeInPlace + roots.length;
-  const where = !roots.length
-    ? "각 폴더 안에서 정리"
-    : places === 1
-      ? `정리 위치 ${shortPath(roots[0] ?? "")}`
-      : `정리 위치 ${places}곳`;
-  const watchLabel = n === 1 ? `감시 중: ${baseName(status.watchPaths[0] ?? "")}` : `감시 중 ${n}곳`;
   const state = !status.onboarded
-    ? null
-    : status.paused
-      ? { text: "일시정지", cls: "warn" }
-      : status.offline.length
-        ? { text: `연결 끊김 ${status.offline.length}곳`, cls: "warn" }
-        : status.watching.length
-          ? { text: "새 파일 자동 정리 중", cls: "ok" }
-          : null;
+    ? { text: "설정 마법사 전", short: "마법사 전", cls: "" }
+    : n === 0
+      ? { text: "감시 중인 폴더 없음", short: "감시 없음", cls: "" }
+      : status.paused
+        ? { text: "일시정지", short: "일시정지", cls: "warn" }
+        : status.offline.length
+          ? { text: `연결 끊김 ${status.offline.length}곳`, short: `끊김 ${status.offline.length}`, cls: "warn" }
+          : status.watching.length
+            ? { text: "새 파일 자동 정리 중", short: "자동 정리 중", cls: "ok" }
+            : { text: "감시 준비 중", short: "준비 중", cls: "" };
+  const model = status.aiState === "ready" && status.aiDetail ? aiModel(status.aiDetail) : null;
   return (
     <div className="statusbar" data-testid="statusbar">
+      <span
+        className={`sb-group ${state.cls === "warn" ? "warn" : ""}`}
+        data-testid="watch-state"
+        title={status.offline.length ? `연결이 돌아오면 자동으로 다시 감시합니다: ${status.offline.join(", ")}` : ""}
+      >
+        <span className={`dot ${state.cls}`} aria-hidden />
+        <span className="sb-long">{state.text}</span>
+        <span className="sb-short">{state.short}</span>
+      </span>
+      <span className="sb-sep" aria-hidden>
+        │
+      </span>
       {!status.onboarded ? (
         <span className="sb-group">
           설정 마법사를 마치면 감시를 시작합니다{" "}
@@ -165,7 +214,7 @@ function StatusBar() {
           </button>
         </span>
       ) : n === 0 ? (
-        <span className="sb-group">감시 중인 폴더 없음 — 설정에서 추가하세요</span>
+        <span className="sb-group">설정 → 감시 폴더에서 추가하세요</span>
       ) : (
         <button
           className="sb-group sb-summary"
@@ -173,22 +222,18 @@ function StatusBar() {
           title={`${status.watchPaths.join("\n")}${roots.length ? `\n정리 위치: ${roots.join(", ")}` : ""}\n(눌러서 감시 현황 보기)`}
           onClick={togglePanel}
         >
-          📁 {watchLabel} · <span title={roots.join("\n")}>{where}</span>
+          감시 {n}곳 →{" "}
+          {!roots.length ? (
+            "각 폴더 안에서 정리"
+          ) : places === 1 ? (
+            <>
+              <span className="sb-long">정리 위치 </span>
+              <PathText path={roots[0] ?? ""} max={28} inline clickable={false} />
+            </>
+          ) : (
+            `정리 위치 ${places}곳`
+          )}
         </button>
-      )}
-      {state && (
-        <>
-          <span className="sb-sep" aria-hidden>
-            │
-          </span>
-          <span
-            className={`sb-group ${state.cls}`}
-            data-testid="watch-state"
-            title={status.offline.length ? `연결이 돌아오면 자동으로 다시 감시합니다: ${status.offline.join(", ")}` : ""}
-          >
-            {state.text}
-          </span>
-        </>
       )}
       <div className="spacer" />
       {progress && (
@@ -202,26 +247,30 @@ function StatusBar() {
           {status.lastError}
         </span>
       )}
-      <span className="sb-group muted">
+      <span className="sb-group sb-long">
         인덱스 {status.filesIndexed.toLocaleString()}
         {status.indexing ? " (인덱싱 중…)" : ""}
       </span>
-      <span className="sb-sep" aria-hidden>
-        │
-      </span>
-      <span className={`sb-group ${status.aiState === "unavailable" ? "warn" : "muted"}`} title={status.aiDetail ?? ""}>
-        {AI_LABEL[status.aiState]}
-        {status.aiState === "ready" && status.aiDetail ? ` (${aiModel(status.aiDetail)})` : ""}
-      </span>
       {status.semanticState !== "off" && (
         <span
-          className={`sb-group ${status.semanticState === "unavailable" ? "warn" : "muted"}`}
+          className={`sb-group sb-long ${status.semanticState === "unavailable" ? "warn" : ""}`}
           title={status.semanticDetail ?? ""}
           data-testid="semantic-state"
         >
           {status.semanticState === "ready" ? "의미검색 켜짐" : "의미검색 일시 중단 (단어 검색만)"}
         </span>
       )}
+      <span className="sb-sep sb-long" aria-hidden>
+        │
+      </span>
+      <span
+        className={`sb-group ${status.aiState === "unavailable" ? "warn" : ""}`}
+        title={status.aiDetail ?? ""}
+        data-testid="ai-state"
+      >
+        {AI_LABEL[status.aiState]}
+        {model && <span className="sb-long"> · {model}</span>}
+      </span>
       {status.update && (
         <button
           className="sb-group update-dot"

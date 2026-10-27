@@ -85,6 +85,8 @@ impl From<&Counts> for BacklogDto {
 #[serde(rename_all = "camelCase")]
 pub struct FolderDto {
     pub path: String,
+    /// (M13) `[[watch]] alias` (null = default name, worked out by the UI).
+    pub alias: Option<String>,
     /// "in_place" | "collect"
     pub mode: &'static str,
     /// collect: where results go.
@@ -180,6 +182,7 @@ pub fn overview(app: &AppHandle, refresh: bool) -> OverviewDto {
             let network = w.kind == RootKind::Network;
             FolderDto {
                 path: s(&w.path),
+                alias: w.alias.clone(),
                 mode: if w.anchor() == w.path.as_path() {
                     "in_place"
                 } else {
