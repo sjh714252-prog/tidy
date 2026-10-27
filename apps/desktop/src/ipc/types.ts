@@ -273,6 +273,8 @@ export interface Settings {
   autostart: Autostart;
   /** (M11) `[general] check_updates`. */
   checkUpdates: boolean;
+  /** Shortcut files (.lnk/.url/…) stay where they are. */
+  keepShortcuts: boolean;
   /** (M14) `[mover] duplicate_policy`. */
   duplicatePolicy: DuplicatePolicy;
 }
@@ -285,6 +287,7 @@ export interface SaveSettingsArgs {
   rulesText: string;
   startOnLogin: boolean;
   checkUpdates: boolean;
+  keepShortcuts: boolean;
   /** (M14) Absent = unchanged. */
   duplicatePolicy?: DuplicatePolicy;
 }

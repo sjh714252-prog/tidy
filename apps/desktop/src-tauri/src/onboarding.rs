@@ -146,7 +146,7 @@ pub async fn preview_rules(
         };
         let text = apply_cards("", &cards).map_err(|e| e.to_string())?;
         let rules = RuleSet::from_toml(&text).map_err(|e| e.to_string())?;
-        let sample = sample_for(&watches, &cfg.classify.ignore_globs);
+        let sample = sample_for(&watches, &cfg.effective_ignore_globs());
         Ok(match_files(&rules, &sample, exclusive))
     })
     .await
@@ -208,6 +208,7 @@ pub async fn finish_onboarding(app: AppHandle, args: FinishArgs) -> CmdResult<Fi
             start_on_login: cfg.general.start_on_login,
             onboarded: Some(true),
             check_updates: cfg.general.check_updates,
+            keep_shortcuts: cfg.general.keep_shortcuts,
             duplicate_policy: None,
         };
         write_settings(&state.config_path, &patch).map_err(|e| e.to_string())?;
@@ -221,7 +222,7 @@ pub async fn finish_onboarding(app: AppHandle, args: FinishArgs) -> CmdResult<Fi
         }
         drop_sample();
         let rules = RuleSet::from_toml(&text).map_err(|e| e.to_string())?;
-        let sample = sample_for(&cfg.watches, &cfg.classify.ignore_globs);
+        let sample = sample_for(&cfg.watches, &cfg.effective_ignore_globs());
         let report = match_files(&rules, &sample, true);
         watch::restart(&app);
         watch::spawn_index(&app);
@@ -260,7 +261,7 @@ fn editor_state(app: &AppHandle, text: String, preview: bool) -> EditorState {
     let preview = if ok && preview {
         let cfg = app.state::<AppState>().config();
         RuleSet::from_toml(&text).ok().map(|rules| {
-            let sample = sample_for(&cfg.watches, &cfg.classify.ignore_globs);
+            let sample = sample_for(&cfg.watches, &cfg.effective_ignore_globs());
             match_files(&rules, &sample, true)
         })
     } else {

@@ -2744,7 +2744,7 @@ dependencies = [
 
 [[package]]
 name = "tidy-cli"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2762,7 +2762,7 @@ dependencies = [
 
 [[package]]
 name = "tidy-core"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "async-trait",

@@ -948,6 +948,8 @@ pub struct SettingsDto {
     pub autostart: autostart::AutostartDto,
     /// (M11) Daily background update check.
     pub check_updates: bool,
+    /// Shortcut files stay put.
+    pub keep_shortcuts: bool,
     /// (M14) `[mover] duplicate_policy`: skip | rename | replace.
     pub duplicate_policy: tidy_core::config::DuplicatePolicy,
 }
@@ -986,6 +988,7 @@ pub async fn get_settings(app: AppHandle) -> CmdResult<SettingsDto> {
             hotkey: cfg.general.hotkey.clone(),
             autostart: autostart::state(&app, cfg.general.start_on_login),
             check_updates: cfg.general.check_updates,
+            keep_shortcuts: cfg.general.keep_shortcuts,
             duplicate_policy: cfg.mover.duplicate_policy,
         })
     })
@@ -1029,6 +1032,8 @@ pub struct SaveSettingsArgs {
     /// (M11) `[general] check_updates`.
     #[serde(default = "default_true")]
     pub check_updates: bool,
+    #[serde(default = "default_true")]
+    pub keep_shortcuts: bool,
     /// (M14) `[mover] duplicate_policy` (absent = unchanged).
     #[serde(default)]
     pub duplicate_policy: Option<tidy_core::config::DuplicatePolicy>,
@@ -1065,6 +1070,7 @@ pub async fn save_settings(app: AppHandle, args: SaveSettingsArgs) -> CmdResult<
             // Configuring folders here by hand is an explicit setup (SPEC §14.1).
             onboarded: (!args.watches.is_empty()).then_some(true),
             check_updates: args.check_updates,
+            keep_shortcuts: args.keep_shortcuts,
             duplicate_policy: args.duplicate_policy,
         };
         write_settings(&state.config_path, &patch).map_err(|e| e.to_string())?;
