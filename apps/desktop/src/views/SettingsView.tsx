@@ -1,25 +1,36 @@
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import * as ipc from "../ipc/commands";
+import type { SettingsKey } from "../ipc/types";
 import { useSettings } from "../store/settings";
 import { useStatus } from "../store/status";
 import { AiSettingsSection } from "../components/AiSettingsSection";
 import { useAiSettings } from "../store/aiSettings";
 import { useSecurity } from "../store/security";
 import { SecuritySection } from "../components/SecuritySection";
-import { OrganizeModeField, anchorOf } from "../components/OrganizeMode";
+import { anchorOf } from "../components/OrganizeMode";
 import { RuleCards } from "../components/RuleCards";
-import { Section } from "../components/Section";
 import { Help } from "../components/Help";
 import { AiNeeded, useAiOn } from "../components/AiNeeded";
 import { ContextSection } from "../components/ContextSection";
 import { useCurate } from "../store/curate";
+import { useHome } from "../store/home";
+import { useNav } from "../store/nav";
 import { isAbsoluteDest } from "../components/destPaths";
+import { WatchSettings, commonRoot } from "../components/settings/WatchSettings";
+
+const MENU: { key: SettingsKey; label: string; ai?: boolean }[] = [
+  { key: "watch", label: "감시 폴더" },
+  { key: "rules", label: "규칙" },
+  { key: "context", label: "업무 맥락", ai: true },
+  { key: "ai", label: "AI 연결" },
+  { key: "security", label: "보안 · 개인정보" },
+  { key: "advanced", label: "고급" },
+];
 
 /**
- * Settings (SPEC §14.4): six foldable sections — ① 감시 폴더 ② 규칙
- * ③ 업무 맥락(AI) ④ AI 연결 ⑤ 보안(개인정보) ⑥ 고급(DB·단축키·자동 시작·
- * 마법사·rules.toml 직접 편집). ①② start open; open/closed is remembered.
- * One save button for everything (#8).
+ * Settings (SPEC §14.8 5): a menu on the left, one topic on the right
+ * (`#/main/settings/<key>`). One save bar for everything (#8): edits stay
+ * while moving between topics.
  */
 export function SettingsView() {
   const s = useSettings();
@@ -28,29 +39,33 @@ export function SettingsView() {
   const ai = useAiSettings();
   const sec = useSecurity();
   const cur = useCurate();
-  const { draft, rulesCheck, editor, cards } = s;
-  const aiOn = useAiOn();
+  const section = useNav((n) => n.section);
+  const loadOverview = useHome((h) => h.load);
+  const [version, setVersion] = useState<string>("");
+  const openAbout = useHome((h) => h.openAbout);
+  const { draft, rulesCheck, cards } = s;
 
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadOverview();
+    void ipc
+      .aboutInfo()
+      .then((a) => setVersion(a.version))
+      .catch(() => {});
+  }, [load, loadOverview]);
 
   if (!draft) return <p className="muted pad">{s.error ?? "불러오는 중…"}</p>;
 
-  const addFolder = async () => {
-    const dir = await ipc.pickFolder();
-    if (dir) await s.addWatch(dir);
-  };
-  // One save for everything (issue #8): general settings first, then the AI
-  // and security sections if they have unsaved edits (incl. a typed key or
-  // vault password). Each is independent; a failure in one is shown in its
-  // own section.
+  // One save for everything (issue #8): general settings first, then the AI,
+  // security and work-context pages if they have unsaved edits. Each is
+  // independent; a failure in one is shown in the save bar.
   const save = async () => {
     await s.save();
     if (ai.dirty()) await ai.save();
     if (sec.dirty()) await sec.save();
     if (cur.dirty()) await cur.save();
     await refreshStatus();
+    void loadOverview(true);
   };
   const anyDirty = () => s.dirty() || ai.dirty() || sec.dirty() || cur.dirty();
   const revert = async () => {
@@ -62,273 +77,246 @@ export function SettingsView() {
   };
   const aiError = ai.error;
   const secBlock = sec.dirty() ? sec.invalid() : null;
-  // (M11) Rules whose absolute destination ignores "지정 위치로 모으기".
   const collectRoots = [
     ...new Set(draft.watches.filter((w) => w.mode === "collect" && w.organizeRoot).map((w) => w.organizeRoot as string)),
   ];
   const absRules = collectRoots.length ? (cards ?? []).filter((c) => isAbsoluteDest(c.dest)).length : 0;
-  const dbChanged = (s.loaded?.dbPathCustom ?? "") !== (draft.dbPathCustom ?? "");
+  const busy = s.saving || ai.busy || sec.busy || cur.busy;
 
   return (
     <div className="settings">
-      <Section id="watch" title="① 감시 폴더">
-        <p className="muted small">
-          새 파일이 생기면 규칙에 따라 정리합니다. 폴더 자체도 검색 인덱스에 들어갑니다.
-        </p>
-        <table className="grid">
-          <thead>
-            <tr>
-              <th>경로</th>
-              <th>
-                하위 폴더 <Help id="recursive" />
-              </th>
-              <th>
-                본문 인덱싱 <Help id="indexContent" />
-              </th>
-              <th>
-                종류 <Help id="kind" />
-              </th>
-              <th>
-                정리 방식 <Help id="organizeMode" />
-              </th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {draft.watches.map((w, i) => (
-              <Fragment key={i}>
-                <tr>
-                  <td>
-                    <input className="wide" value={w.path} onChange={(e) => s.setWatch(i, { path: e.target.value })} />
-                  </td>
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={w.recursive}
-                      onChange={(e) => s.setWatch(i, { recursive: e.target.checked })}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={w.indexContent}
-                      onChange={(e) => s.setWatch(i, { indexContent: e.target.checked })}
-                    />
-                  </td>
-                  <td>
-                    <select
-                      value={w.kind}
-                      onChange={(e) => {
-                        const kind = e.target.value as "local" | "network";
-                        // NAS default: metadata only (SPEC §5.9).
-                        s.setWatch(i, { kind, indexContent: kind === "local" });
-                      }}
-                    >
-                      <option value="local">로컬</option>
-                      <option value="network">네트워크(NAS)</option>
-                    </select>
-                  </td>
-                  <td>
-                    <OrganizeModeField w={w} onChange={(p) => s.setWatch(i, p)} />
-                  </td>
-                  <td>
-                    <button className="link" onClick={() => s.removeWatch(i)}>
-                      삭제
-                    </button>
-                  </td>
-                </tr>
-                {w.kind === "network" && (
-                  <tr className="subrow">
-                    <td colSpan={6}>
-                      <label>
-                        확인 간격(초) <Help id="pollInterval" />{" "}
-                        <input
-                          type="number"
-                          min={5}
-                          className="narrow"
-                          placeholder="120"
-                          value={w.pollIntervalS ?? ""}
-                          onChange={(e) =>
-                            s.setWatch(i, { pollIntervalS: e.target.value ? Math.max(5, Number(e.target.value)) : null })
-                          }
-                        />
-                      </label>
-                      <label title="변경 알림을 보내지 않는 NAS(SMB/NFS)에서 켜세요">
-                        <input
-                          type="checkbox"
-                          checked={w.pollOnly}
-                          onChange={(e) => s.setWatch(i, { pollOnly: e.target.checked })}
-                        />{" "}
-                        주기 확인만 사용 (변경 알림 없이 주기적으로만 확인) <Help id="pollOnly" />
-                      </label>
-                      <label title="본문 인덱싱을 켰을 때, 백그라운드 인덱싱이 본문을 읽는 시간대. 비우면 항상">
-                        본문 인덱싱 시간대 <Help id="contentWindow" />{" "}
-                        <input
-                          className="narrow"
-                          placeholder="02:00-05:00"
-                          disabled={!w.indexContent}
-                          value={w.contentIndexWindow ?? ""}
-                          onChange={(e) => s.setWatch(i, { contentIndexWindow: e.target.value || null })}
-                        />
-                      </label>
-                      <span className="muted small">
-                        연결이 끊기면 이 폴더만 일시정지하고 60초마다 다시 확인합니다. 이동은 복사→검증 후 원본 정리.
-                      </span>
-                    </td>
-                  </tr>
-                )}
-                <tr className="subrow exclude-row" data-testid="exclude-row">
-                  <td colSpan={6}>
-                    <span className="muted">
-                      제외 폴더 <Help id="exclude" />
-                    </span>{" "}
-                    {w.exclude.length === 0 && <span className="muted small">없음 — 이 폴더 전체를 정리합니다.</span>}
-                    {w.exclude.map((x) => (
-                      <span key={x} className="chip" title={x}>
-                        {x.startsWith(w.path) ? x.slice(w.path.length).replace(/^[\\/]+/, "") || x : x}
-                        <button
-                          className="link"
-                          aria-label={`제외 해제 ${x}`}
-                          onClick={() => s.setWatch(i, { exclude: w.exclude.filter((y) => y !== x) })}
-                        >
-                          ×
-                        </button>
-                      </span>
-                    ))}
-                    <button
-                      className="small"
-                      onClick={async () => {
-                        const dir = await ipc.pickFolder(w.path);
-                        if (dir && !w.exclude.includes(dir)) s.setWatch(i, { exclude: [...w.exclude, dir] });
-                      }}
-                    >
-                      제외 폴더 추가…
-                    </button>
-                  </td>
-                </tr>
-              </Fragment>
-            ))}
-          </tbody>
-        </table>
-        <button onClick={() => void addFolder()}>폴더 추가…</button>
-      </Section>
+      <div className="settings-body">
+        <nav className="settings-nav" aria-label="설정 메뉴">
+          {MENU.map((m) => (
+            <a
+              key={m.key}
+              href={`#/main/settings/${m.key}`}
+              className={section === m.key ? "on" : undefined}
+              aria-current={section === m.key ? "page" : undefined}
+              data-testid={`settings-nav-${m.key}`}
+            >
+              {m.label}
+              {m.ai && <span className="ai-badge">AI</span>}
+            </a>
+          ))}
+          <span className="nav-foot">
+            Tidy {version} ·{" "}
+            <button className="link small" onClick={() => openAbout(false)}>
+              정보
+            </button>
+          </span>
+        </nav>
+        <div className="settings-main">
+          <section className="settings-page" data-section={section} data-testid={`settings-${section}`}>
+            {section === "watch" && <WatchSettings />}
+            {section === "rules" && <RulesPage collectRoots={collectRoots} />}
+            {section === "context" && (
+              <>
+                <div className="page-head">
+                  <div>
+                    <h1>
+                      업무 맥락 <AiNeeded always />
+                    </h1>
+                    <p className="lead">고객사·이슈·문서 종류 사전과 업무 맥락 정리 방식입니다. AI가 있어야 동작합니다.</p>
+                  </div>
+                </div>
+                <div className="card">
+                  <ContextSection />
+                </div>
+              </>
+            )}
+            {section === "ai" && (
+              <>
+                <div>
+                  <h1>AI 연결</h1>
+                  <p className="lead">AI가 없어도 규칙과 검색은 그대로 동작합니다. 키는 OS 키체인에만 저장합니다.</p>
+                </div>
+                <div className="card">
+                  <AiSettingsSection />
+                </div>
+              </>
+            )}
+            {section === "security" && (
+              <>
+                <div>
+                  <h1>보안 · 개인정보</h1>
+                  <p className="lead">개인정보가 든 파일을 찾아 암호화 zip으로 보관하는 방식을 정합니다.</p>
+                </div>
+                <div className="card">
+                  <SecuritySection />
+                </div>
+              </>
+            )}
+            {section === "advanced" && <AdvancedPage />}
+          </section>
+        </div>
+      </div>
 
-      <Section id="rules" title="② 규칙">
-        <div className="rules-section">
-        <p className="muted small">
-          <Help id="ruleOrder" />{" "}
-          위에서부터 검사하고 처음 맞는 규칙 하나만 적용합니다. 목적지가 상대 경로면 각 감시 폴더의 정리 방식을
-          따릅니다(이 폴더 안 / 기준 폴더 아래). 저장하기 전에는 아무것도 바뀌지 않습니다.
-          {editor?.preview &&
-            ` 지금 감시 폴더의 파일 ${editor.preview.scanned}개 중 ${editor.preview.scanned - editor.preview.unmatched}개가 규칙에 걸립니다.`}
-          {editor?.preview?.skipped.length ? ` (네트워크 폴더는 세지 않음: ${editor.preview.skipped.join(", ")})` : ""}
-        </p>
-        {cards && (
-          <RuleCards
-            cards={cards}
-            preview={editor?.preview ?? null}
-            anchors={draft.watches.map(anchorOf)}
-            collectRoots={collectRoots}
-            readOnly={!!editor && !editor.cards}
-            aiMarked={s.aiMarked}
-            onChange={s.setCards}
-          />
+      <footer className="savebar" data-testid="savebar">
+        {s.error && <span className="error">{s.error}</span>}
+        {!s.error && aiError && <span className="error">AI: {aiError}</span>}
+        {!s.error && !aiError && sec.error && <span className="error">보안: {sec.error}</span>}
+        {!s.error && !aiError && !sec.error && cur.error && <span className="error">업무 맥락: {cur.error}</span>}
+        {!s.error && !aiError && !sec.error && secBlock && <span className="warn small">보안: {secBlock}</span>}
+        {s.message && !s.error && !anyDirty() && (
+          <span className="ok" data-testid="save-message">
+            {s.message}
+          </span>
         )}
-        {cards && !cards.length && <p className="muted">아직 규칙이 없습니다. 규칙을 추가하거나 마법사로 시작 규칙을 고르세요.</p>}
-        <div className="actions">
-          <button onClick={() => s.addCard()} disabled={!!editor && !editor.cards}>
-            + 규칙 추가
-          </button>
-          <button
-            disabled={!aiOn || s.drafting || (!!editor && !editor.cards)}
-            title={aiOn ? "감시 폴더의 파일 목록(이름·크기·날짜)을 보내 규칙 초안을 받습니다" : "AI를 켜면 쓸 수 있습니다"}
-            onClick={() => void s.aiDraft()}
-          >
-            {s.drafting ? "AI가 규칙을 만드는 중…" : "AI로 규칙 만들기"}
-          </button>
+        {!s.error && anyDirty() && <span className="warn">저장하지 않은 변경이 있습니다</span>}
+        {!s.error && !anyDirty() && !s.message && <span className="muted">저장하지 않은 변경 없음</span>}
+        {absRules > 0 && (
+          <span className="warn small" data-testid="abs-rules-warning">
+            규칙 {absRules}개가 정리 위치를 무시합니다
+          </span>
+        )}
+        <div className="spacer" />
+        <button onClick={() => void revert()} disabled={busy}>
+          변경 취소
+        </button>
+        <button
+          className="primary"
+          onClick={() => void save()}
+          disabled={busy || !!secBlock || (rulesCheck ? !rulesCheck.ok : false)}
+        >
+          {busy ? "저장 중…" : "저장"}
+        </button>
+      </footer>
+    </div>
+  );
+}
+
+/** 설정 → 규칙 (Rules.html). */
+function RulesPage({ collectRoots }: { collectRoots: string[] }) {
+  const s = useSettings();
+  const aiOn = useAiOn();
+  const { draft, rulesCheck, editor, cards } = s;
+  if (!draft) return null;
+  const common = commonRoot(draft.watches);
+  const readOnly = !!editor && !editor.cards;
+  return (
+    <>
+      <div className="page-head">
+        <div>
+          <h1>규칙</h1>
+          <p className="lead">
+            <Help id="ruleOrder" /> 위에서부터 검사해 처음 맞는 규칙 하나를 적용합니다.{" "}
+            {common ? `목적지는 정리 위치(${common}) 아래 상대 경로입니다.` : "목적지가 상대 경로면 각 감시 폴더 안에 만듭니다."}
+            {editor?.preview &&
+              ` 지금 감시 폴더의 파일 ${editor.preview.scanned.toLocaleString()}개 중 ${(editor.preview.scanned - editor.preview.unmatched).toLocaleString()}개가 규칙에 걸립니다.`}
+            {editor?.preview?.skipped.length ? ` (네트워크 폴더는 세지 않음: ${editor.preview.skipped.join(", ")})` : ""}
+          </p>
+        </div>
+        <button
+          disabled={!aiOn || s.drafting || readOnly}
+          title={aiOn ? "감시 폴더의 파일 목록(이름·크기·날짜)을 보내 규칙 초안을 받습니다" : "AI를 켜면 쓸 수 있습니다"}
+          onClick={() => void s.aiDraft()}
+        >
+          {s.drafting ? "AI가 규칙을 만드는 중…" : "AI로 규칙 만들기"}
+        </button>
+        <button className="primary" onClick={() => s.addCard()} disabled={readOnly}>
+          + 규칙 추가
+        </button>
+      </div>
+      {!aiOn && (
+        <div>
           <AiNeeded />
         </div>
-        {s.draftNote && <p className="muted small">{s.draftNote}</p>}
-        {rulesCheck &&
-          (rulesCheck.ok ? (
-            <p className="ok small">✓ 규칙 {rulesCheck.rules.length}개: {rulesCheck.rules.join(", ")}</p>
-          ) : (
-            <p className="error small">
-              ✗ {rulesCheck.error}
-              {editor && !editor.cards && " — 고칠 때까지 카드는 읽기 전용입니다"}
-            </p>
-          ))}
-        </div>
-      </Section>
-
-      <Section id="context" title="③ 업무 맥락" badge={<AiNeeded always />}>
-        <ContextSection />
-      </Section>
-
-      <Section id="ai" title="④ AI 연결">
-        <AiSettingsSection />
-      </Section>
-
-      <Section id="security" title="⑤ 보안(개인정보)">
-        <SecuritySection />
-      </Section>
-
-      <Section id="advanced" title="⑥ 고급">
-        <details className="advanced">
-          <summary>고급: rules.toml 직접 편집</summary>
-          <p className="muted small">
-            {draft.rulesPath}
-            {!draft.rulesExists && " — 아직 없음: 저장하면 만들어집니다."} 여기서 고치면 카드에 바로 반영되고, 카드를
-            고치면 여기도 바뀝니다(주석·순서·카드에 없는 키는 그대로).
+      )}
+      {s.draftNote && <p className="notice">{s.draftNote}</p>}
+      {cards && (
+        <RuleCards
+          cards={cards}
+          preview={editor?.preview ?? null}
+          anchors={draft.watches.map(anchorOf)}
+          collectRoots={collectRoots}
+          readOnly={readOnly}
+          aiMarked={s.aiMarked}
+          open={s.openRule}
+          onOpen={s.setOpenRule}
+          onChange={s.setCards}
+        />
+      )}
+      {cards && !cards.length && <p className="muted">아직 규칙이 없습니다. 규칙을 추가하거나 마법사로 시작 규칙을 고르세요.</p>}
+      {rulesCheck &&
+        (rulesCheck.ok ? (
+          <p className="ok rules-check" data-testid="rules-check">
+            ✓ 규칙 {rulesCheck.rules.length}개: {rulesCheck.rules.join(", ")}
           </p>
-          <textarea
-            className="rules"
-            spellCheck={false}
-            value={draft.rulesText}
-            onChange={(e) => s.setRules(e.target.value)}
-          />
-        </details>
+        ) : (
+          <p className="error rules-check" data-testid="rules-check">
+            ✗ {rulesCheck.error}
+            {readOnly && " — 고칠 때까지 카드는 읽기 전용입니다"}
+          </p>
+        ))}
+      <details className="toml-edit advanced" data-testid="toml-edit">
+        <summary>고급: rules.toml 직접 편집</summary>
+        <p className="muted small">
+          {draft.rulesPath}
+          {!draft.rulesExists && " — 아직 없음: 저장하면 만들어집니다."} 여기서 고치면 카드에 바로 반영되고, 카드를 고치면
+          여기도 바뀝니다(주석·순서·카드에 없는 키는 그대로).
+        </p>
+        <textarea
+          className="rules"
+          aria-label="rules.toml"
+          spellCheck={false}
+          value={draft.rulesText}
+          onChange={(e) => s.setRules(e.target.value)}
+        />
+      </details>
+    </>
+  );
+}
 
-        <h3>데이터베이스</h3>
-        <label className="row">
-          <span>DB 경로</span>
+/** 설정 → 고급: 무시한 파일, DB, 단축키, 조용 모드, 자동 시작, 업데이트 확인, 마법사. */
+function AdvancedPage() {
+  const s = useSettings();
+  const draft = s.draft;
+  if (!draft) return null;
+  const dbChanged = (s.loaded?.dbPathCustom ?? "") !== (draft.dbPathCustom ?? "");
+  return (
+    <>
+      <div>
+        <h1>고급</h1>
+        <p className="lead">자주 바꿀 일이 없는 설정입니다.</p>
+      </div>
+      <div className="card">
+        <IgnoredFiles />
+      </div>
+      <div className="card">
+        <h2>데이터베이스</h2>
+        <label className="field">
+          <span className="label">DB 경로</span>
           <input
             className="wide"
+            aria-label="DB 경로"
             placeholder={`기본값: ${draft.dbPathDefault}`}
             value={draft.dbPathCustom ?? ""}
             onChange={(e) => s.patch({ dbPathCustom: e.target.value })}
           />
         </label>
-        <p className="muted small">
+        <p className="muted small" style={{ margin: 0 }}>
           현재: {draft.dbPath}. 로컬 디스크 경로만 사용하세요(네트워크 드라이브의 SQLite는 깨질 수 있음).
           {dbChanged && " 경로를 바꾸면 새 DB를 쓰며 기존 이동 기록·확인 대기·인덱스는 옮겨지지 않습니다."}
         </p>
-
-        <h3>기타</h3>
-        <label className="row">
-          <span>검색 단축키</span>
-          <input value={draft.hotkey} onChange={(e) => s.patch({ hotkey: e.target.value })} />
+      </div>
+      <div className="card">
+        <h2>기타</h2>
+        <label className="field">
+          <span className="label">검색 단축키</span>
+          <input aria-label="검색 단축키" value={draft.hotkey} onChange={(e) => s.patch({ hotkey: e.target.value })} />
         </label>
-        <label className="row">
+        <label className="check">
           <input type="checkbox" checked={draft.quietMode} onChange={(e) => s.patch({ quietMode: e.target.checked })} />
-          <span>조용 모드 — 확인 팝업을 띄우지 않고 확인 대기 탭에만 쌓기</span>
+          조용 모드 — 확인 팝업을 띄우지 않고 확인 대기 탭에만 쌓기
         </label>
-        <label className="row">
-          <input
-            type="checkbox"
-            data-testid="check-updates"
-            checked={draft.checkUpdates}
-            onChange={(e) => s.patch({ checkUpdates: e.target.checked })}
-          />
-          <span>하루 한 번 새 버전 확인 — 새 버전이 있으면 상태줄에 "업데이트 있음" 표시(실패해도 아무것도 막지 않음)</span>
-        </label>
-        <label className="row">
+        <label className="check">
           <input
             type="checkbox"
             checked={draft.autostart.wanted}
             onChange={(e) => s.patch({ autostart: { ...draft.autostart, wanted: e.target.checked } })}
           />
-          <span>로그인 시 자동 시작 — 창 없이 트레이에서 감시</span>
+          로그인 시 자동 시작 — 창 없이 트레이에서 감시
           <span className="muted small" data-testid="autostart-state">
             {draft.autostart.registered == null
               ? "(개발 빌드에서는 OS에 등록하지 않음)"
@@ -337,37 +325,23 @@ export function SettingsView() {
                 : "등록 안 됨"}
           </span>
         </label>
-        <p className="muted small">설정 파일: {draft.configPath}</p>
-        <button onClick={() => void ipc.openWizard()}>마법사 다시 실행</button>
-        <IgnoredFiles />
-      </Section>
-
-      <footer className="savebar">
-        {s.error && <span className="error">{s.error}</span>}
-        {!s.error && aiError && <span className="error">AI: {aiError}</span>}
-        {!s.error && !aiError && sec.error && <span className="error">보안: {sec.error}</span>}
-        {!s.error && !aiError && !sec.error && cur.error && <span className="error">업무 맥락: {cur.error}</span>}
-        {!s.error && !aiError && !sec.error && secBlock && <span className="warn small">보안: {secBlock}</span>}
-        {s.message && !s.error && !anyDirty() && <span className="ok">{s.message}</span>}
-        {!s.error && anyDirty() && <span className="muted small">저장하지 않은 변경이 있습니다</span>}
-        {absRules > 0 && (
-          <span className="warn small" data-testid="abs-rules-warning">
-            규칙 {absRules}개가 정리 위치를 무시합니다(규칙 카드 참고)
-          </span>
-        )}
-        <div className="spacer" />
-        <button onClick={() => void revert()} disabled={s.saving || ai.busy || sec.busy || cur.busy}>
-          변경 취소
-        </button>
-        <button
-          className="primary"
-          onClick={() => void save()}
-          disabled={s.saving || ai.busy || sec.busy || cur.busy || !!secBlock || (rulesCheck ? !rulesCheck.ok : false)}
-        >
-          {s.saving || ai.busy || sec.busy || cur.busy ? "저장 중…" : "저장"}
-        </button>
-      </footer>
-    </div>
+        <label className="check">
+          <input
+            type="checkbox"
+            data-testid="check-updates"
+            checked={draft.checkUpdates}
+            onChange={(e) => s.patch({ checkUpdates: e.target.checked })}
+          />
+          하루 한 번 새 버전 확인 — 새 버전이 있으면 상태줄에 "업데이트 있음" 표시(실패해도 아무것도 막지 않음)
+        </label>
+        <p className="muted small" style={{ margin: 0 }}>
+          설정 파일: {draft.configPath}
+        </p>
+        <div>
+          <button onClick={() => void ipc.openWizard()}>마법사 다시 실행</button>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -381,9 +355,9 @@ function IgnoredFiles() {
   if (!files) return null;
   return (
     <div className="ignored-files" data-testid="ignored-files">
-      <h4>
+      <h2>
         무시한 파일 <span className="muted small">({files.length}개)</span>
-      </h4>
+      </h2>
       <p className="muted small">
         확인 팝업·확인 대기에서 "무시"를 누른 파일입니다. 다시 정리 대상으로 돌리려면 "해제"를 누르세요.
       </p>

@@ -26,6 +26,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import { addWatchFolder, gotoSettings, openRule, openToml, openWatchEdit, saveSettings } from "./lib.mjs";
 
 const T = process.env.T;
 const S = process.env.S;
@@ -124,9 +125,6 @@ const RULES_TEXT = `[[rule]]\nname = "문서"\nmatch = { ext = ["pdf"] }\ndest =
 // ── browser ─────────────────────────────────────────────────────────────
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 960 } });
-await ctx.addInitScript(() =>
-  localStorage.setItem("tidy.settings.sections", JSON.stringify({ watch: true, rules: true, context: true, ai: true, security: false, advanced: true })),
-);
 const main = await ctx.newPage();
 const dialogs = [];
 main.on("dialog", (d) => {
@@ -137,29 +135,24 @@ main.on("dialog", (d) => {
 await main.goto("http://localhost:1420/#/main");
 await main.waitForSelector(".topbar");
 await sleep(1000);
-const tab = (name) => main.locator(".topbar nav").getByRole("button", { name });
-const save = async () => {
-  await main.getByRole("button", { name: "저장", exact: true }).click();
-  await sleep(3000);
-};
+const tab = (name) => main.locator(".topbar nav").getByRole("button", { name, exact: name !== "확인 대기" });
+const save = () => saveSettings(main, 3000);
 
 // A. settings: folders, collect, rules warning + fix, AI
 {
-  await tab("설정").click();
-  await sleep(800);
-  for (const d of [DESK, DOWN, WORK]) {
-    process.env.PROMPT_ANSWER = d;
-    await main.getByRole("button", { name: "폴더 추가…", exact: true }).click();
-    await sleep(500);
-  }
-  const rows = main.locator(".settings tbody tr:not(.subrow)");
-  const down = rows.nth(1); // added in order: 바탕 화면, 다운로드, 업무
-  await down.locator("select[aria-label='정리 방식']").selectOption("collect");
-  await down.locator("input.organize-root").fill(ORG);
-  const d = main.locator("details.advanced");
-  if (!(await d.evaluate((e) => e.open))) await d.locator("summary").click();
-  await main.locator("textarea.rules").fill(RULES_TEXT);
+  await gotoSettings(main, "watch");
+  for (const d of [DESK, DOWN, WORK]) await addWatchFolder(main, d);
+  // 다운로드 only: 정리 위치 → 다른 폴더… (the others stay "이 폴더 안에서").
+  const down = await openWatchEdit(main, 1); // added in order: 바탕 화면, 다운로드, 업무
+  process.env.PROMPT_ANSWER = ORG;
+  await down.getByRole("combobox", { name: "정리 위치" }).selectOption("other");
+  await sleep(500);
+  const ta = await openToml(main);
+  await ta.fill(RULES_TEXT);
   await sleep(1500);
+  const line = main.locator("[data-testid=abs-dest-line]");
+  ok("A", "접힌 규칙 줄에 ⚠ 표시 + 상대 경로로", (await line.count()) === 1 && (await main.locator("[data-testid=rule-card]").nth(1).locator("[data-testid=make-relative]").count()) === 1);
+  await openRule(main, 1);
   const warn = main.locator("[data-testid=abs-dest-warning]");
   const wtext = await warn.innerText().catch(() => "");
   ok("A", "절대 경로 규칙 + 모으기 폴더 → 규칙 카드 경고", (await warn.count()) === 1 && wtext.includes(ORG) && wtext.includes("설치파일"), wtext.replace(/\n/g, " "));
@@ -170,10 +163,12 @@ const save = async () => {
   await main.screenshot({ path: `${SHOT}/m11-A-abs-dest.png`, fullPage: false });
   await warn.locator("[data-testid=make-relative]").click();
   await sleep(1000);
-  const toml = await main.locator("textarea.rules").inputValue();
+  const toml = await ta.inputValue();
   ok("A", "상대 경로로 바꾸기 → dest = \"설치파일\"", /dest = "설치파일"/.test(toml) && (await warn.count()) === 0, toml.split("\n").filter((l) => l.startsWith("dest")).join(" | "));
-  ok("A", "업데이트 확인 토글 기본 켜짐", await main.locator("[data-testid=check-updates]").isChecked());
+  await gotoSettings(main, "advanced");
+  ok("A", "업데이트 확인 토글 기본 켜짐 (고급)", await main.locator("[data-testid=check-updates]").isChecked());
 
+  await gotoSettings(main, "ai");
   const ai = main.locator("[data-testid=ai-section]");
   await ai.locator("label.row", { hasText: "AI 사용" }).locator("input[type=checkbox]").check();
   await ai.locator("select").first().selectOption("openai");
@@ -195,13 +190,13 @@ const save = async () => {
   await tab("홈").click();
   await sleep(1000);
   const sum = await main.locator("[data-testid=watch-summary]").innerText();
-  ok("B", "상태바 왼쪽: 감시 중 3곳 · 정리 위치 3곳", sum.includes("감시 중 3곳") && sum.includes("정리 위치 3곳"), sum);
+  ok("B", "상태바: 감시 3곳 → 정리 위치 3곳", sum.includes("감시 3곳") && sum.includes("정리 위치 3곳"), sum);
   const title = await main.locator("[data-testid=watch-summary]").getAttribute("title");
   ok("B", "전체 경로는 툴팁", title.includes(DESK) && title.includes(ORG), title.replace(/\n/g, " | "));
   const st = await main.locator("[data-testid=watch-state]").innerText();
   ok("B", "가운데: 새 파일 자동 정리 중", st.includes("새 파일 자동 정리 중"), st);
-  const bar = await main.locator(".statusbar").innerText();
-  ok("B", "오른쪽: 인덱스 · AI 사용(모델)", /인덱스 [\d,]+/.test(bar) && bar.includes("AI 사용 (fake-slow)"), bar.replace(/\n/g, " | "));
+  const bar = await main.locator("[data-testid=statusbar]").innerText();
+  ok("B", "오른쪽: 인덱스 · AI 사용 · 모델", /인덱스 [\d,]+/.test(bar) && /AI 사용\s*·\s*fake-slow/.test(bar), bar.replace(/\n/g, " | "));
   ok("B", "상태바에 긴 경로 나열 없음", !bar.includes(T), "");
   await main.locator("[data-testid=watch-summary]").click();
   const panel = main.locator("[data-testid=watch-panel]");
@@ -217,20 +212,22 @@ const save = async () => {
 // C. 정리 현황 card → 지금 정리 → preview → apply → undo
 {
   const card = main.locator("[data-testid=organize-card]");
-  const total = await card.locator("[data-testid=backlog-total]").innerText().catch(() => "");
-  ok("C", "정리 현황: 기존 파일 35개 아직 정리 안 됨", total.includes("35개"), (await card.innerText()).replace(/\n/g, " | "));
+  const counts = await card.locator("[data-testid=backlog-count]").allInnerTexts();
+  const total = counts.reduce((a, t) => a + Number(t.replace(/[^\d]/g, "")), 0);
+  ok("C", "아직 정리 안 된 기존 파일: 폴더 카드 3장, 합계 35개", counts.length === 3 && total === 35, counts.join(" | ").replace(/\n/g, " "));
   ok("C", "안내: 새 파일은 자동으로 정리", (await card.innerText()).includes("새 파일은 자동으로 정리됩니다"));
-  const deskRow = card.locator("[data-testid=backlog-folder]", { hasText: "바탕 화면" });
-  ok("C", "폴더별 수: 바탕 화면 4개 (규칙에 맞음 2 · 규칙 없음 2)", (await deskRow.innerText()).includes("4개") && (await deskRow.innerText()).includes("규칙에 맞음 2"));
+  const deskRow = card.locator(`[data-testid=backlog-folder][data-path="${DESK}"]`);
+  const deskTitle = (await deskRow.locator("[data-testid=backlog-count]").getAttribute("title")) ?? "";
+  ok("C", "폴더별 수: 바탕화면 4개 (규칙에 맞음 2 · 규칙 없음 2)", (await deskRow.innerText()).includes("바탕화면") && (await deskRow.locator("[data-testid=backlog-count]").innerText()).startsWith("4") && deskTitle.includes("규칙에 맞음 2"), deskTitle);
   await main.screenshot({ path: `${SHOT}/m11-C-home.png` });
   await deskRow.getByRole("button", { name: "지금 정리" }).click();
   const panel = main.locator(".restructure");
-  const planned = await waitFor(async () => (await panel.locator(".plan").count()) === 1, 15000);
-  ok("C", "지금 정리 → 정리하기 탭 + 규칙 미리보기 실행", planned && (await tab("정리하기").getAttribute("class")).includes("on"));
+  const planned = await waitFor(async () => (await panel.locator("[data-testid=plan-item]").count()) > 0, 15000);
+  ok("C", "지금 정리 → 정리하기 탭 + 규칙 미리보기 실행", planned && (await tab("정리하기").getAttribute("aria-current")) === "page");
   ok("C", "선택한 폴더 = 바탕 화면", (await main.locator("[data-testid=report-folder]").inputValue()) === DESK);
   ok("C", "미리보기 위 안내 (적용 전 무이동·되돌리기)", (await panel.locator("[data-testid=no-move-notice]").innerText()).includes("적용을 누르기 전에는 아무것도 옮기지 않습니다"));
   ok("C", "업무 맥락으로 정리 강조 (AI + 사전)", ((await panel.locator("[data-testid=curate-plan]").getAttribute("class")) ?? "").includes("primary"));
-  const rows = await panel.locator(".plan table tbody tr").count();
+  const rows = await panel.locator("[data-testid=plan-item]").count();
   ok("C", "규칙 미리보기: pdf 2개", rows === 2, `rows=${rows}`);
   ok("C", "미리보기만으로는 무이동", fs.existsSync(path.join(DESK, "보고서 A.pdf")));
   await main.screenshot({ path: `${SHOT}/m11-C-preview.png` });
@@ -242,7 +239,7 @@ const save = async () => {
   ok("C", "적용 확인 문구: 되돌리기 탭", dialogs.some((d) => d.includes("되돌리기 탭")));
   await tab("되돌리기").click();
   await sleep(1000);
-  const row = main.locator(".history tbody tr, .grid tbody tr").filter({ hasText: "정리 제안" }).first();
+  const row = main.locator("[data-testid=batch-row]").filter({ hasText: "정리 제안" }).first();
   dialogs.length = 0;
   await row.getByRole("button", { name: "되돌리기", exact: true }).click();
   const back = await waitFor(() => fs.existsSync(path.join(DESK, "보고서 A.pdf")) && fs.existsSync(path.join(DESK, "보고서 B.pdf")), 10000);
@@ -269,8 +266,9 @@ const save = async () => {
 // E. tabs + 도움말 menu + 정보
 {
   const names = await main.locator(".topbar nav button").allInnerTexts();
+  ok("E", "도움말은 ? 버튼 (aria 도움말)", (await main.getByRole("button", { name: "도움말", exact: true }).innerText()).trim() === "?");
   ok("E", "탭: 홈 / 확인 대기 / 정리하기 / 되돌리기 / 설정", names.map((n) => n.replace(/\d+$/, "").trim()).join(",") === "홈,확인 대기,정리하기,되돌리기,설정", names.join(","));
-  await main.getByRole("button", { name: "도움말 ▾" }).click();
+  await main.getByRole("button", { name: "도움말", exact: true }).click();
   const items = await main.locator("[data-testid=help-menu] [role=menuitem]").allInnerTexts();
   // (M12) + "고객사 자료는 어디 있나요?" after the manual.
   ok("E", "도움말 메뉴: 설명서·문의·업데이트·정보", ["사용 설명서", "문의·버그 신고", "업데이트 확인", "정보"].every((i) => items.includes(i)), items.join(","));
@@ -278,13 +276,13 @@ const save = async () => {
   await sleep(500);
   let o = await opened();
   ok("E", "사용 설명서 → GitHub docs/manual.md", o.at(-1) === "https://github.com/sjh714252-prog/tidy/blob/main/docs/manual.md", o.at(-1));
-  await main.getByRole("button", { name: "도움말 ▾" }).click();
+  await main.getByRole("button", { name: "도움말", exact: true }).click();
   await main.getByRole("menuitem", { name: "문의·버그 신고" }).click();
   await sleep(800);
   o = await opened();
   const issue = decodeURIComponent(o.at(-1) ?? "");
   ok("E", "문의 → issues/new + 버전·OS·설정 경로", issue.startsWith("https://github.com/sjh714252-prog/tidy/issues/new?title=") && issue.includes(`버전: ${VERSION}`) && issue.includes(CFG), issue.slice(0, 160).replace(/\n/g, " "));
-  await main.getByRole("button", { name: "도움말 ▾" }).click();
+  await main.getByRole("button", { name: "도움말", exact: true }).click();
   await main.getByRole("menuitem", { name: "정보" }).click();
   const modal = main.locator("[data-testid=about-modal]");
   await modal.waitFor();
@@ -302,7 +300,7 @@ const save = async () => {
 // F. update check: newer / latest / error
 {
   ghMode = "newer";
-  await main.getByRole("button", { name: "도움말 ▾" }).click();
+  await main.getByRole("button", { name: "도움말", exact: true }).click();
   await main.getByRole("menuitem", { name: "업데이트 확인" }).click();
   const modal = main.locator("[data-testid=about-modal]");
   const res = modal.locator("[data-testid=update-result]");

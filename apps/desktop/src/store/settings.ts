@@ -14,6 +14,9 @@ interface SettingsState {
   aiMarked: Set<number>;
   drafting: boolean;
   draftNote: string | null;
+  /** (M13) Rule card that is open (accordion). */
+  openRule: number | null;
+  setOpenRule: (i: number | null) => void;
   saving: boolean;
   message: string | null;
   error: string | null;
@@ -51,6 +54,8 @@ export const useSettings = create<SettingsState>((set, get) => ({
   aiMarked: new Set(),
   drafting: false,
   draftNote: null,
+  openRule: null,
+  setOpenRule: (openRule) => set({ openRule }),
   saving: false,
   message: null,
   error: null,
@@ -81,6 +86,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
     if (!d) return;
     const w: WatchFolder = {
       path,
+      alias: null,
       kind: network ? "network" : "local",
       recursive: false,
       indexContent: !network,
@@ -147,6 +153,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
   addCard: () => {
     const cards = get().cards ?? [];
     get().setCards([...cards, { ...emptyCard(), name: `새 규칙 ${cards.length + 1}`, dest: "정리/{yyyy}-{mm}" }]);
+    set({ openRule: cards.length });
   },
   aiDraft: async () => {
     set({ drafting: true, draftNote: null });

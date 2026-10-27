@@ -449,3 +449,25 @@ pub async fn undo_batch(app: AppHandle, batch_id: String) -> CmdResult<UndoDto> 
     })
     .await
 }
+
+/// (M13) 홈 "오늘 한 일": moves since `since` (local midnight, unix
+/// seconds, from the UI), a folder moved whole as one item. Read-only.
+#[tauri::command]
+pub async fn today_moves(
+    app: AppHandle,
+    since: i64,
+    limit: Option<usize>,
+) -> CmdResult<tidy_core::report::today::TodaySummary> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let inner = state.lock_inner();
+        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        let entries = mover.store().moves_since(since).map_err(err)?;
+        Ok(tidy_core::report::today::summarize(
+            &entries,
+            since,
+            limit.unwrap_or(8),
+        ))
+    })
+    .await
+}

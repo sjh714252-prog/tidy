@@ -96,6 +96,9 @@ pub fn write_settings(path: &Path, patch: &SettingsPatch) -> Result<(), ConfigEr
     for w in &patch.watches {
         let mut t = Table::new();
         t.insert("path", value(w.path.to_string_lossy().into_owned()));
+        if let Some(a) = w.alias.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
+            t.insert("alias", value(a));
+        }
         t.insert(
             "kind",
             value(match w.kind {
@@ -588,6 +591,10 @@ pub enum RootKind {
 #[serde(from = "RawWatchRoot")]
 pub struct WatchRoot {
     pub path: PathBuf,
+    /// (M13, SPEC §14.8) Name shown instead of the path ("바탕화면",
+    /// "PC백업"). `None` = default (OS name of the well-known folders, else
+    /// the last folder name), worked out by the UI.
+    pub alias: Option<String>,
     pub kind: RootKind,
     pub recursive: bool,
     /// Extract body text for search. Default: on for local folders, off
@@ -639,6 +646,7 @@ impl OrganizeMode {
 #[serde(default)]
 struct RawWatchRoot {
     path: PathBuf,
+    alias: Option<String>,
     kind: RootKind,
     recursive: bool,
     index_content: Option<bool>,
@@ -655,6 +663,7 @@ impl Default for RawWatchRoot {
         let d = WatchRoot::default();
         Self {
             path: d.path,
+            alias: None,
             kind: d.kind,
             recursive: d.recursive,
             index_content: None,
@@ -673,6 +682,10 @@ impl From<RawWatchRoot> for WatchRoot {
         Self {
             index_content: r.index_content.unwrap_or(r.kind == RootKind::Local),
             path: r.path,
+            alias: r
+                .alias
+                .map(|a| a.trim().to_string())
+                .filter(|a| !a.is_empty()),
             kind: r.kind,
             recursive: r.recursive,
             poll_interval_s: r.poll_interval_s,
@@ -689,6 +702,7 @@ impl Default for WatchRoot {
     fn default() -> Self {
         Self {
             path: PathBuf::new(),
+            alias: None,
             kind: RootKind::Local,
             recursive: false,
             index_content: true,

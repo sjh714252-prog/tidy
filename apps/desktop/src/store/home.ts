@@ -86,6 +86,4 @@ export function shortPath(p: string): string {
   return `…${sep}${parts.slice(-2).join(sep)}`;
 }
 
-export function baseName(p: string): string {
-  return p.split(/[\\/]/).filter(Boolean).pop() ?? p;
-}
+export { baseName } from "../components/paths";

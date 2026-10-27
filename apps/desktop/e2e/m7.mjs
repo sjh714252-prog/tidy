@@ -22,6 +22,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { addWatchFolder, gotoSettings, openToml, saveSettings, statusText, tab } from "./lib.mjs";
 
 const T = process.env.T;
 const DESK = path.join(T, "바탕 화면");
@@ -39,11 +40,6 @@ const ok = (step, what, pass, note = "") => {
   console.log(`${pass ? "PASS" : "FAIL"} [${step}] ${what} ${note}`);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// M8: the rules TOML editor sits in the collapsed "고급" section.
-const openAdvanced = async (page) => {
-  const d = page.locator("details.advanced");
-  if (!(await d.evaluate((e) => e.open))) await d.locator("summary").click();
-};
 const bridge = async (cmd, args = {}) =>
   (await (await fetch(`http://127.0.0.1:1421/invoke/${cmd}`, { method: "POST", body: JSON.stringify(args) })).json()).value;
 const waitFor = async (fn, ms, step = 1000) => {
@@ -75,10 +71,6 @@ fs.writeFileSync(path.join(DESK, "부동산_서류.md"), "임대차 약정 조�
 
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1000, height: 900 } });
-// M10: settings sections are foldable; these older tests expect everything open.
-await ctx.addInitScript(() =>
-  localStorage.setItem("tidy.settings.sections", JSON.stringify({ watch: true, rules: true, context: true, ai: true, security: true, advanced: true })),
-);
 const main = await ctx.newPage();
 main.on("dialog", (d) => d.accept(process.env.PROMPT_ANSWER ?? ""));
 await main.goto("http://localhost:1420/#/main");
@@ -87,23 +79,20 @@ await sleep(1000);
 
 // A. watch folder (no rules: nothing moves) + start at login
 {
-  await main.getByRole("button", { name: "설정", exact: true }).click();
-  await sleep(600);
-  process.env.PROMPT_ANSWER = DESK;
-  await main.getByRole("button", { name: "폴더 추가…" }).click();
-  await sleep(300);
-  await openAdvanced(main);
-  await main.locator("textarea.rules").fill("# 규칙 없음 — 이 테스트는 파일을 옮기지 않는다\n");
-  const auto = main.locator("label.row", { hasText: "로그인 시 자동 시작" });
-  ok("A", "자동 시작 체크박스 (기본 켜짐)", await auto.locator("input[type=checkbox]").isChecked());
-  await main.getByRole("button", { name: "저장", exact: true }).click();
-  await sleep(3000);
-  const bar = await main.locator(".statusbar").innerText();
-  ok("A", "감시 설정 저장", bar.includes("바탕 화면"), bar.replace(/\n/g, " | "));
+  await gotoSettings(main, "watch");
+  await addWatchFolder(main, DESK);
+  const ta = await openToml(main);
+  await ta.fill("# 규칙 없음 — 이 테스트는 파일을 옮기지 않는다\n");
+  await gotoSettings(main, "advanced");
+  const auto = main.getByRole("checkbox", { name: /로그인 시 자동 시작/ });
+  ok("A", "자동 시작 체크박스 (기본 켜짐, 설정 → 고급)", await auto.isChecked());
+  await saveSettings(main, 3000);
+  const bar = await statusText(main);
+  const title = (await main.locator("[data-testid=watch-summary]").getAttribute("title")) ?? "";
+  ok("A", "감시 설정 저장 (감시 1곳)", bar.includes("감시 1곳") && title.includes("바탕 화면"), bar.replace(/\n/g, " | "));
   const desktop = fs.existsSync(AUTOSTART) ? fs.readFileSync(AUTOSTART, "utf8") : "";
   ok("A", "OS 시작 항목 등록 (~/.config/autostart/Tidy.desktop, --autostart)", /--autostart/.test(desktop), desktop.split("\n").find((l) => l.startsWith("Exec")) ?? "(없음)");
-  await main.getByRole("button", { name: "설정", exact: true }).click();
-  await sleep(800);
+  await gotoSettings(main, "advanced");
   const st = await main.locator("[data-testid=autostart-state]").innerText();
   ok("A", "설정 화면: OS 시작 항목에 등록됨", st.includes("등록됨"), st);
   const cfg = fs.readFileSync(path.join(T, "config.toml"), "utf8");
@@ -112,6 +101,7 @@ await sleep(1000);
 
 // B. AI settings: embedding model only (no classify model yet)
 {
+  await gotoSettings(main, "ai");
   const ai = main.locator("[data-testid=ai-section]");
   await ai.locator("label.row", { hasText: "AI 사용" }).locator("input[type=checkbox]").check();
   const embedRow = ai.locator("label.row").filter({ has: main.locator("option[value=ollama]") }).filter({ hasNotText: "Anthropic" });
@@ -123,8 +113,7 @@ await sleep(1000);
   await rows.filter({ hasText: "주소" }).last().locator("input").fill(`${FAKE}/v1`);
   await rows.filter({ hasText: "키 이름" }).last().locator("input").fill("");
   ok("B", "키 저장 위치 표시", (await ai.innerText()).includes("키 저장 위치"), (await ai.locator("p", { hasText: "키 저장 위치" }).innerText()).trim());
-  await main.getByRole("button", { name: "저장", exact: true }).click(); // #8: unified save
-  await sleep(2000);
+  await saveSettings(main, 2000);
   const err = await ai.locator(".error").count();
   ok("B", "임베딩 모델 저장 (오류 없음)", err === 0, err ? await ai.locator(".error").innerText() : "");
   const cfg = fs.readFileSync(path.join(T, "config.toml"), "utf8");
@@ -136,11 +125,13 @@ await sleep(1000);
   }, 40000);
   const s = await bridge("semantic_status");
   ok("B", "백그라운드 임베딩 완료", embedded, JSON.stringify(s));
-  await main.locator(".topbar nav").getByRole("button", { name: "홈" }).click();
+  await tab(main, "홈").click();
   await sleep(800);
-  const bar = await main.locator(".statusbar").innerText();
+  const bar = await main.locator("[data-testid=statusbar]").innerText();
   ok("B", "상태바: 의미검색 켜짐", bar.includes("의미검색 켜짐"), bar.replace(/\n/g, " | "));
-  const feed = await main.locator("body").innerText();
+  await main.getByRole("button", { name: "전체 보기" }).click();
+  await sleep(300);
+  const feed = await main.locator("[data-testid=activity-feed]").innerText();
   ok("B", "활동: 의미검색 임베딩 기록", feed.includes("의미검색 임베딩"));
   await main.screenshot({ path: `${SHOT}/m7-B-main.png`, fullPage: true });
 }
@@ -192,8 +183,7 @@ const query = async (q, wait = 2500) => {
 // E. outage and recovery (CLAUDE.md rule 4)
 {
   // Classify model on the same fake server (no key).
-  await main.getByRole("button", { name: "설정", exact: true }).click();
-  await sleep(800);
+  await gotoSettings(main, "ai");
   const ai = main.locator("[data-testid=ai-section]");
   await ai.locator("select").first().selectOption("openai");
   await sleep(300);
@@ -201,9 +191,8 @@ const query = async (q, wait = 2500) => {
   await rows.filter({ hasText: "모델" }).first().locator("input").fill("fake-chat");
   await rows.filter({ hasText: "주소" }).first().locator("input").fill(`${FAKE}/v1`);
   await rows.filter({ hasText: "키 이름" }).first().locator("input").fill("");
-  await main.getByRole("button", { name: "저장", exact: true }).click(); // #8: unified save
-  await sleep(3000);
-  await main.locator(".topbar nav").getByRole("button", { name: "홈" }).click();
+  await saveSettings(main, 3000);
+  await tab(main, "홈").click();
   const ready = await waitFor(async () => (await bridge("get_status")).aiState === "ready", 15000);
   ok("E", "AI 분류 모델 준비됨 (상태바 AI 사용)", ready, (await bridge("get_status")).aiDetail ?? "");
 
@@ -216,7 +205,7 @@ const query = async (q, wait = 2500) => {
   const down = await waitFor(async () => (await bridge("get_status")).aiState === "unavailable", 20000);
   const st = await bridge("get_status");
   ok("E", "AI 연속 3회 실패 → aiState unavailable", down, st.aiDetail ?? "");
-  const bar = await main.locator(".statusbar").innerText();
+  const bar = await main.locator("[data-testid=statusbar]").innerText();
   ok("E", "상태바: AI 사용 불가", bar.includes("AI 사용 불가"), bar.replace(/\n/g, " | "));
 
   const r1 = await query("숙소 예약 확인서 어디 있지", 4000);
@@ -226,7 +215,7 @@ const query = async (q, wait = 2500) => {
   await query("보증금 반환 일정 언제였지", 4000);
   const semDown = await waitFor(async () => (await bridge("get_status")).semanticState === "unavailable", 15000);
   ok("E", "의미검색도 연속 실패 → unavailable", semDown, (await bridge("get_status")).semanticDetail ?? "");
-  const bar2 = await main.locator(".statusbar").innerText();
+  const bar2 = await main.locator("[data-testid=statusbar]").innerText();
   ok("E", "상태바: 의미검색 일시 중단", bar2.includes("의미검색 일시 중단"), bar2.replace(/\n/g, " | "));
   await main.screenshot({ path: `${SHOT}/m7-E-down.png`, fullPage: true });
   const pendingBefore = (await bridge("list_pending")).length;
@@ -245,8 +234,8 @@ const query = async (q, wait = 2500) => {
   ok("E", "복구 → 의미검색 ready", semBack);
   const r3 = await query("통신 요금 고지서 찾아줘");
   ok("E", "복구 후 의미검색 다시 동작", r3.foot.includes("단어+의미") && r3.items[0]?.includes("KT_고지서"), JSON.stringify(r3.items.slice(0, 2)));
-  const bar3 = await main.locator(".statusbar").innerText();
-  ok("E", "상태바: AI 사용 + 의미검색 켜짐", bar3.includes("AI 사용 (") && bar3.includes("의미검색 켜짐"), bar3.replace(/\n/g, " | "));
+  const bar3 = await main.locator("[data-testid=statusbar]").innerText();
+  ok("E", "상태바: AI 사용 + 의미검색 켜짐", /AI 사용\s*·\s*fake-chat/.test(bar3) && bar3.includes("의미검색 켜짐"), bar3.replace(/\n/g, " | "));
   await main.screenshot({ path: `${SHOT}/m7-E-back.png`, fullPage: true });
   const s = await stats();
   ok("E", "가짜 서버 호출 확인 (실제 API 호출 없음)", s.calls > 0 && s.chats > 0, JSON.stringify(s));
@@ -254,11 +243,9 @@ const query = async (q, wait = 2500) => {
 
 // F. start at login off → login item removed
 {
-  await main.getByRole("button", { name: "설정", exact: true }).click();
-  await sleep(800);
-  await main.locator("label.row", { hasText: "로그인 시 자동 시작" }).locator("input[type=checkbox]").uncheck();
-  await main.getByRole("button", { name: "저장", exact: true }).click();
-  await sleep(2500);
+  await gotoSettings(main, "advanced");
+  await main.getByRole("checkbox", { name: /로그인 시 자동 시작/ }).uncheck();
+  await saveSettings(main, 2500);
   ok("F", "자동 시작 끔 → 시작 항목 삭제", !fs.existsSync(AUTOSTART));
   const cfg = fs.readFileSync(path.join(T, "config.toml"), "utf8");
   ok("F", "config.toml start_on_login = false", /start_on_login *= *false/.test(cfg));

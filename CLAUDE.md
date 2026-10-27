@@ -68,7 +68,7 @@ cargo run -p tidy-cli -- context list / add <이름> [--alias A,B | --issue | --
 cargo run -p tidy-cli -- curate scan [폴더] [--dry-run]  → curate apply <plan-id> [--only 1,3]   # 업무 맥락 정리(AI, 승인 전 무이동). 하위 폴더는 통째로 한 항목(M12)
 cd apps/desktop && npm ci && npm run tauri dev   # 클라우드: npm run build + (src-tauri) cargo clippy 까지만
 cd apps/desktop && npx tauri build [--bundles deb,appimage]   # 설치 패키지 (docs/packaging.md), 태그 v*는 release.yml
-S=/tmp/tidy-e2e bash apps/desktop/e2e/run-headless.sh m12    # 헤드리스 GUI e2e (m3~m12, 가짜 OpenAI 호환 서버 e2e/fake-embed.mjs, 느린 가짜 LLM e2e/fake-llm.mjs)
+S=/tmp/tidy-e2e bash apps/desktop/e2e/run-headless.sh m13    # 헤드리스 GUI e2e (m3~m13, 공통 도우미 e2e/lib.mjs, 가짜 OpenAI 호환 서버 e2e/fake-embed.mjs, 느린 가짜 LLM e2e/fake-llm.mjs)
 node apps/desktop/e2e/fake-llm.mjs 18095   # 느린·긴 가짜 Anthropic/OpenAI 호환 (파일당 1초, FAKE_MAX_TOKENS로 max_tokens 잘림 재현)
 ```
 
@@ -87,6 +87,7 @@ node apps/desktop/e2e/fake-llm.mjs 18095   # 느린·긴 가짜 Anthropic/OpenAI
 - [x] M11 UI 단순화 + 도움말/정보 + 정리 현황 (2026-10-23, 0.4.0) — 탭 홈/확인 대기/정리하기/되돌리기/설정, 상태바 요약+감시 현황 패널, 정리 현황 카드(미정리 수 백그라운드·캐시·20,000 상한)→지금 정리, 정리 위치 경고(두 번 확인), 절대 경로 규칙 경고+상대 경로로 바꾸기, 도움말 메뉴·정보 창·업데이트 확인(하루 한 번, check_updates)·로그 파일, release.yml 수동 실행=공개 릴리스. 트레이 정보 메뉴·실제 릴리스·실제 브라우저 열기는 로컬에서
 - [x] M12 폴더 단위 업무 맥락 정리 + 경로 맥락 + 고객사별 찾기 (2026-10-23, 0.5.0) — 하위 폴더 = 한 항목(FolderUnit 요약·캐시 키, `{folder}`, Mover::move_dir 한 배치·빈 폴더 정리·undo), AI에 상대 경로(맨 위 폴더 = 고객사 단서), 감시 중 맥락 정리는 최상위 파일만·폴더는 미리보기 승인만, folder_settle_secs, 파일별로 나누기·날짜 수정, 홈 "새 폴더 N개"·고객사별 보기, 검색 고객사 필터, 팝업 "대기열에 두기". 실제 AI의 폴더 판단 품질·실제 NAS 폴더 이동·창 확인은 로컬에서
 
+- [x] M13 화면 개편 (2026-10-26, 0.6.0) — 감시 폴더 별칭(`[[watch]] alias`)·PathText(가운데 줄임·전체 경로 title·클릭 열기), 홈 폴더 카드 4열+오늘 한 일(move_log `today_moves`)+고객사별, 확인 대기 5열 표↔900px 미만 카드·⋯ 메뉴 5개(팝업 같은 카드), 설정 왼쪽 메뉴 6쪽 `#/main/settings/<key>`(좁으면 가로 탭)·공통 정리 위치·폴더 편집 패널·규칙 한 줄 아코디언, 최소 창 960×640, 색 토큰, e2e `lib.mjs`+m13. 실제 창 크기·DPI·한글 글꼴·트레이·탐색기 열기는 로컬에서
 - [x] 0.2.x 핫픽스 (2026-10-22~23) — 규칙 카드 정렬(#12), AI 응답 잘림 분할 재시도(#13), HTTP 타임아웃 상한(#14), 감시 폴더 제외 폴더(SPEC §14.5)
 
 ## 열린 결정

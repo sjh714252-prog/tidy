@@ -185,6 +185,7 @@ pub fn run() {
             report_cmds::undo_batch,
             report_cmds::count_moves_since,
             report_cmds::undo_since,
+            report_cmds::today_moves,
             overview::watch_overview,
             about::about_info,
             about::open_url,

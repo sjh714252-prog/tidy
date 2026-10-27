@@ -30,6 +30,8 @@ export interface Status {
   /** (M11) Configured watch folders (also while paused). */
   watchTotal: number;
   watchPaths: string[];
+  /** (M13) `[[watch]] alias` per watchPaths entry (null = default name). */
+  watchAliases: (string | null)[];
   /** (M11) Watch folders organized in place, and distinct "모으기" roots. */
   organizeInPlace: number;
   organizeRoots: string[];
@@ -81,6 +83,8 @@ export interface Backlog {
 }
 export interface FolderOverview {
   path: string;
+  /** (M13) `[[watch]] alias` (null = default name). */
+  alias: string | null;
   mode: "in_place" | "collect";
   organizeRoot: string | null;
   network: boolean;
@@ -223,6 +227,8 @@ export interface UndoResult {
 
 export interface WatchFolder {
   path: string;
+  /** (M13) Display name; null = default (바탕화면 / 다운로드 / 문서 / 사진 / last folder name). */
+  alias: string | null;
   kind: "local" | "network";
   recursive: boolean;
   indexContent: boolean;
@@ -295,6 +301,25 @@ export interface Activity {
 }
 
 export type MainTab = "activity" | "pending" | "report" | "history" | "settings";
+
+/** (M13) Settings pages (`#/main/settings/<key>`). */
+export type SettingsKey = "watch" | "rules" | "context" | "ai" | "security" | "advanced";
+
+/** (M13) 홈 "오늘 한 일" (core `report::today`, snake_case). */
+export interface DoneItem {
+  at: number;
+  name: string;
+  src: string;
+  dest_dir: string;
+  is_dir: boolean;
+  files: number;
+  batch_id: string;
+}
+export interface TodaySummary {
+  moved: number;
+  undone: number;
+  items: DoneItem[];
+}
 
 // ── M8: rule cards, wizard, folder tree ─────────────────────────────────
 

@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { MoreMenu, type MoreItem } from "./MoreMenu";
 import * as ipc from "../ipc/commands";
 import { useHome } from "../store/home";
 
@@ -23,61 +24,36 @@ export async function issueUrl(): Promise<string> {
   return `${REPO}/issues/new?title=${encodeURIComponent("[문의] ")}&body=${encodeURIComponent(body)}`;
 }
 
-/**
- * Top bar "도움말 ▾" (SPEC §14.6): 사용 설명서 / 문의·버그 신고 / 업데이트
- * 확인 / 정보. Links open in the default browser.
- */
+/** 도움말 items (SPEC §14.6), shared by "?" and the narrow-window ≡ menu. */
+export function helpItems(openAbout: (check?: boolean) => void, onErr: (e: string) => void): MoreItem[] {
+  const go = (f: () => Promise<void> | void) => () => {
+    Promise.resolve()
+      .then(f)
+      .catch((e) => onErr(String(e)));
+  };
+  return [
+    { label: "사용 설명서", onClick: go(() => ipc.openUrl(MANUAL_URL)) },
+    { label: "고객사 자료는 어디 있나요?", onClick: go(() => ipc.openUrl(CUSTOMER_HELP_URL)) },
+    { label: "문의·버그 신고", onClick: go(async () => ipc.openUrl(await issueUrl())) },
+    { label: "업데이트 확인", onClick: go(() => openAbout(true)) },
+    { label: "정보", onClick: go(() => openAbout(false)) },
+  ];
+}
+
+/** Top bar "?" (도움말): 사용 설명서 / 문의·버그 신고 / 업데이트 확인 / 정보. */
 export function HelpMenu() {
-  const [open, setOpen] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const openAbout = useHome((s) => s.openAbout);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [open]);
-  const go = async (f: () => Promise<void> | void) => {
-    setOpen(false);
-    setErr(null);
-    try {
-      await f();
-    } catch (e) {
-      setErr(String(e));
-    }
-  };
   return (
-    <div className="help-menu" ref={ref}>
-      <button aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        도움말 ▾
-      </button>
-      {open && (
-        <div className="menu" role="menu" data-testid="help-menu">
-          <button role="menuitem" onClick={() => void go(() => ipc.openUrl(MANUAL_URL))}>
-            사용 설명서
-          </button>
-          <button role="menuitem" onClick={() => void go(() => ipc.openUrl(CUSTOMER_HELP_URL))}>
-            고객사 자료는 어디 있나요?
-          </button>
-          <button role="menuitem" onClick={() => void go(async () => ipc.openUrl(await issueUrl()))}>
-            문의·버그 신고
-          </button>
-          <button role="menuitem" onClick={() => void go(() => openAbout(true))}>
-            업데이트 확인
-          </button>
-          <button role="menuitem" onClick={() => void go(() => openAbout(false))}>
-            정보
-          </button>
-        </div>
-      )}
+    <>
+      <MoreMenu label="도움말" testid="help-menu" items={helpItems(openAbout, setErr)}>
+        ?
+      </MoreMenu>
       {err && (
         <span className="error small" title={err}>
           열지 못했습니다
         </span>
       )}
-    </div>
+    </>
   );
 }

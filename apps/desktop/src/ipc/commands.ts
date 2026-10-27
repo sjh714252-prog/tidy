@@ -41,6 +41,7 @@ import type {
   SemanticStatus,
   Settings,
   Status,
+  TodaySummary,
   UndoResult,
 } from "./types";
 
@@ -168,3 +169,7 @@ export const aboutInfo = () => invoke<AboutInfo>("about_info");
 export const openUrl = (url: string) => invoke<void>("open_url", { url });
 export const openFolder = (path: string) => invoke<void>("open_folder", { path });
 export const checkUpdate = () => invoke<UpdateResult>("check_update");
+
+// ── M13 ──
+/** 홈 "오늘 한 일": moves since `since` (unix seconds, local midnight). */
+export const todayMoves = (since: number, limit = 8) => invoke<TodaySummary>("today_moves", { since, limit });
