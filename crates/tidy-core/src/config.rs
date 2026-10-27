@@ -52,6 +52,9 @@ pub struct SettingsPatch {
     /// (M11) `[general] check_updates`.
     #[serde(default = "yes")]
     pub check_updates: bool,
+    /// (0.8) `[general] keep_shortcuts`: shortcuts stay where they are.
+    #[serde(default = "yes")]
+    pub keep_shortcuts: bool,
     /// (M14) `[mover] duplicate_policy`; `None` leaves the key alone.
     #[serde(default)]
     pub duplicate_policy: Option<DuplicatePolicy>,
@@ -91,6 +94,7 @@ pub fn write_settings(path: &Path, patch: &SettingsPatch) -> Result<(), ConfigEr
     general.insert("hotkey", value(patch.hotkey.clone()));
     general.insert("start_on_login", value(patch.start_on_login));
     general.insert("check_updates", value(patch.check_updates));
+    general.insert("keep_shortcuts", value(patch.keep_shortcuts));
     if let Some(o) = patch.onboarded {
         general.insert("onboarded", value(o));
     }
@@ -582,7 +586,20 @@ pub struct General {
     pub onboarded: Option<bool>,
     /// (M11) Look for a new release once a day in the background.
     pub check_updates: bool,
+    /// Leave shortcut files (`.lnk`, `.url`, `.webloc`, …) where they are:
+    /// a desktop shortcut is a launcher, not a document to file away.
+    pub keep_shortcuts: bool,
 }
+
+/// File-name globs of shortcut / launcher files, by platform convention.
+pub const SHORTCUT_GLOBS: &[&str] = &[
+    "*.lnk",
+    "*.url",
+    "*.website",
+    "*.appref-ms",
+    "*.webloc",
+    "*.desktop",
+];
 
 impl Default for General {
     fn default() -> Self {
@@ -593,6 +610,7 @@ impl Default for General {
             start_on_login: true,
             onboarded: None,
             check_updates: true,
+            keep_shortcuts: true,
         }
     }
 }
@@ -1169,7 +1187,17 @@ impl Config {
             .iter()
             .flat_map(|w| w.exclude.iter().cloned())
             .collect();
-        Ok(crate::watcher::IgnoreFilter::new(&self.classify.ignore_globs)?.with_dirs(dirs))
+        Ok(crate::watcher::IgnoreFilter::new(&self.effective_ignore_globs())?.with_dirs(dirs))
+    }
+
+    /// `[classify] ignore_globs` plus the shortcut globs when
+    /// `[general] keep_shortcuts` is on.
+    pub fn effective_ignore_globs(&self) -> Vec<String> {
+        let mut globs = self.classify.ignore_globs.clone();
+        if self.general.keep_shortcuts {
+            globs.extend(SHORTCUT_GLOBS.iter().map(|g| g.to_string()));
+        }
+        globs
     }
 
     pub fn from_toml(text: &str) -> Result<Self, toml::de::Error> {
@@ -1473,6 +1501,7 @@ path = "~/Desktop"
             start_on_login: false,
             onboarded: Some(true),
             check_updates: true,
+            keep_shortcuts: true,
             duplicate_policy: None,
         };
         write_settings(&path, &patch).unwrap();
@@ -1655,6 +1684,7 @@ send_content = false
             start_on_login: true,
             onboarded: Some(true),
             check_updates: true,
+            keep_shortcuts: true,
             duplicate_policy: None,
         };
         write_settings(&path, &patch).unwrap();
@@ -1677,6 +1707,7 @@ send_content = false
             &SettingsPatch {
                 onboarded: None,
                 check_updates: true,
+                keep_shortcuts: true,
                 duplicate_policy: None,
                 ..patch
             },

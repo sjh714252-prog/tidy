@@ -334,6 +334,15 @@ function AdvancedPage() {
           />
           하루 한 번 새 버전 확인 — 새 버전이 있으면 상태줄에 "업데이트 있음" 표시(실패해도 아무것도 막지 않음)
         </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            data-testid="keep-shortcuts"
+            checked={draft.keepShortcuts}
+            onChange={(e) => s.patch({ keepShortcuts: e.target.checked })}
+          />
+          바로가기는 그대로 두기 — 바탕화면의 바로가기(.lnk, .url 등)는 정리하지 않고 제자리에 둡니다
+        </label>
         <p className="muted small" style={{ margin: 0 }}>
           설정 파일: {draft.configPath}
         </p>
