@@ -1,6 +1,6 @@
 import { useState } from "react";
 import * as ipc from "../../ipc/commands";
-import type { FolderOverview, WatchFolder } from "../../ipc/types";
+import type { DuplicatePolicy, FolderOverview, WatchFolder } from "../../ipc/types";
 import { useHome } from "../../store/home";
 import { useSettings } from "../../store/settings";
 import { Help } from "../Help";
@@ -97,6 +97,8 @@ export function WatchSettings() {
         <button onClick={() => void setCommon()}>찾아보기…</button>
       </div>
 
+      <DuplicateCard />
+
       <div className="stack">
         {draft.watches.map((w, i) => (
           <WatchCard
@@ -117,6 +119,43 @@ export function WatchSettings() {
         </button>
       </div>
     </>
+  );
+}
+
+const DUP_CHOICES: { value: DuplicatePolicy; label: string }[] = [
+  { value: "skip", label: "그대로 두고 건너뜀" },
+  { value: "rename", label: "번호를 붙여 둘 다 보관" },
+  { value: "replace", label: "기존 것을 휴지통으로 보내고 새것으로" },
+];
+
+/** (M14) `[mover] duplicate_policy` (SPEC §14.9 1). */
+function DuplicateCard() {
+  const s = useSettings();
+  const value = s.draft?.duplicatePolicy ?? "skip";
+  return (
+    <div className="card dup-card" data-testid="duplicate-policy" role="radiogroup" aria-label="옮길 자리에 똑같은 파일이 이미 있으면">
+      <div className="what">
+        <b>
+          옮길 자리에 똑같은 파일이 이미 있으면 <Help id="duplicatePolicy" />
+        </b>
+        <span className="small muted">이름과 내용이 모두 같은 파일이 정리할 폴더에 이미 있을 때</span>
+      </div>
+      <div className="dup-choices">
+        {DUP_CHOICES.map((c) => (
+          <label key={c.value} className="check">
+            <input
+              type="radio"
+              name="duplicate-policy"
+              value={c.value}
+              checked={value === c.value}
+              onChange={() => s.patch({ duplicatePolicy: c.value })}
+            />{" "}
+            {c.label}
+            {c.value === "skip" && <span className="muted small"> (기본)</span>}
+          </label>
+        ))}
+      </div>
+    </div>
   );
 }
 

@@ -11,7 +11,7 @@ import { useNarrow } from "../components/useNarrow";
  * 위치로 이동] [건너뜀] [⋯]; a 5-column table, cards below 900px.
  */
 export function PendingView() {
-  const { items, checked, busy, error, lastResult, refresh, toggle, toggleAll, resolve, resolveChecked } =
+  const { items, checked, busy, error, lastResult, lastExisting, refresh, toggle, toggleAll, resolve, resolveChecked } =
     usePending();
   const narrow = useNarrow();
 
@@ -67,7 +67,16 @@ export function PendingView() {
         />
       </div>
       {error && <div className="notice warn error">{error}</div>}
-      {lastResult && <div className="notice">{lastResult}</div>}
+      {lastResult && (
+        <div className="notice" data-testid="pending-result">
+          {lastResult}
+          {lastExisting && (
+            <button className="link" style={{ marginLeft: 8 }} onClick={() => void ipc.revealPath(lastExisting)}>
+              기존 파일 열기
+            </button>
+          )}
+        </div>
+      )}
       {items.length === 0 ? (
         <p className="muted">확인을 기다리는 파일이 없습니다. ("옮기기 전에 묻기" 규칙이나 확신이 낮은 AI 제안이 여기에 쌓입니다)</p>
       ) : narrow ? (

@@ -48,6 +48,15 @@ impl TrashBackend for FolderTrash {
     }
 }
 
+/// The OS trash, or the folder named by `TIDY_E2E_TRASH` (headless GUI
+/// tests count what arrives there instead of filling the real trash).
+pub(super) fn default_backend() -> std::sync::Arc<dyn TrashBackend> {
+    match std::env::var_os("TIDY_E2E_TRASH").filter(|v| !v.is_empty()) {
+        Some(dir) => std::sync::Arc::new(FolderTrash(PathBuf::from(dir))),
+        None => std::sync::Arc::new(OsTrash),
+    }
+}
+
 /// Open the OS trash in the file manager (undo hint "휴지통 열기").
 /// Returns the location opened, or `None` if this OS has no known one.
 pub fn open_trash() -> Option<String> {

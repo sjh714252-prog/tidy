@@ -341,6 +341,8 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
                     .await?,
             )
         }
+        "trash_duplicates" => ok(report_cmds::trash_duplicates(app, arg(&args, "groups")?).await?),
+        "open_trash" => ok(report_cmds::open_trash().await?),
         "today_moves" => ok(report_cmds::today_moves(
             app,
             arg(&args, "since")?,

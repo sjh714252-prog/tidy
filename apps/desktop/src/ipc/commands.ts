@@ -41,6 +41,8 @@ import type {
   SemanticStatus,
   Settings,
   Status,
+  DupTrash,
+  TrashResult,
   TodaySummary,
   UndoResult,
 } from "./types";
@@ -98,6 +100,11 @@ export const testAi = () => invoke<string>("test_ai");
 export const listLearn = () => invoke<LearnSuggestion[]>("list_learn");
 export const acceptLearn = (key: string) => invoke<void>("accept_learn", { key });
 export const dismissLearn = (key: string) => invoke<void>("dismiss_learn", { key });
+
+/** (M14) Send the copies not kept to the trash (one batch; only from "적용"). */
+export const trashDuplicates = (groups: DupTrash[]) => invoke<TrashResult>("trash_duplicates", { groups });
+/** (M14) Open the OS trash ("휴지통 열기"). */
+export const openTrash = () => invoke<string | null>("open_trash");
 
 export const reportRoots = () => invoke<string[]>("report_roots");
 /** (M11) The "모으기" root `path` is in (organizing there re-moves results). */

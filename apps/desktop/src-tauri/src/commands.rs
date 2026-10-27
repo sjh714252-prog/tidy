@@ -520,15 +520,21 @@ pub struct PendingDto {
     pub encrypt: bool,
     /// (M9) "주민번호 2 · 이름+휴대전화 15" (badge "개인정보: …").
     pub pii: Option<String>,
+    /// (M14) An identical file already has this name at the suggested
+    /// folder: "똑같은 파일이 이미 있습니다" + three answers.
+    pub duplicate_of: Option<String>,
 }
 
 #[tauri::command]
 pub async fn list_pending(app: AppHandle) -> CmdResult<Vec<PendingDto>> {
     blocking(move || {
         let state = app.state::<AppState>();
-        let inner = state.lock_inner();
-        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
-        let items = mover.store().list_pending().map_err(|e| e.to_string())?;
+        let items = {
+            let inner = state.lock_inner();
+            let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+            mover.store().list_pending().map_err(|e| e.to_string())?
+        };
+        // (M14) The duplicate check may hash files: not under the app lock.
         Ok(items
             .into_iter()
             .map(|p| {
@@ -554,6 +560,12 @@ pub async fn list_pending(app: AppHandle) -> CmdResult<Vec<PendingDto>> {
                     size: meta.map(|m| m.len()),
                     encrypt: p.encrypt,
                     pii: p.pii.filter(|f| f.is_pii()).map(|f| f.summary()),
+                    duplicate_of: p
+                        .suggested_dest
+                        .as_deref()
+                        .filter(|_| !p.encrypt)
+                        .and_then(|d| tidy_core::pending::duplicate_at_dest(&p.path, d, None))
+                        .map(|e| s(&e)),
                 }
             })
             .collect())
@@ -569,6 +581,9 @@ pub enum DecisionDto {
         dest_dir: Option<String>,
         #[serde(default)]
         new_name: Option<String>,
+        /// (M14) "skip" | "rename" | "replace" for this move.
+        #[serde(default)]
+        on_duplicate: Option<tidy_core::config::DuplicatePolicy>,
     },
     Skip,
     Ignore,
@@ -582,6 +597,9 @@ pub struct ResolutionDto {
     pub path: String,
     pub dst: Option<String>,
     pub batch_id: Option<String>,
+    /// (M14) Plain-Korean reason (duplicate: "똑같은 파일이 이미 …").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[tauri::command]
@@ -630,11 +648,16 @@ pub async fn resolve_pending_batch(
 impl From<DecisionDto> for Decision {
     fn from(d: DecisionDto) -> Self {
         match d {
-            DecisionDto::Move { dest_dir, new_name } => Decision::Move {
+            DecisionDto::Move {
+                dest_dir,
+                new_name,
+                on_duplicate,
+            } => Decision::Move {
                 dest_dir: dest_dir
                     .filter(|d| !d.trim().is_empty())
                     .map(|d| tidy_core::config::expand_home(Path::new(d.trim()))),
                 new_name: new_name.filter(|n| !n.trim().is_empty()),
+                on_duplicate,
             },
             DecisionDto::Skip => Decision::Skip,
             DecisionDto::Ignore => Decision::Ignore,
@@ -666,14 +689,19 @@ fn resolve_one(
                 path: s(&src),
                 dst: Some(s(&dst)),
                 batch_id: Some(batch_id),
+                message: None,
             }
         }
-        Resolution::Duplicate { src, existing } => ResolutionDto {
-            kind: "duplicate",
-            path: s(&src),
-            dst: Some(s(&existing)),
-            batch_id: None,
-        },
+        Resolution::Duplicate { src, existing } => {
+            watch::emit_duplicate(app, &src, &existing);
+            ResolutionDto {
+                kind: "duplicate",
+                path: s(&src),
+                dst: Some(s(&existing)),
+                batch_id: None,
+                message: Some(tidy_core::mover::duplicate_message(&existing)),
+            }
+        }
         Resolution::AlreadyInPlace { path } => simple("already_in_place", &path),
         Resolution::Skipped { path } => simple("skipped", &path),
         Resolution::Ignored { path } => simple("ignored", &path),
@@ -687,6 +715,7 @@ fn simple(kind: &'static str, p: &Path) -> ResolutionDto {
         path: s(p),
         dst: None,
         batch_id: None,
+        message: None,
     }
 }
 
@@ -695,6 +724,33 @@ fn simple(kind: &'static str, p: &Path) -> ResolutionDto {
 pub struct UndoDto {
     pub restored: Vec<(String, String)>,
     pub conflicts: Vec<String>,
+    /// (M14) Files sent to the trash that undo cannot bring back: the UI
+    /// offers "휴지통 열기".
+    pub in_trash: Vec<String>,
+}
+
+impl From<&tidy_core::mover::UndoReport> for UndoDto {
+    fn from(r: &tidy_core::mover::UndoReport) -> Self {
+        let trash =
+            |c: &&tidy_core::mover::UndoConflict| c.reason == tidy_core::mover::TRASH_UNDO_HINT;
+        Self {
+            restored: r.restored.iter().map(|(a, b)| (s(a), s(b))).collect(),
+            conflicts: r
+                .conflicts
+                .iter()
+                .map(|c| {
+                    let p = if trash(&c) { &c.src_path } else { &c.dst_path };
+                    format!("{}: {}", s(p), c.reason)
+                })
+                .collect(),
+            in_trash: r
+                .conflicts
+                .iter()
+                .filter(trash)
+                .map(|c| s(&c.src_path))
+                .collect(),
+        }
+    }
 }
 
 /// Undo the most recent batch (same as `tidy undo --last`).
@@ -715,14 +771,7 @@ pub async fn undo_last(app: AppHandle) -> CmdResult<Option<UndoDto>> {
         for (from, to) in &report.restored {
             watch::emit_activity(&app, "info", to, format!("되돌림 ← {}", s(from)));
         }
-        Ok(Some(UndoDto {
-            restored: report.restored.iter().map(|(a, b)| (s(a), s(b))).collect(),
-            conflicts: report
-                .conflicts
-                .iter()
-                .map(|c| format!("{}: {}", s(&c.dst_path), c.reason))
-                .collect(),
-        }))
+        Ok(Some(UndoDto::from(&report)))
     })
     .await
 }
@@ -899,6 +948,8 @@ pub struct SettingsDto {
     pub autostart: autostart::AutostartDto,
     /// (M11) Daily background update check.
     pub check_updates: bool,
+    /// (M14) `[mover] duplicate_policy`: skip | rename | replace.
+    pub duplicate_policy: tidy_core::config::DuplicatePolicy,
 }
 
 /// Shown when there is no rules.toml yet: explanations only, no rules
@@ -935,6 +986,7 @@ pub async fn get_settings(app: AppHandle) -> CmdResult<SettingsDto> {
             hotkey: cfg.general.hotkey.clone(),
             autostart: autostart::state(&app, cfg.general.start_on_login),
             check_updates: cfg.general.check_updates,
+            duplicate_policy: cfg.mover.duplicate_policy,
         })
     })
     .await
@@ -977,6 +1029,9 @@ pub struct SaveSettingsArgs {
     /// (M11) `[general] check_updates`.
     #[serde(default = "default_true")]
     pub check_updates: bool,
+    /// (M14) `[mover] duplicate_policy` (absent = unchanged).
+    #[serde(default)]
+    pub duplicate_policy: Option<tidy_core::config::DuplicatePolicy>,
 }
 
 fn default_true() -> bool {
@@ -1010,6 +1065,7 @@ pub async fn save_settings(app: AppHandle, args: SaveSettingsArgs) -> CmdResult<
             // Configuring folders here by hand is an explicit setup (SPEC §14.1).
             onboarded: (!args.watches.is_empty()).then_some(true),
             check_updates: args.check_updates,
+            duplicate_policy: args.duplicate_policy,
         };
         write_settings(&state.config_path, &patch).map_err(|e| e.to_string())?;
         // Rules path comes from the (re)loaded config.

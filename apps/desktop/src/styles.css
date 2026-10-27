@@ -464,3 +464,24 @@ pre.toml { font-size: 12px; background: var(--surface); padding: 6px 8px; border
 @media (max-width: 559px) {
   .folder-grid { grid-template-columns: 1fr; }
 }
+
+/* ── M14: duplicates (SPEC §14.9) ─────────────────────────────────────── */
+.dup-card { flex-direction: row; align-items: flex-start; gap: 12px; flex-wrap: wrap; padding: 14px 16px; }
+.dup-card .what { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 240px; }
+.dup-card .what b { font-size: 14px; font-weight: 600; }
+.dup-choices { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.dup-notice { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--warn-soft); border: 1px solid var(--warn-line); }
+.dup-notice .dup-line { color: var(--warn); font-size: 12px; font-weight: 600; display: flex; gap: 6px; align-items: center; min-width: 0; flex-wrap: wrap; }
+.dup-notice .dup-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.dup-groups { display: flex; flex-direction: column; gap: 10px; }
+.dup-group { padding: 10px 14px; gap: 4px; }
+.dup-head { display: flex; align-items: center; gap: 10px; justify-content: space-between; flex-wrap: wrap; }
+.dup-file { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto auto 44px; align-items: center; gap: 8px; font-size: 13px; padding: 3px 0; border-top: 1px solid var(--line-2); }
+.dup-file .dup-path { min-width: 0; }
+.dup-preview { padding: 12px 14px; gap: 8px; }
+.cols-dup { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+@media (max-width: 899px) {
+  .dup-file { grid-template-columns: 20px minmax(0, 1fr) auto; }
+  .dup-file > :nth-child(4), .dup-file > :nth-child(5) { display: none; }
+  .cols-dup { grid-template-columns: 1fr; }
+}
