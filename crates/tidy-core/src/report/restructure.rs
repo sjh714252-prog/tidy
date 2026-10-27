@@ -842,6 +842,7 @@ pub fn apply(
             ai_confidence: fm.context.as_ref().map(|c| c.confidence),
             new_name: fm.new_name.clone(),
             encrypt: fm.encrypt,
+            on_duplicate: None,
         };
         if fm.encrypt {
             if let Some(opts) = index {

@@ -212,6 +212,7 @@ fn confirm_mode_queues_with_badge_and_locks_on_approval() {
         &Decision::Move {
             dest_dir: None,
             new_name: None,
+            on_duplicate: None,
         },
         &new_batch_id(),
         Some(&IndexOptions::from_config(&Config::default())),
@@ -243,7 +244,8 @@ fn without_a_password_even_auto_mode_asks_first() {
         p.id,
         &Decision::Move {
             dest_dir: None,
-            new_name: None
+            new_name: None,
+            on_duplicate: None,
         },
         &new_batch_id(),
         None

@@ -112,6 +112,7 @@ fn watch_index_confirm_undo() {
         &Decision::Move {
             dest_dir: Some(elsewhere.clone()),
             new_name: None,
+            on_duplicate: None,
         },
         "ui-batch",
         Some(&idx),

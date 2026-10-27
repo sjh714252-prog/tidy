@@ -13,7 +13,7 @@ use crate::watcher::IgnoreFilter;
 /// `p` with its nearest existing ancestor canonicalized (symlinks such as
 /// macOS `/var` → `/private/var` resolved) and the missing rest appended,
 /// so a folder that does not exist yet still compares with real ones.
-fn canon(p: &Path) -> PathBuf {
+pub(crate) fn canon(p: &Path) -> PathBuf {
     let mut rest = Vec::new();
     let mut cur = p;
     loop {

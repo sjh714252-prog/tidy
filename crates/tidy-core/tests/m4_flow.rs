@@ -165,6 +165,7 @@ fn rules_ai_ask_learn() {
             &Decision::Move {
                 dest_dir: Some(kt.clone()),
                 new_name: None,
+                on_duplicate: None,
             },
             &new_batch_id(),
             None,
