@@ -8,6 +8,7 @@ mod commands;
 mod context_cmds;
 #[cfg(debug_assertions)]
 mod devbridge;
+mod ocr;
 mod onboarding;
 mod overview;
 mod report_cmds;
@@ -138,6 +139,9 @@ pub fn run() {
             onboarding::make_dir,
             onboarding::open_wizard,
             commands::semantic_status,
+            ocr::ocr_status,
+            ocr::set_ocr_enabled,
+            ocr::ocr_retry,
             commands::open_path,
             commands::reveal_path,
             commands::list_pending,

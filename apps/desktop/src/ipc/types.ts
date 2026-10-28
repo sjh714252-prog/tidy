@@ -147,6 +147,8 @@ export interface SearchHit {
   vault: boolean;
   /** (M9) "주민번호 2 · 이름+휴대전화 15" when judged personal. */
   pii: string | null;
+  /** (M15) The body text was read from the picture / scan (OCR). */
+  ocr: boolean;
 }
 
 /** Words + meaning search (search_semantic). */
@@ -158,6 +160,19 @@ export interface SearchResult {
   natural: boolean;
   /** Why meaning did not take part. */
   note: string | null;
+}
+
+/** (M15) Text recognition of images and scanned PDFs (ocr_status). */
+export interface OcrStatus {
+  enabled: boolean;
+  /** "Windows 내장 OCR · 한국어"; null = no engine on this PC. */
+  engine: string | null;
+  /** Why there is no engine, or a hint (missing language pack). */
+  note: string | null;
+  pending: number;
+  ok: number;
+  empty: number;
+  failed: number;
 }
 
 export interface SemanticStatus {

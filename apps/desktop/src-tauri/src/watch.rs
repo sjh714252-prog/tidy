@@ -427,6 +427,8 @@ pub fn spawn_index(app: &AppHandle) {
             let _ = app.emit(EV_STATUS, ());
             // New/changed files are waiting for their vectors: start a pass now.
             crate::semantic::restart_embed(&app);
+            // ...and images / scanned PDFs for their text (M15).
+            crate::ocr::restart(&app);
         })
         .expect("spawn index thread");
 }

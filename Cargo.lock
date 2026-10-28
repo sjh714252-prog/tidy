@@ -2744,7 +2744,7 @@ dependencies = [
 
 [[package]]
 name = "tidy-cli"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2762,7 +2762,7 @@ dependencies = [
 
 [[package]]
 name = "tidy-core"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2797,6 +2797,7 @@ dependencies = [
  "trash",
  "uuid",
  "walkdir",
+ "windows",
  "windows-sys 0.60.2",
  "zeroize",
  "zip",

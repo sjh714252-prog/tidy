@@ -732,6 +732,7 @@ mod tests {
                 excerpt: Some(body.chars().take(500).collect()),
                 content: Some(body.into()),
                 pii: None,
+                ocr: None,
             },
             mtime,
         )

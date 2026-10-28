@@ -20,7 +20,7 @@ use chrono::NaiveTime;
 use crate::config::{Config, RootKind, WatchRoot};
 use crate::mover::{hash_file, TMP_MARKER};
 use crate::paths::ext_lower;
-use crate::store::{NewFile, Store, StoreError, TextStatus};
+use crate::store::{NewFile, OcrState, Store, StoreError, TextStatus};
 use crate::watcher::IgnoreFilter;
 
 #[derive(Debug, Error)]
@@ -60,6 +60,8 @@ pub struct IndexOptions {
     /// (M9) Judge personal information from the extracted text
     /// (`[security.pii]`); `None` = no verdicts stored.
     pub pii: Option<Arc<crate::pii::Detector>>,
+    /// (M15) Images up to this size are marked for text recognition.
+    pub ocr_max_image_bytes: u64,
 }
 
 impl Default for IndexOptions {
@@ -78,6 +80,7 @@ impl Default for IndexOptions {
             skip_hidden: true,
             batch_size: 500,
             pii: None,
+            ocr_max_image_bytes: crate::config::OcrCfg::default().max_image_mb * 1024 * 1024,
         }
     }
 }
@@ -103,6 +106,7 @@ impl IndexOptions {
                 .pii
                 .enabled
                 .then(|| Arc::new(crate::pii::Detector::lenient(&cfg.security.pii))),
+            ocr_max_image_bytes: cfg.ocr.max_image_mb * 1024 * 1024,
             ..Default::default()
         }
     }
@@ -485,6 +489,32 @@ impl<'a> Indexer<'a> {
                 }
             }
         };
+        // (M15) Images and scanned PDFs wait for text recognition, unless
+        // the same content was recognized before.
+        let (mut text_status, mut content) = (text_status, content);
+        let mut ocr = None;
+        if super::ocr::is_target(
+            &ext,
+            size,
+            text_status,
+            content.as_deref(),
+            opts.ocr_max_image_bytes,
+        ) {
+            match hash
+                .as_deref()
+                .map(|h| self.store.ocr_cache_get(h))
+                .transpose()?
+                .flatten()
+            {
+                Some(t) if !t.trim().is_empty() => {
+                    text_status = TextStatus::Ok;
+                    content = Some(truncate_chars(t, opts.max_text_chars));
+                    ocr = Some(OcrState::Ok);
+                }
+                Some(_) => ocr = Some(OcrState::Empty),
+                None => ocr = Some(OcrState::Pending),
+            }
+        }
         let excerpt = content
             .as_deref()
             .map(|c| c.chars().take(500).collect::<String>())
@@ -509,6 +539,7 @@ impl<'a> Indexer<'a> {
                 excerpt,
                 content,
                 pii,
+                ocr,
             },
             seen_at,
         )?;

@@ -272,6 +272,8 @@ pub struct HitDto {
     pub vault: bool,
     /// (M9) "주민번호 2 · 이름+휴대전화 15" when judged personal.
     pub pii: Option<String>,
+    /// (M15) The body text was read from the picture / scan (OCR).
+    pub ocr: bool,
 }
 
 fn hit_dto(h: SearchHit) -> HitDto {
@@ -301,6 +303,7 @@ fn hit_dto(h: SearchHit) -> HitDto {
             .pii_flags
             .filter(|f| *f != 0)
             .map(|f| tidy_core::pii::summary(f, &h.file.pii_counts.unwrap_or_default())),
+        ocr: h.file.ocr == Some(tidy_core::store::OcrState::Ok),
     }
 }
 

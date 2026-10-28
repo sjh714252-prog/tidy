@@ -144,6 +144,11 @@ export function SearchWindow() {
                     의미 {h.similarity != null ? pct(h.similarity) : ""}
                   </span>
                 )}
+                {h.ocr && (
+                  <span className="tag sem" data-testid="ocr-badge" title="사진·스캔 속 글자를 읽어 찾은 파일">
+                    사진 속 글자
+                  </span>
+                )}
                 {h.vault && (
                   <span className="tag lock" data-testid="lock-badge" title="암호화 보관 파일 — 열면 임시 사본으로 풀어 엽니다">
                     🔒

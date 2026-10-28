@@ -54,6 +54,7 @@ cargo run -p tidy-cli -- pending --move <ID> [--to DIR] / --skip <ID> / --ignore
 cargo run -p tidy-cli -- index <폴더 또는 파일>   # --rebuild는 전체 인덱스 삭제 후 재생성
 cargo run -p tidy-cli -- search "키워드"          # 임베딩 모델이 있으면 단어+의미, --fts는 단어만
 cargo run -p tidy-cli -- embed [--status | --rebuild | --limit N]   # 의미검색 벡터 (index가 끝나면 자동)
+cargo run -p tidy-cli -- ocr [--status | --retry | --limit N | <파일>]   # 사진·스캔 PDF 글자 인식(M15, watch 중 자동). 클라우드: apt install tesseract-ocr tesseract-ocr-kor poppler-utils
 cargo run -p tidy-cli -- ai status / ai key set tidy/anthropic / ai test <파일> / ai log
 cargo run -p tidy-cli -- learn [--accept N | --dismiss N]   # 학습 규칙 제안
 cargo run -p tidy-cli -- rules check [rules.toml] [--each]   # 규칙별 지금 매치되는 파일 수·예시 (이동 없음)
@@ -69,7 +70,7 @@ cargo run -p tidy-cli -- context list / add <이름> [--alias A,B | --issue | --
 cargo run -p tidy-cli -- curate scan [폴더] [--dry-run]  → curate apply <plan-id> [--only 1,3]   # 업무 맥락 정리(AI, 승인 전 무이동). 하위 폴더는 통째로 한 항목(M12)
 cd apps/desktop && npm ci && npm run tauri dev   # 클라우드: npm run build + (src-tauri) cargo clippy 까지만
 cd apps/desktop && npx tauri build [--bundles deb,appimage]   # 설치 패키지 (docs/packaging.md), 태그 v*는 release.yml
-S=/tmp/tidy-e2e bash apps/desktop/e2e/run-headless.sh m14    # 헤드리스 GUI e2e (m3~m14, m14는 휴지통 = $T/휴지통 폴더(TIDY_E2E_TRASH), 공통 도우미 e2e/lib.mjs, 가짜 OpenAI 호환 서버 e2e/fake-embed.mjs, 느린 가짜 LLM e2e/fake-llm.mjs)
+S=/tmp/tidy-e2e bash apps/desktop/e2e/run-headless.sh m14    # 헤드리스 GUI e2e (m3~m15, m15는 tesseract 필요, m14는 휴지통 = $T/휴지통 폴더(TIDY_E2E_TRASH), 공통 도우미 e2e/lib.mjs, 가짜 OpenAI 호환 서버 e2e/fake-embed.mjs, 느린 가짜 LLM e2e/fake-llm.mjs)
 node apps/desktop/e2e/fake-llm.mjs 18095   # 느린·긴 가짜 Anthropic/OpenAI 호환 (파일당 1초, FAKE_MAX_TOKENS로 max_tokens 잘림 재현)
 ```
 
@@ -90,6 +91,7 @@ node apps/desktop/e2e/fake-llm.mjs 18095   # 느린·긴 가짜 Anthropic/OpenAI
 
 - [x] M13 화면 개편 (2026-10-26, 0.6.0) — 감시 폴더 별칭(`[[watch]] alias`)·PathText(가운데 줄임·전체 경로 title·클릭 열기), 홈 폴더 카드 4열+오늘 한 일(move_log `today_moves`)+고객사별, 확인 대기 5열 표↔900px 미만 카드·⋯ 메뉴 5개(팝업 같은 카드), 설정 왼쪽 메뉴 6쪽 `#/main/settings/<key>`(좁으면 가로 탭)·공통 정리 위치·폴더 편집 패널·규칙 한 줄 아코디언, 최소 창 960×640, 색 토큰, e2e `lib.mjs`+m13. 실제 창 크기·DPI·한글 글꼴·트레이·탐색기 열기는 로컬에서
 - [x] M14 중복 파일 처리 + 한글 본문 검색 (2026-10-27, 0.7.0) — `[mover] duplicate_policy` 설정 카드(건너뜀·번호·휴지통, 이름만 같으면 언제나 번호), 건너뜀 사유 "똑같은 파일이 이미 …에 있어 그대로 둠"+기존 파일 열기, 확인 대기·팝업 미리 알림+세 버튼(`on_duplicate`), 리포트 중복 그룹(정리 위치 사본 포함·하드링크 제외·기본 남김)→미리보기→휴지통(`Mover::trash_duplicates`, move_log `op = trash`, undo는 휴지통 복원 안내, `TrashBackend`), `tidy dedupe`, hwp(cfb+deflate+PARA_TEXT, 암호=메타만, PrvText 폴백)·hwpx 추출기. 실제 Windows 휴지통·실제 한글 문서 여러 종은 로컬에서
+- [x] M15 사진·스캔 PDF 속 글자 검색(OCR) (2026-10-28, 0.8.0) — Windows 내장 OCR(`Windows.Media.Ocr`, PDF는 `Windows.Data.Pdf`로 렌더링)·그 밖은 tesseract(+pdftoppm), 인덱서는 `files.ocr = pending`만 표시(store v10, 기존 이미지·스캔 PDF도 마이그레이션 때 대기), 백그라운드 `run_ocr_loop`가 본문으로 저장(단어·의미검색·개인정보 판정), 내용 해시 `ocr_cache`, `tidy ocr`, 설정 › 고급 카드·검색 "사진 속 글자" 표시, e2e m15. 실제 Windows OCR·한국어 언어팩 확인은 로컬에서(CI windows에서 tests/m15_ocr.rs가 실제 엔진으로 돎)
 - [x] 0.2.x 핫픽스 (2026-10-22~23) — 규칙 카드 정렬(#12), AI 응답 잘림 분할 재시도(#13), HTTP 타임아웃 상한(#14), 감시 폴더 제외 폴더(SPEC §14.5)
 
 ## 열린 결정

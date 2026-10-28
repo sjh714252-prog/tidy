@@ -331,6 +331,84 @@ pub struct Config {
     pub security: Security,
     /// (M10) Work-context curation (customer / issue folders, AI).
     pub curate: CurateCfg,
+    /// (M15) Text recognition of images and scanned PDFs.
+    pub ocr: OcrCfg,
+}
+
+/// `[ocr]` (SPEC §14.12, M15): read the text in images and scanned PDFs
+/// so search finds them. Local engines only (offline, free).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct OcrCfg {
+    pub enabled: bool,
+    /// `auto` (Windows: built-in OCR, elsewhere: tesseract), `windows`,
+    /// or `tesseract`.
+    pub engine: OcrEngineKind,
+    /// Preferred languages (BCP-47 short codes), first available wins on
+    /// Windows; tesseract uses every installed one of them.
+    pub languages: Vec<String>,
+    /// Larger images are not read.
+    pub max_image_mb: u64,
+    /// Scanned PDFs: pages read from the start.
+    pub pdf_max_pages: u32,
+    /// tesseract executable when it is not on PATH.
+    pub tesseract_path: Option<PathBuf>,
+}
+
+impl Default for OcrCfg {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            engine: OcrEngineKind::Auto,
+            languages: vec!["ko".into(), "en".into()],
+            max_image_mb: 20,
+            pdf_max_pages: 10,
+            tesseract_path: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum OcrEngineKind {
+    #[default]
+    Auto,
+    Windows,
+    Tesseract,
+}
+
+/// (M15) `[ocr] enabled`, keeping the rest of the file as it is.
+pub fn write_ocr_enabled(path: &Path, enabled: bool) -> Result<(), ConfigError> {
+    use toml_edit::{value, DocumentMut, Item, Table};
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(source) => {
+            return Err(ConfigError::Read {
+                path: path.to_path_buf(),
+                source,
+            })
+        }
+    };
+    let mut doc: DocumentMut = text.parse().map_err(|e| ConfigError::Edit {
+        path: path.to_path_buf(),
+        source: Box::new(e),
+    })?;
+    doc.entry("ocr")
+        .or_insert(Item::Table(Table::new()))
+        .as_table_like_mut()
+        .expect("[ocr] is a table")
+        .insert("enabled", value(enabled));
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    std::fs::write(path, doc.to_string()).map_err(|source| ConfigError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 /// `[curate]` (SPEC §14.3, M10): group files by customer and issue with

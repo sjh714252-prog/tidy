@@ -6,17 +6,20 @@ mod db;
 mod files;
 mod learn;
 mod models;
+mod ocr;
 mod plans;
 mod vectors;
 
 pub use db::{Store, StoreError, NETWORK_PATH_HINT};
 pub use models::{
     AiLogEntry, DecidedBy, Decision, DecisionAction, FileRecord, FileStamp, IndexStats,
-    MoveLogEntry, MoveOp, NewFile, NewMove, NewPending, PendingEntry, PendingSource, TextStatus,
+    MoveLogEntry, MoveOp, NewFile, NewMove, NewPending, OcrState, PendingEntry, PendingSource,
+    TextStatus,
 };
 
 pub(crate) use db::now as now_unix;
 pub(crate) use files::file_from_row;
 pub use learn::NewDecision;
+pub use ocr::{OcrCandidate, OcrCounts};
 pub use plans::{BatchSummary, StoredPlan};
 pub use vectors::{EmbedCandidate, VectorRow, VectorStats};
