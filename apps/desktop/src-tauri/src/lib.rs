@@ -199,6 +199,7 @@ pub fn run() {
             about::open_url,
             about::open_folder,
             about::check_update,
+            about::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tidy");

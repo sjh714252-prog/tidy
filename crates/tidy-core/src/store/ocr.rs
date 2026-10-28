@@ -1,4 +1,4 @@
-//! (M15) `files.ocr` and `ocr_cache` (SPEC §14.11): which images and
+//! (M15) `files.ocr` and `ocr_cache` (SPEC §14.12): which images and
 //! scanned PDFs still wait for text recognition, and the results.
 
 use std::path::PathBuf;

@@ -335,7 +335,7 @@ pub struct Config {
     pub ocr: OcrCfg,
 }
 
-/// `[ocr]` (SPEC §14.11, M15): read the text in images and scanned PDFs
+/// `[ocr]` (SPEC §14.12, M15): read the text in images and scanned PDFs
 /// so search finds them. Local engines only (offline, free).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]

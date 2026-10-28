@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import * as ipc from "../ipc/commands";
-import type { AboutInfo, UpdateResult } from "../ipc/types";
+import type { AboutInfo, UpdateInfo, UpdateResult } from "../ipc/types";
 import { useHome } from "../store/home";
 import { useStatus } from "../store/status";
 import { REPO } from "./HelpMenu";
@@ -119,7 +119,7 @@ export function AboutDialog() {
           </button>{" "}
           {upd && <UpdateLine u={upd} onErr={setErr} />}
           {!upd && info && !info.checkUpdates && (
-            <span className="muted small">하루 한 번 자동 확인이 꺼져 있습니다(설정 → 고급).</span>
+            <span className="muted small">자동 확인이 꺼져 있습니다(설정 → 고급).</span>
           )}
         </div>
         {err && <p className="error small">{err}</p>}
@@ -142,13 +142,42 @@ function UpdateLine({ u, onErr }: { u: UpdateResult; onErr: (e: string) => void 
         최신 버전입니다 ({u.current})
       </span>
     );
-  const info = u.info;
+  return <NewVersion info={u.info} current={u.current} onErr={onErr} />;
+}
+
+/** "새 버전 X" + 지금 업데이트 (download → verify → install → restart). */
+function NewVersion({ info, current, onErr }: { info: UpdateInfo; current: string; onErr: (e: string) => void }) {
+  const [state, setState] = useState<"idle" | "busy" | "installing">("idle");
+  const install = async () => {
+    setState("busy");
+    try {
+      const r = await ipc.installUpdate();
+      setState(r === "installing" ? "installing" : "idle");
+    } catch (e) {
+      setState("idle");
+      onErr(String(e));
+    }
+  };
   return (
     <span className="small" data-testid="update-result">
-      <b>새 버전 {info.latest}</b> (지금 {u.current}){" "}
-      <button className="primary" onClick={() => void ipc.openUrl(info.url).catch((e) => onErr(String(e)))}>
-        받기
-      </button>
+      <b>새 버전 {info.latest}</b> (지금 {current}){" "}
+      {state === "installing" ? (
+        <span className="ok">설치 프로그램을 실행했습니다. 설치가 끝나면 Tidy가 다시 켜집니다.</span>
+      ) : info.autoInstall ? (
+        <>
+          <button className="primary" disabled={state === "busy"} onClick={() => void install()}>
+            {state === "busy" ? "받는 중…" : "지금 업데이트"}
+          </button>{" "}
+          <span className="muted">받아서 설치한 뒤 자동으로 다시 시작합니다</span>{" "}
+          <button className="link" onClick={() => void ipc.openUrl(info.page).catch((e) => onErr(String(e)))}>
+            바뀐 점
+          </button>
+        </>
+      ) : (
+        <button className="primary" onClick={() => void ipc.openUrl(info.url).catch((e) => onErr(String(e)))}>
+          받기
+        </button>
+      )}
     </span>
   );
 }

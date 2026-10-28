@@ -13,6 +13,8 @@ pub const DEFAULT_URL: &str = "https://api.github.com/repos/sjh714252-prog/tidy/
 /// Where `DEFAULT_URL` is replaced (headless tests point it at a fake).
 pub const URL_ENV: &str = "TIDY_UPDATE_URL";
 pub const TIMEOUT: Duration = Duration::from_secs(10);
+/// Downloading an installer (~10 MB) may take a while on a slow line.
+pub const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Error)]
 pub enum UpdateError {
@@ -20,6 +22,12 @@ pub enum UpdateError {
     Http(String),
     #[error("unexpected answer: {0}")]
     Format(String),
+    #[error("{0}")]
+    Unsupported(String),
+    #[error("downloaded file does not match the release (sha256 {got}, expected {want})")]
+    Mismatch { got: String, want: String },
+    #[error("could not save the installer: {0}")]
+    Io(String),
 }
 
 /// `major.minor.patch[-pre]`. A pre-release sorts before its release.
@@ -86,6 +94,9 @@ struct ApiRelease {
 struct ApiAsset {
     name: String,
     browser_download_url: String,
+    /// `"sha256:<hex>"` (GitHub computes it on upload).
+    #[serde(default)]
+    digest: Option<String>,
 }
 
 /// Result of one check.
@@ -99,6 +110,13 @@ pub struct UpdateInfo {
     /// Installer for this OS, or the release page.
     pub url: String,
     pub page: String,
+    /// SHA-256 (hex) of the installer at `url`, from the release.
+    #[serde(default)]
+    pub sha256: Option<String>,
+    /// "지금 업데이트" can download, verify and run the installer itself:
+    /// a Windows setup `.exe` with a known SHA-256.
+    #[serde(default)]
+    pub auto_install: bool,
 }
 
 /// Installer asset for `os` ("windows" | "macos" | "linux"), by name.
@@ -126,15 +144,32 @@ pub fn evaluate(json: &str, current: &str, os: &str) -> Result<UpdateInfo, Updat
         .ok_or_else(|| UpdateError::Format(format!("current version {current}")))?;
     let assets: Vec<(String, String)> = r
         .assets
-        .into_iter()
-        .map(|a| (a.name, a.browser_download_url))
+        .iter()
+        .map(|a| (a.name.clone(), a.browser_download_url.clone()))
         .collect();
+    let picked = pick_asset(&assets, os);
+    let sha256 = picked.as_ref().and_then(|u| {
+        r.assets
+            .iter()
+            .find(|a| &a.browser_download_url == u)
+            .and_then(|a| a.digest.as_deref())
+            .and_then(|d| d.strip_prefix("sha256:"))
+            .filter(|h| h.len() == 64 && h.chars().all(|c| c.is_ascii_hexdigit()))
+            .map(str::to_ascii_lowercase)
+    });
+    let auto_install = os == "windows"
+        && sha256.is_some()
+        && picked
+            .as_deref()
+            .is_some_and(|u| u.to_lowercase().ends_with("-setup.exe"));
     Ok(UpdateInfo {
         current: current.to_string(),
         latest: r.tag_name.trim_start_matches(['v', 'V']).to_string(),
         newer: latest > cur,
-        url: pick_asset(&assets, os).unwrap_or_else(|| r.html_url.clone()),
+        url: picked.unwrap_or_else(|| r.html_url.clone()),
         page: r.html_url,
+        sha256,
+        auto_install,
     })
 }
 
@@ -180,6 +215,68 @@ pub async fn check(url: &str, current: &str) -> Result<UpdateInfo, UpdateError> 
     evaluate(&text, current, this_os())
 }
 
+/// Lowercase hex SHA-256 of `bytes`.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Download the installer of `info` into `dir` and check it against the
+/// release's SHA-256. Only for [`UpdateInfo::auto_install`]. Returns the
+/// saved file (`dir/<asset name>`).
+pub async fn download_installer(
+    info: &UpdateInfo,
+    dir: &std::path::Path,
+) -> Result<std::path::PathBuf, UpdateError> {
+    let want = match (&info.sha256, info.auto_install) {
+        (Some(h), true) => h.clone(),
+        _ => {
+            return Err(UpdateError::Unsupported(
+                "this release has no installer that can be installed automatically".into(),
+            ))
+        }
+    };
+    let name = info
+        .url
+        .rsplit('/')
+        .next()
+        .filter(|n| {
+            !n.is_empty()
+                && n.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        })
+        .ok_or_else(|| UpdateError::Format(format!("installer url {}", info.url)))?
+        .to_string();
+    let http = reqwest::Client::builder()
+        .timeout(DOWNLOAD_TIMEOUT)
+        .user_agent(concat!("tidy/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| UpdateError::Http(e.to_string()))?;
+    let resp = http
+        .get(&info.url)
+        .send()
+        .await
+        .map_err(|e| UpdateError::Http(e.to_string()))?;
+    if !resp.status().is_success() {
+        return Err(UpdateError::Http(format!("HTTP {}", resp.status())));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| UpdateError::Http(e.to_string()))?;
+    let got = sha256_hex(&bytes);
+    if got != want {
+        return Err(UpdateError::Mismatch { got, want });
+    }
+    std::fs::create_dir_all(dir).map_err(|e| UpdateError::Io(e.to_string()))?;
+    let path = dir.join(name);
+    std::fs::write(&path, &bytes).map_err(|e| UpdateError::Io(e.to_string()))?;
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,5 +313,109 @@ mod tests {
         assert!(!evaluate(json, "0.4.1", "windows").unwrap().newer);
         assert!(!evaluate(json, "0.5.0", "windows").unwrap().newer);
         assert!(evaluate("{}", "0.4.0", "windows").is_err());
+        // No digest: still a download link, but not installable in place.
+        assert!(!i.auto_install && i.sha256.is_none());
+    }
+
+    #[test]
+    fn digest_enables_auto_install_on_windows_only() {
+        let h = "AB".repeat(32);
+        let json = format!(
+            r#"{{"tag_name":"v0.7.3","html_url":"https://x/r",
+            "assets":[{{"name":"Tidy_0.7.3_x64-setup.exe","browser_download_url":"https://x/a-setup.exe","digest":"sha256:{h}"}},
+                      {{"name":"Tidy_0.7.3_universal.dmg","browser_download_url":"https://x/a.dmg","digest":"sha256:{h}"}}]}}"#
+        );
+        let w = evaluate(&json, "0.7.2", "windows").unwrap();
+        assert!(w.auto_install);
+        assert_eq!(w.sha256.as_deref(), Some("ab".repeat(32).as_str()));
+        let m = evaluate(&json, "0.7.2", "macos").unwrap();
+        assert!(!m.auto_install);
+        assert_eq!(m.url, "https://x/a.dmg");
+        // A malformed digest is ignored.
+        let bad = json.replace(&h, "zz");
+        assert!(!evaluate(&bad, "0.7.2", "windows").unwrap().auto_install);
+    }
+
+    #[test]
+    fn sha256_of_known_input() {
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn download_refuses_without_auto_install() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let info = UpdateInfo {
+            current: "0.7.2".into(),
+            latest: "0.7.3".into(),
+            newer: true,
+            url: "https://x/r".into(),
+            page: "https://x/r".into(),
+            sha256: None,
+            auto_install: false,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        assert!(matches!(
+            rt.block_on(download_installer(&info, dir.path())),
+            Err(UpdateError::Unsupported(_))
+        ));
+    }
+
+    /// Serve `body` once per connection on 127.0.0.1 (plain HTTP/1.1).
+    async fn serve(body: &'static [u8]) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut c, _)) = l.accept().await {
+                let mut buf = [0u8; 2048];
+                let _ = c.read(&mut buf).await;
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = c.write_all(head.as_bytes()).await;
+                let _ = c.write_all(body).await;
+            }
+        });
+        format!("http://{addr}/Tidy_9.9.9_x64-setup.exe")
+    }
+
+    #[test]
+    fn download_checks_sha256_before_saving() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let url = serve(b"installer bytes").await;
+            let dir = tempfile::tempdir().unwrap();
+            let mut info = UpdateInfo {
+                current: "0.7.2".into(),
+                latest: "9.9.9".into(),
+                newer: true,
+                url,
+                page: "https://x/r".into(),
+                sha256: Some(sha256_hex(b"installer bytes")),
+                auto_install: true,
+            };
+            let p = download_installer(&info, dir.path()).await.unwrap();
+            assert_eq!(p.file_name().unwrap(), "Tidy_9.9.9_x64-setup.exe");
+            assert_eq!(std::fs::read(&p).unwrap(), b"installer bytes");
+
+            // Wrong hash: nothing is saved.
+            let dir2 = tempfile::tempdir().unwrap();
+            info.sha256 = Some("0".repeat(64));
+            assert!(matches!(
+                download_installer(&info, dir2.path()).await,
+                Err(UpdateError::Mismatch { .. })
+            ));
+            assert_eq!(std::fs::read_dir(dir2.path()).unwrap().count(), 0);
+        });
     }
 }

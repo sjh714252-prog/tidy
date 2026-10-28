@@ -1,4 +1,4 @@
-//! (M15) Text recognition of images and scanned PDFs (SPEC §14.11).
+//! (M15) Text recognition of images and scanned PDFs (SPEC §14.12).
 //!
 //! The indexer only marks targets (`files.ocr = pending`, or fills them
 //! from `ocr_cache` by content hash); [`run_pass`] recognizes them in the

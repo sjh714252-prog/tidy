@@ -785,7 +785,7 @@ send_content = false
 | M12 | 폴더 단위 업무 맥락 정리 + 경로 맥락 + 고객사별 찾기(§14.7) | 0.5.0 |
 | M13 | UI 전면 정리: 별칭·PathText, 홈 카드, 확인 대기 표/카드, 설정 왼쪽 메뉴(§14.8) | 0.6.0 |
 | M14 | 중복 파일 처리 + 한글(hwp/hwpx) 본문 검색(§14.9) | 0.7.0 |
-| M15 | 사진·스캔 PDF 속 글자 검색(OCR)(§14.11) | 0.8.0 |
+| M15 | 사진·스캔 PDF 속 글자 검색(OCR)(§14.12) | 0.8.0 |
 
 각 마일스톤은 CLI로 먼저 검증한 뒤 UI를 붙인다.
 
@@ -1127,7 +1127,17 @@ send_content = false
 - **제공자별 설정 기억**: 프로필마다 `[ai.profiles.<p>.saved]`(분류)·`[ai.profiles.<p>.embed_saved]`(의미검색)에 제공자 이름 → `{ provider, model, key_ref, base_url, effort }`. 저장할 때 현재 제공자 설정도 여기에 넣는다. 화면에서 제공자를 바꾸면 떠나는 제공자의 입력값을 기억하고, 가는 제공자에 기억된 값이 있으면 그대로 복원(없으면 기본값 + 키체인에 키가 있는지 `api_key_stored`로 확인). 목록에는 기억된 제공자에 "· 저장된 설정"을 붙인다. 키 자체는 키 이름별로 키체인에 남아 있으므로 다시 입력할 필요가 없다.
 - DTO: `AiSettingsDto.saved` / `embedSaved`: `{ [provider]: { model, baseUrl, keyRef, effort, keyStored } }`. 코어 `AiPatch.saved`/`embed_saved`, `AiProfile.saved`/`embed_saved`.
 
-### 14.11 M15 — 사진·스캔 PDF 속 글자 검색(OCR) (0.8.0, §2.2 2차 항목)
+### 14.11 앱 안에서 업데이트 (0.7.3, 사용 피드백 2026-10-28)
+
+**배경**: 0.7.2를 릴리스했는데 앱이 알려 주지 않았다(하루 한 번만 확인, 마지막 확인이 릴리스 전). 알려 줘도 설치 파일을 직접 받아 실행해야 했다. "너가 해줘, 나 시키지 말고".
+
+- **확인 시점**: 켤 때마다 10초 뒤 한 번 + 켜 둔 동안 하루 한 번(`[general] check_updates`가 켜져 있을 때). 상태줄 표시는 "● 새 버전 X", 누르면 정보 창이 열리며 바로 다시 확인한다.
+- **지금 업데이트(Windows)**: `install_update` — 다시 확인 → 릴리스의 `*-setup.exe`를 받아 GitHub asset `digest`(`sha256:…`)와 SHA-256을 비교(다르면 저장하지 않고 실패) → `%TEMP%\tidy-update\<이름>`에 저장 → NSIS 설치 프로그램을 `/P /R /UPDATE`(진행 표시만, 끝나면 앱 다시 실행, 바로가기 유지)로 실행 → 1.5초 뒤 앱 종료. 설치 모드는 `currentUser`라 관리자 권한을 묻지 않는다. 설정·DB·키체인은 설치 폴더 밖이라 그대로다.
+- Tauri updater 플러그인(서명 키·`latest.json`)은 쓰지 않는다: 서명 키를 저장소 비밀 값으로 따로 관리해야 하고, 지금 릴리스 흐름(release.yml)에 이미 있는 설치 파일과 GitHub가 계산한 SHA-256으로 충분하다. 코드 서명 인증서가 생기면 다시 검토한다.
+- `UpdateInfo.sha256`·`autoInstall`(Windows + setup.exe + digest 있음). macOS·Linux 또는 digest가 없으면 예전처럼 "받기"로 설치 파일을 연다(`install_update`가 `"opened"`).
+- 테스트: 코어 — digest 파싱·Windows만 autoInstall, 로컬 HTTP로 받기 + 해시 불일치면 저장 안 함. e2e m11 — Linux에서 `install_update` = `"opened"`.
+
+### 14.12 M15 — 사진·스캔 PDF 속 글자 검색(OCR) (0.8.0, §2.2 2차 항목)
 
 **배경**: 캡처 이미지·사진으로 찍은 문서·스캔 PDF는 본문이 없어 파일 이름으로만 찾을 수 있었다(§2.2 "이미지 OCR / 스캔 PDF OCR"). 오프라인·무료 우선(절대 규칙 4), 인덱싱을 막지 않는다.
 

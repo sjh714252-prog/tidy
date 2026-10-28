@@ -1,5 +1,5 @@
 //! (M15) Text recognition of images and scanned PDFs in the app (SPEC
-//! §14.11): the background thread and the settings card's commands.
+//! §14.12): the background thread and the settings card's commands.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};

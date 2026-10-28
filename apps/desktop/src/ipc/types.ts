@@ -47,6 +47,10 @@ export interface UpdateInfo {
   /** Installer for this OS, or the release page. */
   url: string;
   page: string;
+  /** SHA-256 of the installer, from the release. */
+  sha256?: string | null;
+  /** "지금 업데이트" downloads, verifies and runs the installer (Windows). */
+  autoInstall?: boolean;
 }
 
 export interface UpdateResult {

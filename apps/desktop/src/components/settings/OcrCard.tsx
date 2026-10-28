@@ -3,7 +3,7 @@ import * as ipc from "../../ipc/commands";
 import type { OcrStatus } from "../../ipc/types";
 
 /**
- * (M15, SPEC §14.11) "사진·스캔 PDF 속 글자도 검색": one switch (saved
+ * (M15, SPEC §14.12) "사진·스캔 PDF 속 글자도 검색": one switch (saved
  * right away), what reads the text on this PC, and how far it got.
  * Refreshes every few seconds while there is something waiting.
  */

@@ -23,6 +23,7 @@ rusqlite.workspace = true
 regex.workspace = true
 globset.workspace = true
 blake3.workspace = true
+sha2.workspace = true
 uuid.workspace = true
 trash.workspace = true
 dunce.workspace = true

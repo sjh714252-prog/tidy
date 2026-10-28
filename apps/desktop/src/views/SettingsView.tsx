@@ -334,7 +334,7 @@ function AdvancedPage() {
             checked={draft.checkUpdates}
             onChange={(e) => s.patch({ checkUpdates: e.target.checked })}
           />
-          하루 한 번 새 버전 확인 — 새 버전이 있으면 상태줄에 "업데이트 있음" 표시(실패해도 아무것도 막지 않음)
+          새 버전 확인(켤 때마다·하루 한 번) — 새 버전이 있으면 상태줄에 "새 버전" 표시, 누르면 지금 업데이트(실패해도 아무것도 막지 않음)
         </label>
         <label className="check">
           <input

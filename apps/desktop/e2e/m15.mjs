@@ -1,5 +1,5 @@
 // M15 GUI test: text in images and scanned PDFs is searchable (SPEC
-// §14.11), driven through the dev bridge. Needs tesseract (+ kor) and
+// §14.12), driven through the dev bridge. Needs tesseract (+ kor) and
 // poppler-utils on the machine running the app.
 //
 //   A. a capture (png) and a scanned PDF already on the desktop → added as

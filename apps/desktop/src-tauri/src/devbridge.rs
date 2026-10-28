@@ -364,6 +364,7 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "open_url" => ok(about::open_url(app, arg(&args, "url")?).await?),
         "open_folder" => ok(about::open_folder(app, arg(&args, "path")?).await?),
         "check_update" => ok(about::check_update(app).await?),
+        "install_update" => ok(about::install_update(app).await?),
         // Test-only: what open_url / open_folder recorded (TIDY_E2E_NO_OPEN).
         "debug_opened" => ok(about::opened()),
         other => Err(format!("unknown command {other}")),
