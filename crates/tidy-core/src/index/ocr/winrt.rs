@@ -120,8 +120,15 @@ fn to_bitmap(decoder: &BitmapDecoder) -> windows::core::Result<SoftwareBitmap> {
         .join()
 }
 
+/// `StorageFile` wants an absolute path with backslashes only: a `/` in
+/// it (config paths, `join("a/b")`) fails as "path too long".
+fn winrt_path(path: &Path) -> std::path::PathBuf {
+    let abs = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    std::path::PathBuf::from(abs.to_string_lossy().replace('/', "\\"))
+}
+
 fn open(path: &Path) -> windows::core::Result<StorageFile> {
-    StorageFile::GetFileFromPathAsync(&HSTRING::from(path.as_os_str()))?.join()
+    StorageFile::GetFileFromPathAsync(&HSTRING::from(winrt_path(path).as_os_str()))?.join()
 }
 
 fn file_err(path: &Path, e: windows::core::Error) -> OcrError {
