@@ -247,8 +247,55 @@ pub async fn check_update(app: AppHandle) -> CmdResult<UpdateResult> {
     Ok(run_check(&app).await)
 }
 
-/// At start: show what the last check found, then (if enabled) check in
-/// the background once a day. Never blocks start-up; errors are dropped.
+/// 업데이트 → "지금 업데이트" (Windows): check again, download the setup
+/// `.exe`, verify its SHA-256 against the release, run it in passive mode
+/// (`/P` progress only, `/R` start Tidy again when done, `/UPDATE` keep
+/// shortcuts) and quit so the installer can replace the files. Elsewhere,
+/// or without a verifiable installer, opens the download instead and
+/// returns `"opened"`.
+#[tauri::command]
+pub async fn install_update(app: AppHandle) -> CmdResult<String> {
+    let current = app.package_info().version.to_string();
+    let info = update::check(&update::api_url(), &current)
+        .await
+        .map_err(|e| format!("새 버전을 확인하지 못했습니다: {e}"))?;
+    if !info.newer {
+        return Err(format!("이미 최신 버전입니다 ({current})"));
+    }
+    if !info.auto_install {
+        if !e2e_record(&info.url) {
+            app.opener()
+                .open_url(info.url.clone(), None::<&str>)
+                .map_err(|e| e.to_string())?;
+        }
+        return Ok("opened".into());
+    }
+    let dir = std::env::temp_dir().join("tidy-update");
+    let installer = update::download_installer(&info, &dir)
+        .await
+        .map_err(|e| format!("설치 파일을 받지 못했습니다: {e}"))?;
+    tracing::info!(
+        "update {} → {}: running {}",
+        current,
+        info.latest,
+        installer.display()
+    );
+    let mut cmd = std::process::Command::new(&installer);
+    cmd.args(["/P", "/R", "/UPDATE"]);
+    cmd.spawn()
+        .map_err(|e| format!("설치 프로그램을 실행하지 못했습니다: {e}"))?;
+    // Give the UI a moment to show "설치 중", then get out of the way.
+    let app2 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio_sleep(Duration::from_millis(1500)).await;
+        app2.exit(0);
+    });
+    Ok("installing".into())
+}
+
+/// At start: show what the last check found, check once right away (if
+/// enabled), then again once a day. Never blocks start-up; errors are
+/// dropped.
 pub fn spawn_daily_check(app: &AppHandle) {
     let current = app.package_info().version.to_string();
     let saved = load_saved(app);
@@ -256,10 +303,15 @@ pub fn spawn_daily_check(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio_sleep(Duration::from_secs(10)).await;
+        // Every start checks once, so a release made since the last check
+        // shows up without waiting a day.
+        let mut first = true;
         loop {
             let cfg = app.state::<AppState>().config();
             let last = load_saved(&app).checked_at;
-            if cfg.general.check_updates && now() - last >= DAY.as_secs() as i64 {
+            let due = first || now() - last >= DAY.as_secs() as i64;
+            first = false;
+            if cfg.general.check_updates && due {
                 let r = run_check(&app).await;
                 if let Some(e) = r.error {
                     tracing::info!("update check failed (ignored): {e}");

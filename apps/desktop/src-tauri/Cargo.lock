@@ -5253,7 +5253,7 @@ dependencies = [
 
 [[package]]
 name = "tidy-core"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5278,6 +5278,7 @@ dependencies = [
  "same-file",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.21",
  "tokio",
  "toml 0.8.23",
@@ -5293,7 +5294,7 @@ dependencies = [
 
 [[package]]
 name = "tidy-desktop"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "dirs 6.0.0",
  "dunce",

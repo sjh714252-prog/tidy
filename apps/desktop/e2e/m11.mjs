@@ -310,10 +310,13 @@ const save = () => saveSettings(main, 3000);
   await sleep(500);
   const o = await opened();
   ok("F", "받기 → Windows setup.exe 또는 이 OS 설치 파일", /setup\.exe$|\.AppImage$|\.dmg$/.test(o.at(-1) ?? ""), o.at(-1));
+  // 0.7.3: "지금 업데이트" installs on Windows; elsewhere it opens the download.
+  const inst = await bridge("install_update");
+  ok("F", "install_update: Windows 아니면 받기 열기('opened')", inst === "opened" && /setup\.exe$|\.AppImage$|\.dmg$/.test((await opened()).at(-1) ?? ""), String(inst));
   await main.screenshot({ path: `${SHOT}/m11-F-update.png` });
   await modal.getByRole("button", { name: "닫기" }).click();
   const dot = await waitFor(async () => (await main.locator("[data-testid=update-dot]").count()) === 1, 8000);
-  ok("F", "상태바 '업데이트 있음' 점", dot);
+  ok("F", "상태바 '새 버전' 점", dot);
   ghMode = "latest";
   await main.locator("[data-testid=update-dot]").click();
   await modal.waitFor();

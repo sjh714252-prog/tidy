@@ -276,9 +276,9 @@ function StatusBar() {
           className="sb-group update-dot"
           data-testid="update-dot"
           title={`새 버전 ${status.update.latest}`}
-          onClick={() => openAbout(false)}
+          onClick={() => openAbout(true)}
         >
-          ● 업데이트 있음
+          ● 새 버전 {status.update.latest}
         </button>
       )}
     </div>

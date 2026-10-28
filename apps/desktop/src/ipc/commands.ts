@@ -178,6 +178,8 @@ export const aboutInfo = () => invoke<AboutInfo>("about_info");
 export const openUrl = (url: string) => invoke<void>("open_url", { url });
 export const openFolder = (path: string) => invoke<void>("open_folder", { path });
 export const checkUpdate = () => invoke<UpdateResult>("check_update");
+/** "installing" (the app quits and restarts) or "opened" (download page/file opened). */
+export const installUpdate = () => invoke<"installing" | "opened">("install_update");
 
 // ── M13 ──
 /** 홈 "오늘 한 일": moves since `since` (unix seconds, local midnight). */
