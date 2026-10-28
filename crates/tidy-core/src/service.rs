@@ -355,6 +355,10 @@ pub fn run_ocr_loop(
             }
         }
         if let Some(e) = &engine {
+            // One pass at a time per process (a restarted loop may overlap
+            // the old one for a moment).
+            static PASS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            let _pass = PASS.lock().unwrap_or_else(|e| e.into_inner());
             match ocr::run_pass(cfg, &store, e.as_ref(), ocr::OCR_PASS, |_| {}) {
                 Ok(r) => {
                     let did = r.recognized + r.empty + r.failed;

@@ -5253,7 +5253,7 @@ dependencies = [
 
 [[package]]
 name = "tidy-core"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5286,6 +5286,7 @@ dependencies = [
  "trash",
  "uuid",
  "walkdir",
+ "windows",
  "windows-sys 0.60.2",
  "zeroize",
  "zip",
@@ -5293,7 +5294,7 @@ dependencies = [
 
 [[package]]
 name = "tidy-desktop"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "dirs 6.0.0",
  "dunce",

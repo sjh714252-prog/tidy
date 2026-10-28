@@ -17,6 +17,7 @@ import { useHome } from "../store/home";
 import { useNav } from "../store/nav";
 import { isAbsoluteDest } from "../components/destPaths";
 import { WatchSettings, commonRoot } from "../components/settings/WatchSettings";
+import { OcrCard } from "../components/settings/OcrCard";
 
 const MENU: { key: SettingsKey; label: string; ai?: boolean }[] = [
   { key: "watch", label: "감시 폴더" },
@@ -280,6 +281,7 @@ function AdvancedPage() {
         <h1>고급</h1>
         <p className="lead">자주 바꿀 일이 없는 설정입니다.</p>
       </div>
+      <OcrCard />
       <div className="card">
         <IgnoredFiles />
       </div>

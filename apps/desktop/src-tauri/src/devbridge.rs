@@ -189,6 +189,10 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         )
         .await?),
         "semantic_status" => ok(commands::semantic_status(app).await?),
+        // M15: text recognition.
+        "ocr_status" => ok(crate::ocr::ocr_status(app).await?),
+        "set_ocr_enabled" => ok(crate::ocr::set_ocr_enabled(app, arg(&args, "enabled")?).await?),
+        "ocr_retry" => ok(crate::ocr::ocr_retry(app).await?),
         // M8: wizard, rule editor, folder tree.
         "wizard_info" => ok(onboarding::wizard_info(app).await?),
         "preview_rules" => ok(onboarding::preview_rules(
