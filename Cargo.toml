@@ -6,7 +6,7 @@ members = ["crates/tidy-core", "crates/tidy-cli"]
 exclude = ["apps/desktop/src-tauri"]
 
 [workspace.package]
-version = "0.7.2"
+version = "0.7.3"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/sjh714252-prog/tidy"
@@ -30,6 +30,8 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 regex = "1"
 globset = "0.4"
 blake3 = "1"
+# (0.7.3) Update installer check against the GitHub asset digest.
+sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 trash = "5"
 dunce = "1"
