@@ -179,6 +179,8 @@ pub struct NewFile {
     pub content: Option<String>,
     /// (M9) Personal-information verdict (`None` = not judged).
     pub pii: Option<crate::pii::PiiFinding>,
+    /// (M15) Text recognition state; `None` = not an OCR target.
+    pub ocr: Option<OcrState>,
 }
 
 /// A row of `files` without the body text.
@@ -201,6 +203,43 @@ pub struct FileRecord {
     pub pii_counts: Option<crate::pii::PiiCounts>,
     /// (M9) The path is an encrypted vault zip (🔒).
     pub vault: bool,
+    /// (M15) Text recognition state (`Ok` = the body came from OCR).
+    pub ocr: Option<OcrState>,
+}
+
+/// (M15) `files.ocr`: text recognition of images and scanned PDFs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OcrState {
+    /// Waiting for the background pass.
+    Pending,
+    /// Recognized text is the body.
+    Ok,
+    /// Recognized, but no text in it.
+    Empty,
+    /// The engine failed on this file (`tidy ocr --retry`).
+    Failed,
+}
+
+impl OcrState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OcrState::Pending => "pending",
+            OcrState::Ok => "ok",
+            OcrState::Empty => "empty",
+            OcrState::Failed => "failed",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "pending" => OcrState::Pending,
+            "ok" => OcrState::Ok,
+            "empty" => OcrState::Empty,
+            "failed" => OcrState::Failed,
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize)]

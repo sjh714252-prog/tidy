@@ -293,6 +293,30 @@ CREATE TABLE created_dirs (
 );
 CREATE INDEX idx_created_dirs_batch ON created_dirs(batch_id);
 "#,
+    // v10 (M15): text recognition of images and scanned PDFs. `files.ocr`
+    // NULL = not a target, else pending | ok | empty | failed. `ocr_cache`
+    // keeps results by content hash so moved/copied files are not read
+    // again. Files indexed before M15 that qualify start as pending
+    // (images 4KB..20MB, PDFs whose text failed or is under 30 characters).
+    r#"
+ALTER TABLE files ADD COLUMN ocr TEXT;
+CREATE INDEX idx_files_ocr ON files(ocr);
+CREATE TABLE ocr_cache (
+  hash TEXT PRIMARY KEY,
+  text TEXT NOT NULL,
+  engine TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+UPDATE files SET ocr = 'pending'
+ WHERE vault = 0 AND text_status = 'unsupported'
+   AND ext IN ('png','jpg','jpeg','bmp','gif','tif','tiff','webp')
+   AND size >= 4096 AND size <= 20971520;
+UPDATE files SET ocr = 'pending'
+ WHERE vault = 0 AND ext = 'pdf'
+   AND (text_status = 'failed'
+        OR (text_status = 'ok' AND length(replace(replace(replace(replace(
+              COALESCE(content, ''), ' ', ''), char(10), ''), char(13), ''), char(9), '')) < 30));
+"#,
 ];
 
 pub struct Store {

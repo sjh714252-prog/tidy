@@ -6,7 +6,7 @@ use std::path::Path;
 use rusqlite::{params, OptionalExtension, Row};
 
 use super::db::{path_str, Store, StoreError};
-use super::models::{FileRecord, FileStamp, IndexStats, NewFile, TextStatus};
+use super::models::{FileRecord, FileStamp, IndexStats, NewFile, OcrState, TextStatus};
 use crate::config::RootKind;
 
 impl Store {
@@ -123,8 +123,8 @@ impl Store {
         self.conn().execute(
             "INSERT INTO files (path, root_id, name, ext, mime, size, mtime, ctime, hash,
                                 text_status, excerpt, content, indexed_at, last_seen_at,
-                                pii_flags, pii_counts, vault)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13, ?14, ?15, 0)
+                                pii_flags, pii_counts, vault, ocr)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13, ?14, ?15, 0, ?16)
              ON CONFLICT(path) DO UPDATE SET
                 root_id = excluded.root_id, name = excluded.name, ext = excluded.ext,
                 mime = excluded.mime, size = excluded.size, mtime = excluded.mtime,
@@ -132,7 +132,7 @@ impl Store {
                 text_status = excluded.text_status, excerpt = excluded.excerpt,
                 content = excluded.content, indexed_at = excluded.indexed_at,
                 last_seen_at = excluded.last_seen_at, pii_flags = excluded.pii_flags,
-                pii_counts = excluded.pii_counts, vault = 0",
+                pii_counts = excluded.pii_counts, vault = 0, ocr = excluded.ocr",
             params![
                 path_str(&f.path)?,
                 f.root_id,
@@ -151,6 +151,7 @@ impl Store {
                 f.pii
                     .filter(|p| !p.counts.is_empty())
                     .map(|p| serde_json::to_string(&p.counts).unwrap_or_default()),
+                f.ocr.map(OcrState::as_str),
             ],
         )?;
         Ok(self.conn().query_row(
@@ -374,7 +375,7 @@ impl Store {
 
 pub(crate) const SELECT_FILE: &str =
     "SELECT id, path, root_id, name, ext, mime, size, mtime, hash, text_status, excerpt, \
-     indexed_at, pii_flags, pii_counts, vault FROM files";
+     indexed_at, pii_flags, pii_counts, vault, ocr FROM files";
 
 pub(crate) fn file_from_row(r: &Row<'_>) -> rusqlite::Result<FileRecord> {
     let status: String = r.get(9)?;
@@ -396,6 +397,10 @@ pub(crate) fn file_from_row(r: &Row<'_>) -> rusqlite::Result<FileRecord> {
             .get::<_, Option<String>>(13)?
             .and_then(|c| serde_json::from_str(&c).ok()),
         vault: r.get::<_, i64>(14)? != 0,
+        ocr: r
+            .get::<_, Option<String>>(15)?
+            .as_deref()
+            .and_then(OcrState::parse),
     })
 }
 
@@ -424,6 +429,7 @@ mod tests {
             excerpt: content.map(|c| c.chars().take(500).collect()),
             content: content.map(str::to_string),
             pii: None,
+            ocr: None,
         }
     }
 

@@ -2,6 +2,7 @@
 
 pub mod extract;
 mod indexer;
+pub mod ocr;
 
 pub use extract::{hwp_testgen, ExtractError, Extractor, Extractors};
 pub use indexer::{

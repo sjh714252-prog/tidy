@@ -784,6 +784,8 @@ send_content = false
 | M11 | UI 단순화 + 도움말/정보·업데이트 확인 + 정리 현황(§14.6) | 0.4.0 |
 | M12 | 폴더 단위 업무 맥락 정리 + 경로 맥락 + 고객사별 찾기(§14.7) | 0.5.0 |
 | M13 | UI 전면 정리: 별칭·PathText, 홈 카드, 확인 대기 표/카드, 설정 왼쪽 메뉴(§14.8) | 0.6.0 |
+| M14 | 중복 파일 처리 + 한글(hwp/hwpx) 본문 검색(§14.9) | 0.7.0 |
+| M15 | 사진·스캔 PDF 속 글자 검색(OCR)(§14.11) | 0.8.0 |
 
 각 마일스톤은 CLI로 먼저 검증한 뒤 UI를 붙인다.
 
@@ -1124,3 +1126,26 @@ send_content = false
 - 실패 문구는 "✗ 연결 실패 — <할 일>" + 원문. 할 일은 알려진 오류만: 크레딧 부족(Anthropic "credit balance is too low" → 계정 Plans & Billing, Tidy 문제 아님), OpenAI 한도, 401(키 확인), 키체인에 키 없음, 404(모델·주소), 429/과부하, 네트워크·시간 초과(주소·Ollama 실행 확인).
 - **제공자별 설정 기억**: 프로필마다 `[ai.profiles.<p>.saved]`(분류)·`[ai.profiles.<p>.embed_saved]`(의미검색)에 제공자 이름 → `{ provider, model, key_ref, base_url, effort }`. 저장할 때 현재 제공자 설정도 여기에 넣는다. 화면에서 제공자를 바꾸면 떠나는 제공자의 입력값을 기억하고, 가는 제공자에 기억된 값이 있으면 그대로 복원(없으면 기본값 + 키체인에 키가 있는지 `api_key_stored`로 확인). 목록에는 기억된 제공자에 "· 저장된 설정"을 붙인다. 키 자체는 키 이름별로 키체인에 남아 있으므로 다시 입력할 필요가 없다.
 - DTO: `AiSettingsDto.saved` / `embedSaved`: `{ [provider]: { model, baseUrl, keyRef, effort, keyStored } }`. 코어 `AiPatch.saved`/`embed_saved`, `AiProfile.saved`/`embed_saved`.
+
+### 14.11 M15 — 사진·스캔 PDF 속 글자 검색(OCR) (0.8.0, §2.2 2차 항목)
+
+**배경**: 캡처 이미지·사진으로 찍은 문서·스캔 PDF는 본문이 없어 파일 이름으로만 찾을 수 있었다(§2.2 "이미지 OCR / 스캔 PDF OCR"). 오프라인·무료 우선(절대 규칙 4), 인덱싱을 막지 않는다.
+
+**엔진 (`index::ocr`, `trait OcrEngine { name, check, image, pdf }`)**
+- `engine = "auto"`: Windows는 **Windows 내장 OCR**(`Windows.Media.Ocr`, 설치 없음, 오프라인), 그 밖의 OS는 PATH의 **tesseract**(+ 스캔 PDF는 poppler `pdftoppm`). `"windows"`/`"tesseract"`로 고정할 수 있고 `tesseract_path`로 실행 파일을 지정할 수 있다.
+- Windows: 언어는 `languages`(기본 `["ko","en"]`) 중 OS에 OCR 언어팩이 있는 첫 언어(`OcrEngine::IsLanguageSupported`), 없으면 사용자 프로필 언어. 한국어 OCR이 없으면 상태에 "한국어 인식 언어팩 없음 — 설정 › 시간 및 언어 › 언어 › 한국어 › 언어 옵션 › 광학 문자 인식 설치"를 보여 준다. 이미지는 `BitmapDecoder` → `SoftwareBitmap`(최대 변 `MaxImageDimension`에 맞춰 축소), PDF는 `Windows.Data.Pdf`로 쪽마다 2배(약 192dpi) 렌더링 후 인식. 백그라운드 스레드는 `RoInitialize(MTA)`.
+- tesseract: `tesseract <파일> stdout -l kor+eng`(설치된 언어와 겹치는 것만), PDF는 `pdftoppm -r 200 -png -f N -l N -singlefile <pdf>` 출력을 `tesseract stdin stdout`으로 파이프(임시 파일 없음). 프로세스마다 60초 제한, Windows에서는 콘솔 창을 띄우지 않는다.
+- 인식 결과 후처리: 한글 한 글자씩 띄어 쓴 줄("견 적 서")은 붙인다(토큰의 60% 이상이 한글 한 글자이고 3개 이상일 때) — trigram 검색이 잡도록.
+- AI(비전 모델) 인식은 이번 범위 밖(이미지가 밖으로 나가는 문제 — 후속).
+
+**대상과 상태 (store v10: `files.ocr`, `ocr_cache`)**
+- 대상: 본문 인덱싱하는 폴더의 `png jpg jpeg bmp gif tif tiff webp`(4KB 이상, `max_image_mb` 이하)와, 본문 추출이 실패했거나 공백 아닌 글자가 30자 미만인 PDF(= 스캔본으로 간주, 앞 `pdf_max_pages`쪽).
+- 인덱서는 대상에 `ocr = 'pending'`만 표시하고 지나간다(인덱싱 속도 그대로). 같은 내용(blake3)을 이미 인식했으면 `ocr_cache`에서 바로 채운다(이동·복사 후 다시 인식 안 함).
+- 백그라운드 `run_ocr_loop`(앱·`tidy watch`)이 대기 파일을 16개씩 처리: 결과를 `content`/`excerpt`에 넣고 `text_status = ok`, `ocr = ok`(글자 없음은 `empty`, 오류는 `failed`), `indexed_at` 갱신(→ 의미검색 벡터도 다시), 개인정보 판정(M9)도 다시. 엔진이 없으면 아무것도 바꾸지 않고 이유만 보고(파일은 대기 그대로).
+- 마이그레이션 때 이미 인덱싱된 이미지·스캔 PDF도 `pending`으로 표시해 설치 후 자동으로 따라잡는다. NAS 폴더는 본문 인덱싱이 켜진 곳만, NAS IO 슬롯을 잡고 읽는다.
+
+**설정 `[ocr]`**: `enabled = true`, `engine = "auto"`, `languages = ["ko","en"]`, `max_image_mb = 20`, `pdf_max_pages = 10`, `tesseract_path`(선택). 꺼도 대기 표시는 남고 켜면 이어서 처리.
+
+**CLI**: `tidy ocr --status`(엔진·언어·대기/완료/글자 없음/실패 수), `tidy ocr [--limit N]`(한 번 처리), `tidy ocr --retry`(실패를 다시 대기로), `tidy ocr <파일>`(인식만 해서 출력, DB 무변경).
+
+**화면**: 설정 › 검색 쪽에 카드 하나 — "사진·스캔 PDF 속 글자도 검색" 스위치, 상태 한 줄("Windows 내장 OCR · 한국어 · 남은 12개 · 완료 340개"), 실패가 있으면 [실패한 것 다시 시도]. 검색 결과에서 인식한 글자로 찾은 파일은 "사진 속 글자" 표시. 그 밖의 화면은 그대로.

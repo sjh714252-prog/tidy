@@ -69,7 +69,7 @@ pub const TRIGRAM_MIN_CHARS: usize = 3;
 
 const FILE_COLS: &str = "f.id, f.path, f.root_id, f.name, f.ext, f.mime, f.size, f.mtime, \
                          f.hash, f.text_status, f.excerpt, f.indexed_at, f.pii_flags, \
-                         f.pii_counts, f.vault";
+                         f.pii_counts, f.vault, f.ocr";
 
 pub fn search(
     store: &Store,
@@ -144,9 +144,9 @@ pub fn search(
     let mut stmt = store.conn().prepare(&sql)?;
     let rows = stmt.query_map(rusqlite::params_from_iter(params), |r| {
         let file = crate::store::file_from_row(r)?;
-        let name_highlight: String = r.get(15)?;
-        let snippet: String = r.get(16)?;
-        let rank: f64 = r.get(17)?;
+        let name_highlight: String = r.get(16)?;
+        let snippet: String = r.get(17)?;
+        let rank: f64 = r.get(18)?;
         Ok((file, name_highlight, snippet, rank))
     })?;
 
@@ -298,6 +298,7 @@ mod tests {
                     excerpt: None,
                     content: (!body.is_empty()).then(|| body.to_string()),
                     pii: None,
+                    ocr: None,
                 },
                 1,
             )

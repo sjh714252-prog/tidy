@@ -2796,6 +2796,7 @@ dependencies = [
  "trash",
  "uuid",
  "walkdir",
+ "windows",
  "windows-sys 0.60.2",
  "zeroize",
  "zip",

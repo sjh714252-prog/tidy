@@ -47,6 +47,19 @@ same-file = "1"
 [target.'cfg(windows)'.dependencies]
 # M6: GetDriveTypeW (is this drive letter a network share?).
 windows-sys = { version = "0.60", features = ["Win32_Storage_FileSystem"] }
+# M15: built-in OCR (Windows.Media.Ocr) + PDF page rendering (Windows.Data.Pdf).
+# Same version `trash` already pulls in.
+windows = { version = "0.62", features = [
+  "Data_Pdf",
+  "Foundation",
+  "Foundation_Collections",
+  "Globalization",
+  "Graphics_Imaging",
+  "Media_Ocr",
+  "Storage",
+  "Storage_Streams",
+  "Win32_System_WinRT",
+] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"

@@ -63,6 +63,8 @@ enum Cmd {
     Search(SearchArgs),
     /// Compute embeddings for semantic search (`tidy index` does this too).
     Embed(EmbedArgs),
+    /// (M15) Read the text in images and scanned PDFs so search finds them.
+    Ocr(OcrArgs),
     /// AI status, API keys (OS keychain), test call, call log.
     #[command(subcommand)]
     Ai(AiCmd),
@@ -368,6 +370,21 @@ struct EmbedArgs {
 }
 
 #[derive(Args)]
+struct OcrArgs {
+    /// Recognize this file only and print the text (the index is not changed).
+    file: Option<PathBuf>,
+    /// Show the engine and how many files wait / are done, and exit.
+    #[arg(long, conflicts_with = "file")]
+    status: bool,
+    /// Put files that failed back in the queue first.
+    #[arg(long, conflicts_with = "file")]
+    retry: bool,
+    /// Recognize at most this many files in this run.
+    #[arg(long, value_name = "N", conflicts_with = "file")]
+    limit: Option<usize>,
+}
+
+#[derive(Args)]
 struct PendingArgs {
     /// Move entry ID to its suggested folder (or --to).
     #[arg(long, value_name = "ID", conflicts_with_all = ["skip", "ignore"])]
@@ -497,6 +514,7 @@ fn main() -> Result<()> {
         Cmd::Index(args) => cmd_index(cli.config, args),
         Cmd::Search(args) => cmd_search(cli.config, args),
         Cmd::Embed(args) => cmd_embed(cli.config, args),
+        Cmd::Ocr(args) => cmd_ocr(cli.config, args),
         Cmd::Ai(cmd) => cmd_ai(cli.config, cmd),
         Cmd::Rules(cmd) => cmd_rules(cli.config, cmd),
         Cmd::Learn(args) => cmd_learn(cli.config, args),
@@ -717,6 +735,9 @@ fn cmd_watch(config: Option<PathBuf>, args: WatchArgs) -> Result<()> {
     };
     if !args.no_ai && !args.no_index && !args.dry_run {
         spawn_embed_thread(&cfg);
+    }
+    if !args.no_index && !args.dry_run {
+        spawn_ocr_thread(&cfg);
     }
     let stop = AtomicBool::new(false); // Ctrl+C ends the process
     run_watch(&cfg, &opts, ExpectedMoves::new(), &stop, |ev| match ev {
@@ -1332,6 +1353,84 @@ fn cmd_embed(config: Option<PathBuf>, args: EmbedArgs) -> Result<()> {
         std::process::exit(1);
     }
     Ok(())
+}
+
+fn cmd_ocr(config: Option<PathBuf>, args: OcrArgs) -> Result<()> {
+    use tidy_core::index::ocr;
+    let cfg = load_config(config)?;
+    if let Some(file) = &args.file {
+        let engine = ocr::build_engine(&cfg.ocr)?;
+        eprintln!("# {}", engine.describe());
+        let text = ocr::recognize(engine.as_ref(), file, &cfg.ocr)?;
+        if text.trim().is_empty() {
+            eprintln!("# no text found");
+        } else {
+            println!("{text}");
+        }
+        return Ok(());
+    }
+    let store = open_store(&cfg)?;
+    if args.status {
+        let st = ocr::status(&cfg, &store)?;
+        println!(
+            "ocr: {}   engine: {}",
+            if st.enabled {
+                "on"
+            } else {
+                "off ([ocr] enabled = false)"
+            },
+            st.engine.as_deref().unwrap_or("none")
+        );
+        if let Some(n) = &st.note {
+            println!("note: {n}");
+        }
+        let c = &st.counts;
+        println!(
+            "waiting: {}   done: {}   no text: {}   failed: {}",
+            c.pending, c.ok, c.empty, c.failed
+        );
+        return Ok(());
+    }
+    if args.retry {
+        let n = store.ocr_retry_failed()?;
+        eprintln!("# {n} failed file(s) queued again");
+    }
+    let engine = ocr::build_engine(&cfg.ocr)?;
+    eprintln!("# {}", engine.describe());
+    let r = ocr::run_pass(
+        &cfg,
+        &store,
+        engine.as_ref(),
+        args.limit.unwrap_or(usize::MAX),
+        |p| eprintln!("  {}", p.display()),
+    )?;
+    println!(
+        "recognized {}   no text {}   failed {}   still waiting {}",
+        r.recognized, r.empty, r.failed, r.remaining
+    );
+    Ok(())
+}
+
+/// Background text recognition next to `tidy watch` (`[ocr] enabled`).
+fn spawn_ocr_thread(cfg: &Config) {
+    if !cfg.ocr.enabled {
+        return;
+    }
+    let cfg = cfg.clone();
+    std::thread::spawn(move || {
+        let stop = AtomicBool::new(false); // Ctrl+C ends the process
+        let res =
+            tidy_core::service::run_ocr_loop(&cfg, &stop, Duration::from_secs(60), |r| match r {
+                Ok(r) => eprintln!(
+                    "# ocr: {} recognized, {} no text, {} failed, {} waiting",
+                    r.recognized, r.empty, r.failed, r.remaining
+                ),
+                Err(e) => eprintln!("# ocr: {e}"),
+            });
+        if let Err(e) = res {
+            eprintln!("# ocr stopped: {e}");
+        }
+    });
 }
 
 fn outcome_tag(o: &FileOutcome) -> String {

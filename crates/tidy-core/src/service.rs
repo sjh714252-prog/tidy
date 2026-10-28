@@ -321,3 +321,58 @@ pub fn run_embed_loop(
     }
     Ok(())
 }
+
+/// (M15) Background text recognition (shared by `tidy watch` and the
+/// app): recognizes waiting images and scanned PDFs pass after pass while
+/// there is a backlog, then every `interval`. Re-reads nothing but the
+/// store; `cfg.ocr.enabled` is the caller's to check. Without an engine
+/// the loop only reports why (once) and checks again later.
+pub fn run_ocr_loop(
+    cfg: &Config,
+    stop: &AtomicBool,
+    interval: Duration,
+    mut on_report: impl FnMut(Result<&crate::index::ocr::OcrReport, &str>),
+) -> Result<(), ServiceError> {
+    use crate::index::ocr;
+    let store = Store::open(&cfg.store.db_path())?;
+    let mut engine: Option<Box<dyn ocr::OcrEngine>> = None;
+    let mut last_error: Option<String> = None;
+    while !stop.load(Ordering::Relaxed) {
+        let mut again = false;
+        if engine.is_none() {
+            match ocr::build_engine(&cfg.ocr) {
+                Ok(e) => {
+                    engine = Some(e);
+                    last_error = None;
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    if last_error.as_deref() != Some(msg.as_str()) {
+                        on_report(Err(&msg));
+                    }
+                    last_error = Some(msg);
+                }
+            }
+        }
+        if let Some(e) = &engine {
+            match ocr::run_pass(cfg, &store, e.as_ref(), ocr::OCR_PASS, |_| {}) {
+                Ok(r) => {
+                    let did = r.recognized + r.empty + r.failed;
+                    if did > 0 {
+                        on_report(Ok(&r));
+                    }
+                    again = did > 0 && r.remaining > 0;
+                }
+                Err(e) => tracing::warn!("ocr pass failed: {e}"),
+            }
+        }
+        if again {
+            continue;
+        }
+        let until = std::time::Instant::now() + interval;
+        while std::time::Instant::now() < until && !stop.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+    Ok(())
+}

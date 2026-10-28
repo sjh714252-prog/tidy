@@ -240,6 +240,7 @@ mod tests {
                 excerpt: None,
                 content: body.map(str::to_string),
                 pii: None,
+                ocr: None,
             },
             seen,
         )
