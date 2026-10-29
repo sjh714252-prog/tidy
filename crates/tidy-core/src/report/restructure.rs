@@ -50,6 +50,8 @@ pub enum PlanSource {
     Ai,
     /// (M10) Work-context curation: customer / dated issue / kind (§14.3).
     Context,
+    /// (M17) A natural-language command (§14.14).
+    Command,
 }
 
 impl PlanSource {
@@ -58,6 +60,7 @@ impl PlanSource {
             PlanSource::Rules => "rules",
             PlanSource::Ai => "ai",
             PlanSource::Context => "context",
+            PlanSource::Command => "command",
         }
     }
 }
@@ -734,6 +737,7 @@ pub fn apply(
     let batch_id = new_batch_id();
     let label = match plan.source {
         PlanSource::Context => format!("업무 맥락 #{}", plan.id),
+        PlanSource::Command => format!("명령 #{}", plan.id),
         _ => format!("정리 제안 #{}", plan.id),
     };
     let mut report = ApplyReport {
