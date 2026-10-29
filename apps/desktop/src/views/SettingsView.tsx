@@ -18,6 +18,7 @@ import { useNav } from "../store/nav";
 import { isAbsoluteDest } from "../components/destPaths";
 import { WatchSettings, commonRoot } from "../components/settings/WatchSettings";
 import { OcrCard } from "../components/settings/OcrCard";
+import { VisionCard } from "../components/settings/VisionCard";
 
 const MENU: { key: SettingsKey; label: string; ai?: boolean }[] = [
   { key: "watch", label: "감시 폴더" },
@@ -135,6 +136,7 @@ export function SettingsView() {
                 <div className="card">
                   <AiSettingsSection />
                 </div>
+                <VisionCard />
               </>
             )}
             {section === "security" && (

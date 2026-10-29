@@ -40,6 +40,7 @@ import type {
   MoveEdit,
   SemanticStatus,
   OcrStatus,
+  VisionStatus,
   Settings,
   Status,
   DupTrash,
@@ -65,6 +66,12 @@ export const semanticStatus = () => invoke<SemanticStatus>("semantic_status");
 export const ocrStatus = () => invoke<OcrStatus>("ocr_status");
 export const setOcrEnabled = (enabled: boolean) => invoke<OcrStatus>("set_ocr_enabled", { enabled });
 export const ocrRetry = () => invoke<OcrStatus>("ocr_retry");
+/** (M16) Picture descriptions: status, settings (saved right away), retry failed.
+ * `model` "" = the classify model; null/undefined = leave as is. */
+export const visionStatus = () => invoke<VisionStatus>("vision_status");
+export const setVisionSettings = (enabled: boolean, model?: string | null, dailyLimit?: number | null) =>
+  invoke<VisionStatus>("set_vision_settings", { enabled, model: model ?? null, dailyLimit: dailyLimit ?? null });
+export const visionRetry = () => invoke<VisionStatus>("vision_retry");
 /** Opens with the default app. For a vault zip (M9) a temporary decrypted
  * copy is opened instead and its path returned. */
 export const openPath = (path: string) => invoke<string | null>("open_path", { path });

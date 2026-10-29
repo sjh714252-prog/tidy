@@ -228,6 +228,7 @@ pub async fn finish_onboarding(app: AppHandle, args: FinishArgs) -> CmdResult<Fi
         watch::spawn_index(&app);
         watch::pending_changed(&app, false);
         semantic::restart_embed(&app);
+        crate::vision::restart(&app);
         Ok(FinishResult {
             status: status(&app),
             existing_files: report.scanned,
