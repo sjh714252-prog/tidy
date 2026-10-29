@@ -5,7 +5,9 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use super::provider::{parse_json_object, post_json, AiError, LlmProvider, LlmResponse, Usage};
+use super::provider::{
+    parse_json_object, post_json, AiError, ImageInput, LlmProvider, LlmResponse, Usage,
+};
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const API_VERSION: &str = "2023-06-01";
@@ -52,7 +54,22 @@ impl AnthropicProvider {
         }
     }
 
-    fn body(&self, system: &str, user: &str, schema: &Value, max_tokens: u32) -> Value {
+    fn body(
+        &self,
+        system: &str,
+        user: &str,
+        image: Option<&ImageInput>,
+        schema: &Value,
+        max_tokens: u32,
+    ) -> Value {
+        let content = match image {
+            None => json!(user),
+            Some(img) => json!([
+                { "type": "image", "source": {
+                    "type": "base64", "media_type": img.media_type, "data": img.base64 } },
+                { "type": "text", "text": user }
+            ]),
+        };
         let mut output_config = json!({ "format": { "type": "json_schema", "schema": schema } });
         if let Some(e) = &self.effort {
             output_config["effort"] = json!(e);
@@ -61,7 +78,7 @@ impl AnthropicProvider {
             "model": self.model,
             "max_tokens": max_tokens,
             "system": system,
-            "messages": [{ "role": "user", "content": user }],
+            "messages": [{ "role": "user", "content": content }],
             "output_config": output_config,
         })
     }
@@ -96,16 +113,16 @@ fn parse_response(v: &Value) -> Result<(String, Usage, Option<String>), AiError>
     Ok((text, usage, model))
 }
 
-#[async_trait]
-impl LlmProvider for AnthropicProvider {
-    async fn complete_json(
+impl AnthropicProvider {
+    async fn complete(
         &self,
         system: &str,
         user: &str,
+        image: Option<&ImageInput>,
         schema: &Value,
         max_tokens: u32,
     ) -> Result<LlmResponse, AiError> {
-        let body = self.body(system, user, schema, max_tokens);
+        let body = self.body(system, user, image, schema, max_tokens);
         let url = format!("{}/v1/messages", self.base_url);
         let v = post_json("anthropic", self.max_retries, || {
             self.http
@@ -121,6 +138,31 @@ impl LlmProvider for AnthropicProvider {
             usage,
             model: model.unwrap_or_else(|| self.model.clone()),
         })
+    }
+}
+
+#[async_trait]
+impl LlmProvider for AnthropicProvider {
+    async fn complete_json(
+        &self,
+        system: &str,
+        user: &str,
+        schema: &Value,
+        max_tokens: u32,
+    ) -> Result<LlmResponse, AiError> {
+        self.complete(system, user, None, schema, max_tokens).await
+    }
+
+    async fn complete_json_image(
+        &self,
+        system: &str,
+        user: &str,
+        image: &ImageInput,
+        schema: &Value,
+        max_tokens: u32,
+    ) -> Result<LlmResponse, AiError> {
+        self.complete(system, user, Some(image), schema, max_tokens)
+            .await
     }
 
     fn name(&self) -> &str {
@@ -156,7 +198,7 @@ mod tests {
     #[test]
     fn request_shape() {
         let p = provider("http://x".into());
-        let b = p.body("sys", "user", &json!({"type":"object"}), 2048);
+        let b = p.body("sys", "user", None, &json!({"type":"object"}), 2048);
         assert_eq!(b["model"], "claude-haiku-5-5");
         assert_eq!(b["system"], "sys");
         assert_eq!(b["messages"][0]["role"], "user");
@@ -165,6 +207,23 @@ mod tests {
         assert_eq!(b["max_tokens"], 2048);
         assert!(b.get("temperature").is_none());
         assert!(!format!("{p:?}").contains("sk-test"));
+    }
+
+    #[test]
+    fn picture_goes_before_the_text() {
+        let p = provider("http://x".into());
+        let img = ImageInput {
+            media_type: "image/jpeg",
+            base64: "QUJD".into(),
+        };
+        let b = p.body("sys", "user", Some(&img), &json!({}), 1024);
+        let c = &b["messages"][0]["content"];
+        assert_eq!(c[0]["type"], "image");
+        assert_eq!(c[0]["source"]["type"], "base64");
+        assert_eq!(c[0]["source"]["media_type"], "image/jpeg");
+        assert_eq!(c[0]["source"]["data"], "QUJD");
+        assert_eq!(c[1]["text"], "user");
+        assert!(!format!("{img:?}").contains("QUJD"));
     }
 
     #[tokio::test]

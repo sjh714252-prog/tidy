@@ -2,7 +2,7 @@ import { create } from "zustand";
 import * as ipc from "../ipc/commands";
 import type { ApplyResult, CommandResult } from "../ipc/types";
 
-/** (M16, SPEC §14.13) 홈 "말로 시키기": 명령 → 미리보기 → [옮기기] → 되돌리기. */
+/** (M17, SPEC §14.14) 홈 "말로 시키기": 명령 → 미리보기 → [옮기기] → 되돌리기. */
 interface CommandState {
   text: string;
   busy: boolean;

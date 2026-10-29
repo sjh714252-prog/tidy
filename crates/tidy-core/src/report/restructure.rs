@@ -50,7 +50,7 @@ pub enum PlanSource {
     Ai,
     /// (M10) Work-context curation: customer / dated issue / kind (§14.3).
     Context,
-    /// (M16) A natural-language command (§14.13).
+    /// (M17) A natural-language command (§14.14).
     Command,
 }
 

@@ -1,52 +1,90 @@
-// M16 GUI test: natural-language commands on the home tab (SPEC §14.13),
-// driven through the dev bridge. No AI configured → the offline parser.
+// M16 GUI test: pictures are found and sorted by what they show (SPEC
+// §14.13), driven through the dev bridge, with the fake LLM
+// (e2e/fake-llm.mjs, OpenAI-compatible) as the vision model.
 //
-//   A. "지난달 받은 견적서 관련 엑셀 전부 프로젝트 폴더로" → 미리보기: chips
-//      (옮기기 · 기간 · 종류 엑셀 · 단어 견적서 · 옮길 곳 …/프로젝트), "AI 없이
-//      해석함", the two 견적서 spreadsheets of last month, nothing moved yet
-//   B. untick one → [1개 옮기기] → only that one moved; 되돌리기 tab has
-//      the "명령 #N" batch
-//   C. [되돌리기] → back on the desktop
-//   D. a find command lists without a move button; a delete command is refused
+//   A. AI = fake server; 설정 › AI "사진 내용 인식" card: off by default,
+//      switch on → config.toml [vision] enabled = true, the model and the
+//      "보냅니다" privacy line are shown
+//   B. two pictures already on the desktop → watch folder added →
+//      background descriptions ("설명 붙임 2장", pictures sent as images)
+//   C. search window: "화이트보드" (only in the description) finds the
+//      meeting picture, with the "사진 설명" badge
+//   D. a new camera picture (IMG_…) dropped while watching → described
+//      before the AI picks its folder (the classify prompt has
+//      "[사진 설명] 카페에서 받은 종이 영수증"), later found by "영수증"
+//      without sending it again
+//   E. model + daily limit saved → config; switch off → enabled = false
 //
 // Run: S=/tmp/tidy-e2e bash e2e/run-headless.sh m16
 import { chromium } from "playwright";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { addWatchFolder, bridge, gotoSettings, saveSettings, sleep, tab, waitFor } from "./lib.mjs";
+import zlib from "node:zlib";
+import { addWatchFolder, bridge, gotoSettings, saveSettings, sleep, waitFor } from "./lib.mjs";
 
 const T = process.env.T;
 const S = process.env.S;
+const CFG = path.join(T, "config.toml");
 const DESK = path.join(T, "바탕 화면");
-const PROJ = path.join(DESK, "업무", "프로젝트");
 const SHOT = path.join(S, "shots");
 fs.mkdirSync(SHOT, { recursive: true });
-fs.mkdirSync(PROJ, { recursive: true });
-
-// Last month, mid-month noon (local time).
-const now = new Date();
-const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 15, 12);
-const older = new Date(now.getFullYear(), now.getMonth() - 3, 15, 12);
-for (const [name, body, when] of [
-  ["견적서 9월분.xlsx", "견적 합계", lastMonth],
-  ["견적서 단가표.xlsx", "견적 단가", lastMonth],
-  ["견적서 계약.pdf", "견적 계약", lastMonth],
-  ["견적서 예전.xlsx", "견적 합계", older],
-  ["정산 내역.xlsx", "정산", lastMonth],
-]) {
-  const p = path.join(DESK, name);
-  fs.writeFileSync(p, body);
-  fs.utimesSync(p, when, when);
-}
+const LLM_PORT = 18095;
+const LLM = `http://127.0.0.1:${LLM_PORT}`;
+const stats = async () => (await fetch(`${LLM}/stats`)).json();
 
 const results = [];
 const ok = (step, what, pass, note = "") => {
   results.push({ step, what, pass, note });
   console.log(`${pass ? "PASS" : "FAIL"} [${step}] ${what} ${note}`);
 };
+const searchNames = async (q) =>
+  (await bridge("search", { query: q, limit: 20, customer: null })).map((h) => path.basename(h.path));
+
+/** A noisy RGB PNG (~100 KB: a picture, not an icon); `seed` changes it. */
+function png(file, seed, w = 200, h = 160) {
+  const rows = Buffer.alloc((w * 3 + 1) * h);
+  let x = seed * 2654435761;
+  for (let i = 0; i < rows.length; i++) {
+    x = (x * 1103515245 + 12345) >>> 0;
+    rows[i] = i % (w * 3 + 1) === 0 ? 0 : x >>> 24;
+  }
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const td = Buffer.concat([Buffer.from(type), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32(td));
+    return Buffer.concat([len, td, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr.set([8, 2, 0, 0, 0], 8);
+  fs.writeFileSync(
+    file,
+    Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      chunk("IHDR", ihdr),
+      chunk("IDAT", zlib.deflateSync(rows)),
+      chunk("IEND", Buffer.alloc(0)),
+    ]),
+  );
+}
+
+// ── fake LLM (fast) ─────────────────────────────────────────────────────
+const llm = spawn(process.execPath, [path.join(import.meta.dirname, "fake-llm.mjs"), String(LLM_PORT)], {
+  stdio: ["ignore", "inherit", "inherit"],
+  env: { ...process.env, FAKE_DELAY_MS: "50" },
+});
+process.on("exit", () => llm.kill());
+await sleep(800);
+
+png(path.join(DESK, "회의 사진.png"), 1);
+png(path.join(DESK, "책상.png"), 2);
 
 const browser = await chromium.launch();
-const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 960 } });
 const main = await ctx.newPage();
 main.on("dialog", (d) => {
   if (d.type() === "prompt") void d.accept(process.env.PROMPT_ANSWER ?? "");
@@ -56,95 +94,110 @@ await main.goto("http://localhost:1420/#/main");
 await main.waitForSelector(".topbar");
 await sleep(1000);
 
-await gotoSettings(main, "watch");
-await addWatchFolder(main, DESK);
-await saveSettings(main, 3500);
-const indexed = await waitFor(
-  async () => (await bridge("search", { query: "견적서", limit: 20, customer: null })).length >= 4,
-  60000,
-  1000,
-);
-ok("-", "감시 폴더 색인", indexed);
-
-const card = main.locator("[data-testid=command-card]");
-const ask = async (text) => {
-  await tab(main, "홈").click();
-  await sleep(300);
-  await card.locator("[data-testid=command-input]").fill(text);
-  await card.locator("[data-testid=command-run]").click();
-  await waitFor(async () => (await card.locator("[data-testid=command-result], [data-testid=command-error]").count()) > 0, 20000, 300);
-  await sleep(300);
-};
-const fileNames = async () =>
-  (await card.locator("[data-testid=command-file] .name").allInnerTexts()).map((s) => s.trim()).sort();
-
-// A
+// A. AI + the card
 {
-  await ask("지난달 받은 견적서 관련 엑셀 전부 프로젝트 폴더로");
-  const chips = await card.locator("[data-testid=command-understood]").innerText();
+  await gotoSettings(main, "ai");
+  const ai = main.locator("[data-testid=ai-section]");
+  await ai.locator("label.row", { hasText: "AI 사용" }).locator("input[type=checkbox]").check();
+  await ai.locator("select").first().selectOption("openai");
+  await sleep(300);
+  const arows = ai.locator("label.row");
+  await arows.filter({ hasText: "모델" }).first().locator("input").fill("fake-slow");
+  await arows.filter({ hasText: "주소" }).first().locator("input").fill(`${LLM}/v1`);
+  await arows.filter({ hasText: "키 이름" }).first().locator("input").fill("");
+  await saveSettings(main, 3000);
+
+  const card = main.locator("[data-testid=vision-card]");
+  await card.waitFor();
+  const sw = card.locator("[data-testid=vision-enabled]");
+  ok("A", "사진 내용 인식: 기본 꺼짐", !(await sw.isChecked()) && !(await bridge("vision_status")).enabled);
+  await sw.check();
+  await waitFor(async () => (await bridge("vision_status")).enabled, 5000);
+  await sleep(800);
+  const cfg = fs.readFileSync(CFG, "utf8");
+  ok("A", "켜기 → config.toml [vision] enabled = true", /\[vision\][\s\S]*enabled = true/.test(cfg));
+  const text = await card.innerText();
   ok(
     "A",
-    "해석 칩: 옮기기·기간·종류 엑셀·단어 견적서·옮길 곳 프로젝트",
-    chips.includes("옮기기") && chips.includes("기간 ") && chips.includes("종류 엑셀") && chips.includes("단어 견적서") && chips.includes("프로젝트"),
-    chips.replace(/\n/g, " | "),
+    "카드: 모델·보냄 안내·오늘 한도",
+    text.includes("openai · fake-slow") && text.includes("AI 회사(openai)로 보냅니다") && text.includes("/200장"),
+    text.replace(/\n/g, " | "),
   );
-  ok("A", "AI 없이 해석함 표시", (await card.locator("[data-testid=command-offline]").count()) === 1);
-  const names = await fileNames();
-  ok("A", "지난달 견적서 엑셀 2개만", JSON.stringify(names) === JSON.stringify(["견적서 9월분.xlsx", "견적서 단가표.xlsx"]), names.join(", "));
-  ok("A", "아직 아무것도 안 옮김", fs.existsSync(path.join(DESK, "견적서 단가표.xlsx")) && fs.readdirSync(PROJ).length === 0);
-  ok("A", "[2개 옮기기] 버튼", (await card.locator("[data-testid=command-apply]").innerText()).includes("2개 옮기기"));
-  await card.screenshot({ path: `${SHOT}/m16-A-preview.png` });
 }
 
-// B
-let batchCount = 0;
+// B. watch folder → descriptions in the background
 {
-  const rows = card.locator("[data-testid=command-file]");
-  const n = await rows.count();
-  for (let i = 0; i < n; i++) {
-    if ((await rows.nth(i).innerText()).includes("견적서 단가표.xlsx")) await rows.nth(i).locator("input[type=checkbox]").uncheck();
-  }
-  await sleep(200);
-  ok("B", "하나 빼면 [1개 옮기기]", (await card.locator("[data-testid=command-apply]").innerText()).includes("1개 옮기기"));
-  await card.locator("[data-testid=command-apply]").click();
-  await waitFor(async () => (await card.locator("[data-testid=command-applied]").count()) > 0, 15000, 300);
-  const msg = await card.locator("[data-testid=command-applied]").innerText();
+  await gotoSettings(main, "watch");
+  await addWatchFolder(main, DESK);
+  await saveSettings(main, 3500);
+  // The watch loop (and with it the AI) starts with the first watch folder.
+  const ready = await waitFor(async () => (await bridge("get_status")).aiState === "ready", 20000);
+  ok("B", "AI 준비됨 (가짜 서버)", ready, (await bridge("get_status")).aiDetail ?? "");
+  const done = await waitFor(async () => (await bridge("vision_status")).ok >= 2, 60000, 1500);
+  const st = await bridge("vision_status");
+  const s = await stats();
+  ok("B", "백그라운드 설명: 설명 붙임 2장", done, JSON.stringify(st));
+  ok("B", "사진으로 보냄 (이미지 2장, image/png)", s.images >= 2 && s.lastImageType.startsWith("image/"), `${s.images} ${s.lastImageType}`);
+  await gotoSettings(main, "ai");
+  const card = main.locator("[data-testid=vision-card]");
+  await sleep(5500); // card refreshes every 5 s
+  const text = await card.innerText();
+  ok("B", "카드: 설명 붙임 2장", text.includes("설명 붙임 2장"), text.replace(/\n/g, " | "));
+  await card.screenshot({ path: `${SHOT}/m16-B-card.png` });
+}
+
+// C. search window
+{
+  const s = await ctx.newPage();
+  await s.goto("http://localhost:1420/#/search");
+  await s.waitForSelector(".search-input");
+  await s.locator(".search-input").fill("화이트보드");
+  await sleep(1500);
+  const rows = await s.locator(".results li").allInnerTexts();
+  ok("C", "'화이트보드'(사진 설명에만 있음) → 회의 사진.png", rows.some((r) => r.includes("회의 사진.png")), rows.join(" / ").replace(/\n/g, " "));
+  ok("C", "'사진 설명' 표시", (await s.locator("[data-testid=vision-badge]").count()) >= 1);
+  await s.screenshot({ path: `${SHOT}/m16-C-search.png` });
+  await s.close();
+}
+
+// D. a new camera picture while watching
+{
+  const before = (await stats()).images;
+  png(path.join(DESK, "IMG_2041.png"), 3);
+  const asked = await waitFor(
+    async () => (await stats()).classifyUsers.some((u) => u.includes("IMG_2041.png")),
+    40000,
+    1000,
+  );
+  const users = (await stats()).classifyUsers.filter((u) => u.includes("IMG_2041.png"));
   ok(
-    "B",
-    "고른 것만 옮김",
-    msg.includes("1개를 옮겼습니다") && fs.existsSync(path.join(PROJ, "견적서 9월분.xlsx")) && fs.existsSync(path.join(DESK, "견적서 단가표.xlsx")),
-    msg,
+    "D",
+    "새 사진: 분류 요청에 '[사진 설명] 카페에서 받은 종이 영수증'",
+    asked && users.some((u) => u.includes("[사진 설명] 카페에서 받은 종이 영수증")),
+    (users[0] ?? "").split("\n").slice(0, 12).join(" | "),
   );
-  await card.screenshot({ path: `${SHOT}/m16-B-applied.png` });
-  const batches = await bridge("list_batches", { limit: 10 });
-  batchCount = batches.length;
-  ok("B", "되돌리기 기록: 명령 #N 배치", batches.some((b) => (b.label ?? "").startsWith("명령 #")), JSON.stringify(batches.map((b) => b.label)));
+  const found = await waitFor(async () => (await searchNames("영수증")).includes("IMG_2041.png"), 40000, 1000);
+  ok("D", "'영수증'으로 찾힘", found, (await searchNames("영수증")).join(", "));
+  const after = (await stats()).images;
+  ok("D", "분류 때 한 번만 보냄 (인덱싱은 캐시)", after - before === 1, `${before} → ${after}`);
 }
 
-// C
+// E. model / limit / off
 {
-  await card.locator("[data-testid=command-undo]").click();
-  await waitFor(async () => (await card.locator("[data-testid=command-undone]").count()) > 0, 15000, 300);
-  const msg = await card.locator("[data-testid=command-undone]").innerText();
-  ok("C", "되돌리기 → 원래 자리", msg.includes("1개를 원래 자리로") && fs.existsSync(path.join(DESK, "견적서 9월분.xlsx")), msg);
-  ok("C", "기록은 한 배치", batchCount >= 1);
-}
-
-// D
-{
-  await ask("견적서 계약 찾아줘");
-  const names = await fileNames();
-  ok("D", "찾기: 목록만", JSON.stringify(names) === JSON.stringify(["견적서 계약.pdf"]) && (await card.locator("[data-testid=command-apply]").count()) === 0, names.join(", "));
-  await ask("지난달 견적서 엑셀 다 지워줘");
-  const err = (await card.locator("[data-testid=command-error]").count()) ? await card.locator("[data-testid=command-error]").innerText() : "";
-  ok("D", "지우기 명령은 거절", err.includes("옮기기와 찾기만"), err);
-  await ask("옮겨줘");
-  const err2 = (await card.locator("[data-testid=command-error]").count()) ? await card.locator("[data-testid=command-error]").innerText() : "";
-  ok("D", "대상 없는 명령 안내", err2.includes("어떤 파일인지"), err2);
-  await main.setViewportSize({ width: 960, height: 700 });
-  await ask("지난달 견적서 엑셀 프로젝트로 옮겨줘");
-  await card.screenshot({ path: `${SHOT}/m16-D-narrow.png` });
-  ok("D", "좁은 창(960)에서도 목록", (await card.locator("[data-testid=command-file]").count()) === 2);
+  await gotoSettings(main, "ai");
+  const card = main.locator("[data-testid=vision-card]");
+  await card.locator("[data-testid=vision-model]").fill("fake-vision");
+  await card.locator("[data-testid=vision-limit]").fill("50");
+  await card.locator("[data-testid=vision-save]").click();
+  await sleep(1500);
+  let cfg = fs.readFileSync(CFG, "utf8");
+  ok("E", "모델·하루 최대 저장", /model = "fake-vision"/.test(cfg) && /daily_limit = 50/.test(cfg), cfg.split("[vision]")[1]?.slice(0, 120));
+  const st = await bridge("vision_status");
+  ok("E", "상태: 사진용 모델 반영", st.model === "openai · fake-vision" && st.dailyLimit === 50, JSON.stringify(st.model));
+  await card.locator("[data-testid=vision-enabled]").uncheck();
+  await sleep(1500);
+  cfg = fs.readFileSync(CFG, "utf8");
+  ok("E", "끄기 → enabled = false", /\[vision\][\s\S]*enabled = false/.test(cfg) && !(await bridge("vision_status")).enabled);
 }
 
 const failed = results.filter((r) => !r.pass);

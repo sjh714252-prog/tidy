@@ -4,7 +4,9 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use super::provider::{parse_json_object, post_json, AiError, LlmProvider, LlmResponse, Usage};
+use super::provider::{
+    parse_json_object, post_json, AiError, ImageInput, LlmProvider, LlmResponse, Usage,
+};
 
 const DEFAULT_BASE_URL: &str = "http://localhost:11434";
 
@@ -35,15 +37,19 @@ impl OllamaProvider {
     }
 }
 
-#[async_trait]
-impl LlmProvider for OllamaProvider {
-    async fn complete_json(
+impl OllamaProvider {
+    async fn complete(
         &self,
         system: &str,
         user: &str,
+        image: Option<&ImageInput>,
         schema: &Value,
         max_tokens: u32,
     ) -> Result<LlmResponse, AiError> {
+        let mut user_msg = json!({ "role": "user", "content": user });
+        if let Some(img) = image {
+            user_msg["images"] = json!([img.base64]);
+        }
         let body = json!({
             "model": self.model,
             "stream": false,
@@ -51,7 +57,7 @@ impl LlmProvider for OllamaProvider {
             "options": { "temperature": 0, "num_predict": max_tokens },
             "messages": [
                 { "role": "system", "content": system },
-                { "role": "user", "content": user }
+                user_msg
             ]
         });
         let url = format!("{}/api/chat", self.base_url);
@@ -71,6 +77,31 @@ impl LlmProvider for OllamaProvider {
             },
             model: self.model.clone(),
         })
+    }
+}
+
+#[async_trait]
+impl LlmProvider for OllamaProvider {
+    async fn complete_json(
+        &self,
+        system: &str,
+        user: &str,
+        schema: &Value,
+        max_tokens: u32,
+    ) -> Result<LlmResponse, AiError> {
+        self.complete(system, user, None, schema, max_tokens).await
+    }
+
+    async fn complete_json_image(
+        &self,
+        system: &str,
+        user: &str,
+        image: &ImageInput,
+        schema: &Value,
+        max_tokens: u32,
+    ) -> Result<LlmResponse, AiError> {
+        self.complete(system, user, Some(image), schema, max_tokens)
+            .await
     }
 
     fn name(&self) -> &str {
@@ -119,6 +150,33 @@ mod tests {
         let req = &seen.lock().unwrap()[0];
         assert!(req.starts_with("POST /api/chat"));
         assert!(req.contains("\"format\":{"));
+    }
+
+    #[tokio::test]
+    async fn picture_in_images() {
+        let (base, seen) = test_server::serve(vec![test_server::Canned {
+            status: 200,
+            headers: vec![],
+            body: r#"{"model":"qwen2.5vl","message":{"role":"assistant","content":"{\"caption\":\"x\"}"},"done":true}"#
+                .into(),
+        }])
+        .await;
+        let p = OllamaProvider::new(
+            http_client(Duration::from_secs(5)).unwrap(),
+            "qwen2.5vl".into(),
+            Some(base),
+            0,
+        );
+        let img = ImageInput {
+            media_type: "image/jpeg",
+            base64: "QUJD".into(),
+        };
+        let r = p
+            .complete_json_image("s", "u", &img, &json!({}), 256)
+            .await
+            .unwrap();
+        assert_eq!(r.value["caption"], "x");
+        assert!(seen.lock().unwrap()[0].contains(r#""images":["QUJD"]"#));
     }
 
     #[tokio::test]

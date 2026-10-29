@@ -1,4 +1,4 @@
-//! Natural-language commands (SPEC §14.13): "지난달 받은 KT 관련 엑셀 전부
+//! Natural-language commands (SPEC §14.14): "지난달 받은 KT 관련 엑셀 전부
 //! 프로젝트 폴더로" → what (keywords, kinds, dates, source folder, size)
 //! and where (a destination folder) → the files from the search index →
 //! a saved plan ([`PlanSource::Command`]) the user approves before anything

@@ -205,7 +205,7 @@ pub async fn plan_ai(app: AppHandle, path: String, protect: Vec<String>) -> CmdR
     .await
 }
 
-/// (M16) A natural-language command → what it understood, the files and
+/// (M17) A natural-language command → what it understood, the files and
 /// (for a move) a saved plan. Nothing moves; `apply_plan` does, on click.
 #[tauri::command]
 pub async fn run_command(

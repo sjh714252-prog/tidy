@@ -23,5 +23,6 @@ pub use mock::MockProvider;
 pub use ollama::OllamaProvider;
 pub use openai::OpenAiProvider;
 pub use provider::{
-    build_provider, estimate_cost_usd, AiError, EmbeddingProvider, LlmProvider, LlmResponse, Usage,
+    build_provider, estimate_cost_usd, AiError, EmbeddingProvider, ImageInput, LlmProvider,
+    LlmResponse, Usage,
 };

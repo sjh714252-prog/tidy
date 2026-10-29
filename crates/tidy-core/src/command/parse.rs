@@ -1,4 +1,4 @@
-//! Offline command parser (SPEC §14.13): Korean (and a little English)
+//! Offline command parser (SPEC §14.14): Korean (and a little English)
 //! date words, kind words, "X 폴더로" destinations, "X에서" sources and
 //! sizes. Whatever is left (minus verbs, filler words and particles) are
 //! the keywords. Always available — the AI parser falls back to this.

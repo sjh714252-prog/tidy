@@ -20,7 +20,7 @@ use chrono::NaiveTime;
 use crate::config::{Config, RootKind, WatchRoot};
 use crate::mover::{hash_file, TMP_MARKER};
 use crate::paths::ext_lower;
-use crate::store::{NewFile, OcrState, Store, StoreError, TextStatus};
+use crate::store::{NewFile, OcrState, Store, StoreError, TextStatus, VisionState};
 use crate::watcher::IgnoreFilter;
 
 #[derive(Debug, Error)]
@@ -62,6 +62,8 @@ pub struct IndexOptions {
     pub pii: Option<Arc<crate::pii::Detector>>,
     /// (M15) Images up to this size are marked for text recognition.
     pub ocr_max_image_bytes: u64,
+    /// (M16) Pictures up to this size are marked for a description.
+    pub vision_max_image_bytes: u64,
 }
 
 impl Default for IndexOptions {
@@ -81,6 +83,7 @@ impl Default for IndexOptions {
             batch_size: 500,
             pii: None,
             ocr_max_image_bytes: crate::config::OcrCfg::default().max_image_mb * 1024 * 1024,
+            vision_max_image_bytes: crate::config::VisionCfg::default().max_image_mb * 1024 * 1024,
         }
     }
 }
@@ -107,6 +110,7 @@ impl IndexOptions {
                 .enabled
                 .then(|| Arc::new(crate::pii::Detector::lenient(&cfg.security.pii))),
             ocr_max_image_bytes: cfg.ocr.max_image_mb * 1024 * 1024,
+            vision_max_image_bytes: cfg.vision.max_image_mb * 1024 * 1024,
             ..Default::default()
         }
     }
@@ -515,6 +519,31 @@ impl<'a> Indexer<'a> {
                 None => ocr = Some(OcrState::Pending),
             }
         }
+        // (M16) Pictures wait for a description, unless the same content
+        // was described before; the description follows any recognized text.
+        let mut vision = None;
+        let mut caption = None;
+        if opts.index_content && super::vision::is_target(&ext, size, opts.vision_max_image_bytes) {
+            match hash
+                .as_deref()
+                .map(|h| self.store.vision_cache_get(h))
+                .transpose()?
+                .flatten()
+            {
+                Some(c) if !c.is_empty() => {
+                    let line = c.line();
+                    content = Some(crate::store::compose_body(
+                        content.as_deref().unwrap_or(""),
+                        Some(&line),
+                    ));
+                    text_status = TextStatus::Ok;
+                    caption = Some(line);
+                    vision = Some(VisionState::Ok);
+                }
+                Some(_) => vision = Some(VisionState::Empty),
+                None => vision = Some(VisionState::Pending),
+            }
+        }
         let excerpt = content
             .as_deref()
             .map(|c| c.chars().take(500).collect::<String>())
@@ -540,6 +569,8 @@ impl<'a> Indexer<'a> {
                 content,
                 pii,
                 ocr,
+                vision,
+                caption,
             },
             seen_at,
         )?;

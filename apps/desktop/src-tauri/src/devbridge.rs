@@ -193,6 +193,16 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "ocr_status" => ok(crate::ocr::ocr_status(app).await?),
         "set_ocr_enabled" => ok(crate::ocr::set_ocr_enabled(app, arg(&args, "enabled")?).await?),
         "ocr_retry" => ok(crate::ocr::ocr_retry(app).await?),
+        // M16: picture descriptions.
+        "vision_status" => ok(crate::vision::vision_status(app).await?),
+        "set_vision_settings" => ok(crate::vision::set_vision_settings(
+            app,
+            arg(&args, "enabled")?,
+            arg(&args, "model")?,
+            arg(&args, "dailyLimit")?,
+        )
+        .await?),
+        "vision_retry" => ok(crate::vision::vision_retry(app).await?),
         // M8: wizard, rule editor, folder tree.
         "wizard_info" => ok(onboarding::wizard_info(app).await?),
         "preview_rules" => ok(onboarding::preview_rules(

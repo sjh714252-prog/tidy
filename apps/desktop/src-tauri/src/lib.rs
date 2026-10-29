@@ -16,6 +16,7 @@ mod security_cmds;
 mod semantic;
 mod state;
 mod tray;
+mod vision;
 mod watch;
 mod windows;
 
@@ -142,6 +143,9 @@ pub fn run() {
             ocr::ocr_status,
             ocr::set_ocr_enabled,
             ocr::ocr_retry,
+            vision::vision_status,
+            vision::set_vision_settings,
+            vision::vision_retry,
             commands::open_path,
             commands::reveal_path,
             commands::list_pending,

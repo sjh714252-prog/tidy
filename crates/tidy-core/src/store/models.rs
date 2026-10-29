@@ -181,6 +181,10 @@ pub struct NewFile {
     pub pii: Option<crate::pii::PiiFinding>,
     /// (M15) Text recognition state; `None` = not an OCR target.
     pub ocr: Option<OcrState>,
+    /// (M16) Picture description state; `None` = not a vision target.
+    pub vision: Option<VisionState>,
+    /// (M16) The picture's description (already part of `content`).
+    pub caption: Option<String>,
 }
 
 /// A row of `files` without the body text.
@@ -205,6 +209,47 @@ pub struct FileRecord {
     pub vault: bool,
     /// (M15) Text recognition state (`Ok` = the body came from OCR).
     pub ocr: Option<OcrState>,
+    /// (M16) Picture description state (`Ok` = the body has a caption).
+    pub vision: Option<VisionState>,
+}
+
+/// (M16) `files.vision`: description of a picture by a vision model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VisionState {
+    /// Waiting for the background pass (only runs with `[vision] enabled`).
+    Pending,
+    /// The description is in `caption` (and in the body).
+    Ok,
+    /// The model saw nothing worth describing.
+    Empty,
+    /// The model failed on this file (`tidy vision --retry`).
+    Failed,
+    /// Never sent: judged personal information (M9).
+    Skipped,
+}
+
+impl VisionState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            VisionState::Pending => "pending",
+            VisionState::Ok => "ok",
+            VisionState::Empty => "empty",
+            VisionState::Failed => "failed",
+            VisionState::Skipped => "skipped",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "pending" => VisionState::Pending,
+            "ok" => VisionState::Ok,
+            "empty" => VisionState::Empty,
+            "failed" => VisionState::Failed,
+            "skipped" => VisionState::Skipped,
+            _ => return None,
+        })
+    }
 }
 
 /// (M15) `files.ocr`: text recognition of images and scanned PDFs.

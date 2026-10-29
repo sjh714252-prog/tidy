@@ -2,7 +2,7 @@
 # Headless GUI test (Linux/cloud): runs the dev app under Xvfb with a
 # throw-away config/DB, Vite on :1420, then drives the UI with Playwright
 # through the dev bridge. Needs: libwebkit2gtk-4.1-dev, xvfb, `npm i --no-save playwright`.
-#   S=/tmp/tidy-e2e bash e2e/run-headless.sh [m3|…|m14]   (default m3)
+#   S=/tmp/tidy-e2e bash e2e/run-headless.sh [m3|…|m16]   (default m3)
 # Each run starts from a fresh config/DB. APP_ENV adds environment for the
 # app, e.g. APP_ENV="TIDY_DEV_AUTOSTART=1" (m7 does this itself).
 set -euo pipefail

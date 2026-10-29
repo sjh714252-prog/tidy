@@ -149,6 +149,8 @@ export interface SearchHit {
   pii: string | null;
   /** (M15) The body text was read from the picture / scan (OCR). */
   ocr: boolean;
+  /** (M16) The body has the AI's description of the picture. */
+  vision: boolean;
 }
 
 /** Words + meaning search (search_semantic). */
@@ -173,6 +175,29 @@ export interface OcrStatus {
   ok: number;
   empty: number;
   failed: number;
+}
+
+/** (M16) Picture descriptions by the AI's vision model (vision_status). */
+export interface VisionStatus {
+  enabled: boolean;
+  /** "anthropic · claude-haiku-4-5"; null = no AI model set up. */
+  model: string | null;
+  /** `[vision] model` as written ("" = the classify model). */
+  modelOverride: string;
+  /** Pictures stay on this PC (Ollama). */
+  local: boolean;
+  /** Why nothing is sent now. */
+  note: string | null;
+  pending: number;
+  ok: number;
+  empty: number;
+  failed: number;
+  /** Judged personal information: never sent. */
+  skipped: number;
+  today: number;
+  dailyLimit: number;
+  total: number;
+  costUsd: number;
 }
 
 export interface SemanticStatus {
@@ -784,7 +809,7 @@ export interface ContextCandidates {
   files: number;
 }
 
-/** (M16, SPEC §14.13) A natural-language command, interpreted. Nothing moved. */
+/** (M17, SPEC §14.14) A natural-language command, interpreted. Nothing moved. */
 export interface CommandIntent {
   action: "move" | "find";
   keywords: string[];

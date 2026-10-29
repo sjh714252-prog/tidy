@@ -18,7 +18,7 @@ const LABEL: Record<ActivityKind, string> = {
 };
 
 /**
- * 홈 (SPEC §14.8 3): 감시 현황 패널(상태바에서) → 말로 시키기(M16) → 아직 정리 안 된 기존 파일
+ * 홈 (SPEC §14.8 3): 감시 현황 패널(상태바에서) → 말로 시키기(M17) → 아직 정리 안 된 기존 파일
  * → 오늘 한 일 + 고객사별 보기 → 접힌 전체 활동(실시간 피드).
  */
 export function ActivityView() {

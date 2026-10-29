@@ -15,7 +15,7 @@ function Where({ p }: { p: string }) {
 const name = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
 
 /**
- * 홈 맨 위 "말로 시키기" (SPEC §14.13): 한 줄 명령 → 해석 칩 + 찾은 파일
+ * 홈 맨 위 "말로 시키기" (SPEC §14.14): 한 줄 명령 → 해석 칩 + 찾은 파일
  * → [N개 옮기기] (누르기 전엔 아무것도 옮기지 않음) → [되돌리기].
  */
 export function CommandCard() {

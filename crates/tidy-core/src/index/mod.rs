@@ -3,6 +3,7 @@
 pub mod extract;
 mod indexer;
 pub mod ocr;
+pub mod vision;
 
 pub use extract::{hwp_testgen, ExtractError, Extractor, Extractors};
 pub use indexer::{

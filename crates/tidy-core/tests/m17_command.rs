@@ -1,4 +1,4 @@
-//! M16 end to end (SPEC §14.13): a natural-language command → files from
+//! M17 end to end (SPEC §14.14): a natural-language command → files from
 //! the index → saved plan (nothing moved) → apply as one batch → undo.
 //! Offline parser, the AI parser (MockProvider) and the fallback when the
 //! AI fails. Korean names with spaces.
