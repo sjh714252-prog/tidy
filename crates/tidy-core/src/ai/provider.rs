@@ -64,6 +64,24 @@ pub struct LlmResponse {
     pub model: String,
 }
 
+/// (M16) A picture for a vision model: already shrunk and encoded.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ImageInput {
+    /// `image/jpeg` | `image/png`.
+    pub media_type: &'static str,
+    pub base64: String,
+}
+
+impl std::fmt::Debug for ImageInput {
+    // Never dump the picture.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImageInput")
+            .field("media_type", &self.media_type)
+            .field("bytes", &self.base64.len())
+            .finish()
+    }
+}
+
 /// A chat model that answers with one JSON object matching `schema`.
 /// `max_tokens` caps the answer (thinking included where the model thinks);
 /// providers without such a knob ignore it.
@@ -76,6 +94,22 @@ pub trait LlmProvider: Send + Sync {
         schema: &Value,
         max_tokens: u32,
     ) -> Result<LlmResponse, AiError>;
+    /// (M16) The same with one picture attached (vision models). Providers
+    /// without picture support say so.
+    async fn complete_json_image(
+        &self,
+        system: &str,
+        user: &str,
+        image: &ImageInput,
+        schema: &Value,
+        max_tokens: u32,
+    ) -> Result<LlmResponse, AiError> {
+        let _ = (system, user, image, schema, max_tokens);
+        Err(AiError::Unsupported(format!(
+            "{} cannot read pictures",
+            self.name()
+        )))
+    }
     /// "anthropic" | "openai" | "ollama" | "mock".
     fn name(&self) -> &str;
     fn model(&self) -> &str;

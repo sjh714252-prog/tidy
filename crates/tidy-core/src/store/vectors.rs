@@ -241,6 +241,8 @@ mod tests {
                 content: body.map(str::to_string),
                 pii: None,
                 ocr: None,
+                vision: None,
+                caption: None,
             },
             seen,
         )

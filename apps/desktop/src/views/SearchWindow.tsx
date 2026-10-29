@@ -149,6 +149,11 @@ export function SearchWindow() {
                     사진 속 글자
                   </span>
                 )}
+                {h.vision && (
+                  <span className="tag sem" data-testid="vision-badge" title="AI가 사진 내용을 보고 붙인 설명으로 찾은 파일">
+                    사진 설명
+                  </span>
+                )}
                 {h.vault && (
                   <span className="tag lock" data-testid="lock-badge" title="암호화 보관 파일 — 열면 임시 사본으로 풀어 엽니다">
                     🔒

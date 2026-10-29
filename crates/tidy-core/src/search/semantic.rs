@@ -733,6 +733,8 @@ mod tests {
                 content: Some(body.into()),
                 pii: None,
                 ocr: None,
+                vision: None,
+                caption: None,
             },
             mtime,
         )

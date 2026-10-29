@@ -88,6 +88,9 @@ impl Store {
                 .execute("UPDATE files SET ocr = 'empty' WHERE id = ?1", [id])?;
             return Ok(());
         }
+        // (M16) A picture's description stays after the recognized text.
+        let caption = self.file_caption(id)?;
+        let text = super::vision::compose_body(text, caption.as_deref());
         let excerpt: String = text.chars().take(500).collect();
         self.conn().execute(
             "UPDATE files SET ocr = 'ok', text_status = 'ok', content = ?1, excerpt = ?2,

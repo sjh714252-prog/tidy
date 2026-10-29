@@ -429,6 +429,8 @@ pub fn spawn_index(app: &AppHandle) {
             crate::semantic::restart_embed(&app);
             // ...and images / scanned PDFs for their text (M15).
             crate::ocr::restart(&app);
+            // ...and pictures for their description (M16).
+            crate::vision::restart(&app);
         })
         .expect("spawn index thread");
 }

@@ -333,6 +333,98 @@ pub struct Config {
     pub curate: CurateCfg,
     /// (M15) Text recognition of images and scanned PDFs.
     pub ocr: OcrCfg,
+    /// (M16) Picture descriptions by a vision model.
+    pub vision: VisionCfg,
+}
+
+/// `[vision]` (SPEC §14.13, M16): describe pictures with the AI's vision
+/// model so they can be found and sorted by what they show. Off by default
+/// (the pictures leave the PC unless the model is local).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct VisionCfg {
+    pub enabled: bool,
+    /// Vision model name on the classify provider of the active AI
+    /// profile; `None` = the classify model itself.
+    pub model: Option<String>,
+    /// Larger pictures are not sent.
+    pub max_image_mb: u64,
+    /// Pictures are shrunk so the long side is at most this (pixels).
+    pub max_side: u32,
+    /// Background descriptions per day (new pictures being sorted are not
+    /// held back by it, but count).
+    pub daily_limit: u32,
+    /// One description (retries included).
+    pub timeout_secs: u64,
+    /// Describe a new picture when the AI is asked where it belongs.
+    pub classify: bool,
+}
+
+impl Default for VisionCfg {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            model: None,
+            max_image_mb: 20,
+            max_side: 1568,
+            daily_limit: 200,
+            timeout_secs: 60,
+            classify: true,
+        }
+    }
+}
+
+/// (M16) `[vision] enabled` / `model` / `daily_limit`, keeping the rest of
+/// the file as it is. `model: Some("")` removes the key (= classify model).
+pub fn write_vision_settings(
+    path: &Path,
+    enabled: bool,
+    model: Option<&str>,
+    daily_limit: Option<u32>,
+) -> Result<(), ConfigError> {
+    use toml_edit::{value, DocumentMut, Item, Table};
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(source) => {
+            return Err(ConfigError::Read {
+                path: path.to_path_buf(),
+                source,
+            })
+        }
+    };
+    let mut doc: DocumentMut = text.parse().map_err(|e| ConfigError::Edit {
+        path: path.to_path_buf(),
+        source: Box::new(e),
+    })?;
+    let t = doc
+        .entry("vision")
+        .or_insert(Item::Table(Table::new()))
+        .as_table_like_mut()
+        .expect("[vision] is a table");
+    t.insert("enabled", value(enabled));
+    match model.map(str::trim) {
+        Some("") => {
+            t.remove("model");
+        }
+        Some(m) => {
+            t.insert("model", value(m));
+        }
+        None => {}
+    }
+    if let Some(n) = daily_limit {
+        t.insert("daily_limit", value(i64::from(n)));
+    }
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    std::fs::write(path, doc.to_string()).map_err(|source| ConfigError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 /// `[ocr]` (SPEC §14.12, M15): read the text in images and scanned PDFs

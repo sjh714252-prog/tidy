@@ -380,3 +380,68 @@ pub fn run_ocr_loop(
     }
     Ok(())
 }
+
+/// (M16) Background picture descriptions (shared by `tidy watch` and the
+/// app): describes waiting pictures pass after pass while there is a
+/// backlog (within `[vision] daily_limit`), then every `interval`.
+/// `cfg.vision.enabled` is the caller's to check. When the model cannot be
+/// used the loop reports why (once per new reason) and checks again later.
+pub fn run_vision_loop(
+    cfg: &Config,
+    stop: &AtomicBool,
+    interval: Duration,
+    mut on_report: impl FnMut(Result<&crate::index::vision::VisionReport, &str>),
+) -> Result<(), ServiceError> {
+    use crate::index::{ocr, vision};
+    let store = Store::open(&cfg.store.db_path())?;
+    let mut describer: Option<vision::VisionDescriber> = None;
+    let mut last_error: Option<String> = None;
+    // Pictures whose text is still being read wait for it (their
+    // personal-information verdict may change), when something reads it.
+    let wait_for_ocr = cfg.ocr.enabled && ocr::build_engine(&cfg.ocr).is_ok();
+    fn report_error(
+        last: &mut Option<String>,
+        msg: String,
+        on_report: &mut dyn FnMut(Result<&crate::index::vision::VisionReport, &str>),
+    ) {
+        if last.as_deref() != Some(msg.as_str()) {
+            on_report(Err(&msg));
+        }
+        *last = Some(msg);
+    }
+    while !stop.load(Ordering::Relaxed) {
+        let mut again = false;
+        if describer.is_none() {
+            match vision::VisionDescriber::from_config(cfg) {
+                Ok(d) => describer = Some(d),
+                Err(e) => report_error(&mut last_error, e.to_string(), &mut on_report),
+            }
+        }
+        if let Some(d) = &describer {
+            static PASS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            let _pass = PASS.lock().unwrap_or_else(|e| e.into_inner());
+            match vision::run_pass(cfg, &store, d, vision::VISION_PASS, wait_for_ocr, |_| {}) {
+                Ok(r) => {
+                    let did = r.described + r.empty + r.failed;
+                    if did > 0 || r.skipped > 0 {
+                        on_report(Ok(&r));
+                    }
+                    match &r.stopped {
+                        Some(e) => report_error(&mut last_error, e.clone(), &mut on_report),
+                        None => last_error = None,
+                    }
+                    again = did > 0 && r.remaining > 0 && !r.limited && r.stopped.is_none();
+                }
+                Err(e) => tracing::warn!("vision pass failed: {e}"),
+            }
+        }
+        if again {
+            continue;
+        }
+        let until = std::time::Instant::now() + interval;
+        while std::time::Instant::now() < until && !stop.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+    Ok(())
+}

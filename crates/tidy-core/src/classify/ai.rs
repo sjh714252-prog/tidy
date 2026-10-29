@@ -82,6 +82,14 @@ pub struct AiClassifier {
     settings: Settings,
     health: AiHealth,
     extractors: Extractors,
+    /// (M16) Describes a new picture before asking where it belongs.
+    vision: Option<crate::index::vision::VisionDescriber>,
+    vision_max_bytes: u64,
+    /// (M16) Pictures showing personal information are not sent: their
+    /// text is read locally first (M15 engine, built on first use).
+    ocr_cfg: Option<crate::config::OcrCfg>,
+    ocr_engine: std::sync::OnceLock<Option<Box<dyn crate::index::ocr::OcrEngine>>>,
+    pii: Option<crate::pii::Detector>,
     rt: tokio::runtime::Runtime,
 }
 
@@ -114,7 +122,20 @@ impl AiClassifier {
             .ok_or_else(|| AiError::NoProfile(cfg.ai.active_profile.clone()))?;
         let timeout = Duration::from_secs(cfg.ai.timeout_secs.max(1));
         let provider = build_provider(pc, timeout, cfg.ai.max_retries)?;
-        Self::with_provider(provider, cfg, rules)
+        let mut ai = Self::with_provider(provider, cfg, rules)?;
+        if cfg.vision.enabled && cfg.vision.classify {
+            match crate::index::vision::VisionDescriber::from_config(cfg) {
+                Ok(v) => ai = ai.with_vision(v),
+                Err(e) => tracing::info!("pictures are classified by name only: {e}"),
+            }
+        }
+        Ok(ai)
+    }
+
+    /// (M16) Describe pictures with `v` before classifying them.
+    pub fn with_vision(mut self, v: crate::index::vision::VisionDescriber) -> Self {
+        self.vision = Some(v);
+        self
     }
 
     /// Use an explicit provider (tests use [`crate::ai::MockProvider`]).
@@ -158,6 +179,15 @@ impl AiClassifier {
                 ai_auto_roots: rules.ai_auto_roots_for(&anchors),
             },
             extractors: Extractors::default_set(),
+            vision: None,
+            vision_max_bytes: cfg.vision.max_image_mb * 1024 * 1024,
+            ocr_cfg: cfg.ocr.enabled.then(|| cfg.ocr.clone()),
+            ocr_engine: std::sync::OnceLock::new(),
+            pii: cfg
+                .security
+                .pii
+                .enabled
+                .then(|| crate::pii::Detector::lenient(&cfg.security.pii)),
             health: AiHealth::new(cfg.ai.unavailable_after),
             rt,
         })
@@ -357,7 +387,8 @@ impl AiClassifier {
             .then(|| self.extractors.extract(&facts.path))
             .flatten()
             .and_then(Result::ok)
-            .map(|t| t.chars().take(self.settings.content_chars).collect());
+            .map(|t| t.chars().take(self.settings.content_chars).collect())
+            .or_else(|| self.picture_excerpt(store, facts));
         let recent_dirs = store
             .recent_dest_dirs(10)
             .unwrap_or_default()
@@ -382,6 +413,56 @@ impl AiClassifier {
             recent_dirs,
             history,
         }
+    }
+}
+
+impl AiClassifier {
+    /// (M16) "[사진 설명] …" for a picture when a vision model is set up
+    /// (cached by content hash, so indexing the moved file sends nothing
+    /// again). `None` on any failure: the picture is classified by name.
+    fn picture_excerpt(&self, store: &Store, facts: &FileFacts) -> Option<String> {
+        let v = self.vision.as_ref()?;
+        if !self.settings.send_content
+            || !crate::index::vision::is_target(&facts.ext, facts.size, self.vision_max_bytes)
+        {
+            return None;
+        }
+        let hash = crate::mover::hash_file(&facts.path).ok();
+        if self.shows_personal_info(store, facts, hash.as_deref()) {
+            tracing::info!(path = %facts.path.display(), "picture shows personal information; not sent");
+            return None;
+        }
+        match v.describe_cached(store, &facts.path, &facts.name, hash.as_deref()) {
+            Ok(c) if !c.is_empty() => Some(format!("{}{}", crate::store::CAPTION_MARK, c.line())),
+            Ok(_) => None,
+            Err(e) => {
+                tracing::info!(path = %facts.path.display(), "picture not described: {e}");
+                None
+            }
+        }
+    }
+
+    /// Read the picture's text locally (cached by hash, like the indexer
+    /// does) and judge it with the M9 detector. No engine or no detector:
+    /// only the file name is judged.
+    fn shows_personal_info(&self, store: &Store, facts: &FileFacts, hash: Option<&str>) -> bool {
+        let Some(det) = &self.pii else {
+            return false;
+        };
+        let cached = hash.and_then(|h| store.ocr_cache_get(h).ok().flatten());
+        let text = cached.or_else(|| {
+            let cfg = self.ocr_cfg.as_ref()?;
+            let engine = self
+                .ocr_engine
+                .get_or_init(|| crate::index::ocr::build_engine(cfg).ok())
+                .as_deref()?;
+            let t = crate::index::ocr::recognize(engine, &facts.path, cfg).ok()?;
+            if let Some(h) = hash {
+                let _ = store.ocr_cache_put(h, &t, engine.name());
+            }
+            Some(t)
+        });
+        det.judge(&facts.name, text.as_deref()).flags != 0
     }
 }
 

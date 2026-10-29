@@ -164,3 +164,14 @@ merge_days = 14                # 같은 고객사·이슈는 14일 안이면 가
 folder_settle_secs = 60        # (M12) 하위 폴더는 안의 무엇이든 이 시간 동안 안 바뀌어야 항목으로 봄 (복사·압축 풀기 중 제외)
 # batch_size = 30              # 한 번에 AI에 묻는 파일 수
 # excerpt_chars = 400          # 파일당 본문 앞부분 (ai.send_content = true일 때만 보냄)
+
+# (M16) 사진 내용 인식 — AI 비전 모델이 사진을 보고 붙인 설명으로 검색·분류.
+# 현재 AI 프로필의 분류 제공자를 쓴다(인터넷 AI면 사진이 그 회사로 전송됨, Ollama는 PC 안).
+# ai.send_content = false 이거나 개인정보로 판정된 사진은 보내지 않는다. tidy vision --status
+[vision]
+enabled = false
+# model = "qwen2.5vl:7b"       # 사진용 모델 (생략 = 분류 모델 그대로)
+daily_limit = 200              # 하루에 뒤에서 처리할 최대 장수 (최근 사진부터)
+# max_image_mb = 20            # 더 큰 사진은 보내지 않음
+# max_side = 1568              # 긴 변을 이 픽셀 이하로 줄여 보냄
+# classify = true              # 새 사진은 AI 분류 전에 설명을 받아 함께 보냄

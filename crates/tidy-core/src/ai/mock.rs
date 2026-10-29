@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use super::provider::{AiError, LlmProvider, LlmResponse, Usage};
+use super::provider::{AiError, ImageInput, LlmProvider, LlmResponse, Usage};
 
 type Responder = Box<dyn Fn(&str, &str) -> Value + Send + Sync>;
 type Predicate = Box<dyn Fn(&str) -> bool + Send + Sync>;
@@ -15,6 +15,7 @@ type Predicate = Box<dyn Fn(&str) -> bool + Send + Sync>;
 pub struct MockProvider {
     answers: Mutex<Vec<Result<Value, String>>>,
     prompts: Mutex<Vec<(String, String)>>,
+    images: Mutex<Vec<(&'static str, usize)>>,
     /// Computes the answer from `(system, user)` instead of the queue.
     responder: Option<Responder>,
     /// When this says `true` for a user prompt, the call fails with
@@ -35,6 +36,7 @@ impl MockProvider {
         Self {
             answers: Mutex::new(answers.into_iter().rev().collect()),
             prompts: Mutex::new(Vec::new()),
+            images: Mutex::new(Vec::new()),
             responder: None,
             truncate_when: None,
             timeout_when: None,
@@ -47,6 +49,7 @@ impl MockProvider {
         Self {
             answers: Mutex::new(Vec::new()),
             prompts: Mutex::new(Vec::new()),
+            images: Mutex::new(Vec::new()),
             responder: Some(Box::new(f)),
             truncate_when: None,
             timeout_when: None,
@@ -68,6 +71,11 @@ impl MockProvider {
     /// `(system, user)` prompts received so far.
     pub fn prompts(&self) -> Vec<(String, String)> {
         self.prompts.lock().unwrap().clone()
+    }
+
+    /// (M16) Pictures received so far (media type, base64 length).
+    pub fn images(&self) -> Vec<(&'static str, usize)> {
+        self.images.lock().unwrap().clone()
     }
 }
 
@@ -121,6 +129,21 @@ impl LlmProvider for MockProvider {
             }),
             None => Err(AiError::BadResponse("mock has no answers".into())),
         }
+    }
+
+    async fn complete_json_image(
+        &self,
+        system: &str,
+        user: &str,
+        image: &ImageInput,
+        schema: &Value,
+        max_tokens: u32,
+    ) -> Result<LlmResponse, AiError> {
+        self.images
+            .lock()
+            .unwrap()
+            .push((image.media_type, image.base64.len()));
+        self.complete_json(system, user, schema, max_tokens).await
     }
 
     fn name(&self) -> &str {

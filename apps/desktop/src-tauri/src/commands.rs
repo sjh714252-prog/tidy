@@ -274,6 +274,8 @@ pub struct HitDto {
     pub pii: Option<String>,
     /// (M15) The body text was read from the picture / scan (OCR).
     pub ocr: bool,
+    /// (M16) The body has a description of the picture (vision model).
+    pub vision: bool,
 }
 
 fn hit_dto(h: SearchHit) -> HitDto {
@@ -304,6 +306,7 @@ fn hit_dto(h: SearchHit) -> HitDto {
             .filter(|f| *f != 0)
             .map(|f| tidy_core::pii::summary(f, &h.file.pii_counts.unwrap_or_default())),
         ocr: h.file.ocr == Some(tidy_core::store::OcrState::Ok),
+        vision: h.file.vision == Some(tidy_core::store::VisionState::Ok),
     }
 }
 
@@ -1093,6 +1096,7 @@ pub async fn save_settings(app: AppHandle, args: SaveSettingsArgs) -> CmdResult<
         watch::spawn_index(&app);
         watch::pending_changed(&app, false);
         semantic::restart_embed(&app);
+        crate::vision::restart(&app);
         Ok(status(&app))
     })
     .await
@@ -1374,6 +1378,7 @@ pub async fn save_ai_settings(
         state.reload();
         watch::restart(&app);
         semantic::restart_embed(&app);
+        crate::vision::restart(&app);
         Ok(ai_settings(&state.config()))
     })
     .await
