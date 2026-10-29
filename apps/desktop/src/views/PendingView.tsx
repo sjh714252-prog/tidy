@@ -5,6 +5,7 @@ import { LearnPanel } from "../components/LearnPanel";
 import { MoreMenu } from "../components/MoreMenu";
 import { PendingCard, PendingRow, type ItemActions } from "../components/PendingItems";
 import { useNarrow } from "../components/useNarrow";
+import { NasPendingSection } from "../components/NasSections";
 
 /**
  * 확인 대기 (SPEC §14.8 4): 모두 · 대기 N건 · 선택 M · [선택한 항목 제안
@@ -100,6 +101,7 @@ export function PendingView() {
           <div className="t-foot">⋯ 메뉴: 다른 곳으로… · 이름 바꿔 이동 · 건너뜀(이번만) · 무시(앞으로 묻지 않음) · 대기열에 두기</div>
         </section>
       )}
+      <NasPendingSection />
     </div>
   );
 }

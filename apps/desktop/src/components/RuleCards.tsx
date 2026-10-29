@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ComponentProps } from "react";
 import type { PreviewReport, RuleCard } from "../ipc/types";
 import { FolderTree } from "./FolderTree";
 import { destFolder, isAbsoluteDest, relativeSuggestion } from "./destPaths";
@@ -62,6 +62,7 @@ export function RuleCards({
   open,
   onOpen,
   onChange,
+  treeSource,
 }: {
   cards: RuleCard[];
   preview: PreviewReport | null;
@@ -76,6 +77,8 @@ export function RuleCards({
   open: number | null;
   onOpen: (i: number | null) => void;
   onChange: (cards: RuleCard[]) => void;
+  /** (M16) "폴더 선택…" browses this machine instead (a NAS). */
+  treeSource?: ComponentProps<typeof FolderTree>["source"];
 }) {
   const [drag, setDrag] = useState<number | null>(null);
   const [treeFor, setTreeFor] = useState<number | null>(null);
@@ -288,6 +291,7 @@ export function RuleCards({
                   )}
                   {treeFor === i && (
                     <FolderTree
+                      source={treeSource}
                       selected={null}
                       onSelect={(p) => {
                         set(i, { dest: destFor(p, anchors) });

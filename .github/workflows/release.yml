@@ -6,6 +6,10 @@ name: Release
 #   version> is created here if missing (an existing release gets its files
 #   replaced), and the notes list the PRs merged since the previous release.
 # - Running it by hand on another branch only uploads workflow artifacts.
+# - (M16) The NAS agent image: amd64 + arm64, pushed to
+#   ghcr.io/<owner>/tidy-agent:<version> and :latest when there is a
+#   release tag, and attached as tidy-agent_<version>_<arch>.tar.gz
+#   (Synology Container Manager › 이미지 › 추가 › 파일에서 추가).
 on:
   push:
     tags: ["v*"]
@@ -13,6 +17,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   prepare:
@@ -143,3 +148,82 @@ jobs:
             apps/desktop/src-tauri/target/**/release/bundle/dmg/*.dmg
             apps/desktop/src-tauri/target/**/release/bundle/deb/*.deb
             apps/desktop/src-tauri/target/**/release/bundle/appimage/*.AppImage
+
+  agent:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            os: ubuntu-latest
+          - arch: arm64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Names
+        id: n
+        run: |
+          set -euo pipefail
+          v="$(node -p "require('./apps/desktop/package.json').version")"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/tidy-agent" >> "$GITHUB_OUTPUT"
+      - name: Build image
+        run: |
+          docker build -f docker/agent.Dockerfile \
+            --label org.opencontainers.image.version=${{ steps.n.outputs.version }} \
+            -t ${{ steps.n.outputs.image }}:${{ steps.n.outputs.version }}-${{ matrix.arch }} .
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          docker run -d --name agent -p 7841:7841 -e TIDY_TOKEN=release-check \
+            ${{ steps.n.outputs.image }}:${{ steps.n.outputs.version }}-${{ matrix.arch }}
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:7841/api/v1/hello && break; sleep 1; done
+          curl -fsS -H 'Authorization: Bearer release-check' http://127.0.0.1:7841/api/v1/status
+          docker rm -f agent
+      - name: Image file
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          docker save ${{ steps.n.outputs.image }}:${{ steps.n.outputs.version }}-${{ matrix.arch }} \
+            | gzip -9 > out/tidy-agent_${{ steps.n.outputs.version }}_${{ matrix.arch }}.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tidy-agent-${{ matrix.arch }}
+          path: out/*.tar.gz
+          if-no-files-found: error
+      - name: Push (per arch)
+        if: needs.prepare.outputs.tag != ''
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push ${{ steps.n.outputs.image }}:${{ steps.n.outputs.version }}-${{ matrix.arch }}
+      - name: Attach to release
+        if: needs.prepare.outputs.tag != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: Tidy ${{ needs.prepare.outputs.tag }}
+          draft: ${{ needs.prepare.outputs.public != 'true' }}
+          make_latest: ${{ needs.prepare.outputs.public == 'true' }}
+          generate_release_notes: true
+          overwrite_files: true
+          files: out/*.tar.gz
+
+  # One multi-arch name for both: :<version> and (public release) :latest.
+  agent-manifest:
+    needs: [prepare, agent]
+    if: needs.prepare.outputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Manifest
+        run: |
+          set -euo pipefail
+          v="$(node -p "require('./apps/desktop/package.json').version")"
+          img="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/tidy-agent"
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          tags="-t $img:$v"
+          if [ "${{ needs.prepare.outputs.public }}" = true ]; then tags="$tags -t $img:latest"; fi
+          docker buildx imagetools create $tags "$img:$v-amd64" "$img:$v-arm64"
+          docker buildx imagetools inspect "$img:$v"

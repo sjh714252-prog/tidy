@@ -6,5 +6,6 @@ pub mod api;
 pub mod client;
 pub mod map;
 pub mod server;
+pub mod setup;
 
 pub use client::{normalize_url, NasClient, RemoteError};

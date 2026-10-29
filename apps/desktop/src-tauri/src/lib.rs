@@ -8,6 +8,7 @@ mod commands;
 mod context_cmds;
 #[cfg(debug_assertions)]
 mod devbridge;
+mod nas;
 mod ocr;
 mod onboarding;
 mod overview;
@@ -204,6 +205,22 @@ pub fn run() {
             about::open_folder,
             about::check_update,
             about::install_update,
+            nas::nas_list,
+            nas::nas_compose,
+            nas::nas_connect,
+            nas::nas_remove,
+            nas::nas_set_maps,
+            nas::nas_settings,
+            nas::nas_save_settings,
+            nas::nas_dirs,
+            nas::nas_search,
+            nas::nas_pending,
+            nas::nas_resolve,
+            nas::nas_batches,
+            nas::nas_batch_moves,
+            nas::nas_undo,
+            nas::nas_organize_preview,
+            nas::nas_organize,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tidy");

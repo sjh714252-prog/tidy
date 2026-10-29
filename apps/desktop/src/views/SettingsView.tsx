@@ -19,6 +19,7 @@ import { isAbsoluteDest } from "../components/destPaths";
 import { WatchSettings, commonRoot } from "../components/settings/WatchSettings";
 import { OcrCard } from "../components/settings/OcrCard";
 import { VisionCard } from "../components/settings/VisionCard";
+import { NasSettings } from "../components/settings/NasSettings";
 
 const MENU: { key: SettingsKey; label: string; ai?: boolean }[] = [
   { key: "watch", label: "감시 폴더" },
@@ -26,6 +27,7 @@ const MENU: { key: SettingsKey; label: string; ai?: boolean }[] = [
   { key: "context", label: "업무 맥락", ai: true },
   { key: "ai", label: "AI 연결" },
   { key: "security", label: "보안 · 개인정보" },
+  { key: "nas", label: "NAS" },
   { key: "advanced", label: "고급" },
 ];
 
@@ -150,6 +152,7 @@ export function SettingsView() {
                 </div>
               </>
             )}
+            {section === "nas" && <NasSettings />}
             {section === "advanced" && <AdvancedPage />}
           </section>
         </div>

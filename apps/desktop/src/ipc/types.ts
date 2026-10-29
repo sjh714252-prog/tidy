@@ -365,7 +365,7 @@ export interface Activity {
 export type MainTab = "activity" | "pending" | "report" | "history" | "settings";
 
 /** (M13) Settings pages (`#/main/settings/<key>`). */
-export type SettingsKey = "watch" | "rules" | "context" | "ai" | "security" | "advanced";
+export type SettingsKey = "watch" | "rules" | "context" | "ai" | "security" | "nas" | "advanced";
 
 /** (M13) 홈 "오늘 한 일" (core `report::today`, snake_case). */
 export interface DoneItem {
@@ -807,4 +807,118 @@ export interface ContextCandidates {
   issue_types: { name: string; known: boolean }[];
   doc_kinds: { name: string; ext: string[]; known: boolean }[];
   files: number;
+}
+
+// ── M16 NAS agent (SPEC §14.13; core `remote::api`, camelCase) ──────────
+
+export interface AgentWatchState {
+  path: string;
+  alias: string | null;
+  online: boolean;
+  mode: OrganizeMode;
+  organizeRoot: string | null;
+  /** Polled instead of change events (too many folders for events). */
+  polling: boolean;
+}
+
+export interface AgentStatus {
+  version: string;
+  dataRoot: string;
+  watches: AgentWatchState[];
+  watching: boolean;
+  error: string | null;
+  pending: number;
+  files: number;
+  ocrWaiting: number;
+  todayMoved: number;
+  startedAt: number;
+}
+
+/** NAS path prefix → the same folder as this PC sees it. */
+export interface PathMapping {
+  remote: string;
+  local: string;
+}
+
+export interface NasState {
+  name: string;
+  url: string;
+  maps: PathMapping[];
+  hasToken: boolean;
+  ok: boolean;
+  error: string | null;
+  status: AgentStatus | null;
+}
+
+export interface AgentWatch {
+  path: string;
+  alias: string | null;
+  mode: OrganizeMode;
+  organizeRoot: string | null;
+  recursive: boolean;
+  exclude: string[];
+}
+
+export interface AgentSettings {
+  dataRoot: string;
+  watches: AgentWatch[];
+  /** Searched only (nothing moves there). */
+  indexOnly: string[];
+  /** rules.toml text. */
+  rules: string;
+}
+
+export interface RemoteDir {
+  name: string;
+  path: string;
+  hasChildren: boolean;
+}
+
+export interface ComposeResult {
+  text: string;
+  /** Saved to Downloads (path), if it could be. */
+  saved: string | null;
+}
+
+/** A NAS search result: `path` is the NAS's own path. */
+export type NasHit = SearchHit & { nas: string; localPath: string | null };
+
+export interface NasSearchResult {
+  hits: NasHit[];
+  errors: string[];
+}
+
+export type NasPendingItem = PendingItem & { nas: string; localPath: string | null };
+
+export interface NasPendingList {
+  items: NasPendingItem[];
+  errors: string[];
+}
+
+export type NasBatch = BatchSummary & { nas: string };
+
+export interface NasBatchList {
+  batches: NasBatch[];
+  errors: string[];
+}
+
+export interface NasResolution {
+  kind: Resolution["kind"] | "error";
+  path: string;
+  dst: string | null;
+  batchId: string | null;
+  message: string | null;
+}
+
+export interface OrganizePreview {
+  path: string;
+  toMove: number;
+  examples: [string, string][];
+}
+
+export interface OrganizeResult {
+  batchId: string;
+  moved: number;
+  skipped: number;
+  errors: string[];
 }

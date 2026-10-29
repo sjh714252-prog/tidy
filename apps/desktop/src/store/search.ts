@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import * as ipc from "../ipc/commands";
-import type { SearchHit, SemanticStatus } from "../ipc/types";
+import type { NasHit, SearchHit, SemanticStatus } from "../ipc/types";
 
 interface SearchState {
   query: string;
@@ -16,6 +16,11 @@ interface SearchState {
   note: string | null;
   semantic: SemanticStatus | null;
   error: string | null;
+  /** (M16) Results from connected NAS agents, listed after this PC's. */
+  nasHits: NasHit[];
+  nasLoading: boolean;
+  /** NAS that did not answer ("사무실 NAS: 연결할 수 없습니다"). */
+  nasErrors: string[];
   /** (M12) Only this customer's folders ("" = everywhere). */
   customer: string;
   customers: string[];
@@ -30,6 +35,18 @@ interface SearchState {
 let generation = 0;
 let ftsTimer: ReturnType<typeof setTimeout> | undefined;
 let semTimer: ReturnType<typeof setTimeout> | undefined;
+let nasTimer: ReturnType<typeof setTimeout> | undefined;
+/** NAS answers over the network: asked once typing pauses. */
+const NAS_DELAY_MS = 300;
+
+/** This PC's results, then the NAS ones (selection runs over both). */
+export function allHits(s: { hits: SearchHit[]; nasHits: NasHit[] }): (SearchHit | NasHit)[] {
+  return s.nasHits.length ? [...s.hits, ...s.nasHits] : s.hits;
+}
+
+export function isNasHit(h: SearchHit | NasHit): h is NasHit {
+  return "nas" in h;
+}
 
 /** Words answer at once; meaning (an embedding request) once typing pauses. */
 const FTS_DELAY_MS = 120;
@@ -46,6 +63,9 @@ export const useSearch = create<SearchState>((set, get) => ({
   note: null,
   semantic: null,
   error: null,
+  nasHits: [],
+  nasLoading: false,
+  nasErrors: [],
   customer: "",
   customers: [],
   setCustomer: (customer) => {
@@ -66,11 +86,24 @@ export const useSearch = create<SearchState>((set, get) => ({
     set({ query });
     clearTimeout(ftsTimer);
     clearTimeout(semTimer);
+    clearTimeout(nasTimer);
     const gen = ++generation;
     if (!query.trim()) {
-      set({ hits: [], selected: 0, loading: false, semanticLoading: false, error: null, mode: null, note: null });
+      set({ hits: [], selected: 0, loading: false, semanticLoading: false, error: null, mode: null, note: null, nasHits: [], nasLoading: false, nasErrors: [] });
       return;
     }
+    // Customer folders are this PC's; with that filter the NAS is not asked.
+    if (customer) set({ nasHits: [], nasErrors: [], nasLoading: false });
+    else
+      nasTimer = setTimeout(async () => {
+        set({ nasLoading: true });
+        try {
+          const r = await ipc.nasSearch(query, 30);
+          if (gen === generation) set({ nasHits: r.hits, nasErrors: r.errors, nasLoading: false });
+        } catch {
+          if (gen === generation) set({ nasHits: [], nasErrors: [], nasLoading: false });
+        }
+      }, NAS_DELAY_MS);
     // Responses of an older query (or a word answer arriving after the
     // meaning answer) are dropped.
     let merged = false;
@@ -109,9 +142,10 @@ export const useSearch = create<SearchState>((set, get) => ({
     }, SEMANTIC_DELAY_MS);
   },
   move: (delta) => {
-    const { hits, selected } = get();
-    if (!hits.length) return;
-    set({ selected: (selected + delta + hits.length) % hits.length });
+    const { selected } = get();
+    const n = allHits(get()).length;
+    if (!n) return;
+    set({ selected: (selected + delta + n) % n });
   },
   select: (i) => set({ selected: i }),
   refreshSemantic: async () => {

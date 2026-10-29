@@ -375,6 +375,65 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "open_folder" => ok(about::open_folder(app, arg(&args, "path")?).await?),
         "check_update" => ok(about::check_update(app).await?),
         "install_update" => ok(about::install_update(app).await?),
+        // M16: NAS agents.
+        "nas_list" => ok(crate::nas::nas_list(app).await?),
+        "nas_compose" => ok(crate::nas::nas_compose(
+            arg(&args, "name")?,
+            arg(&args, "shares")?,
+            arg(&args, "volume")?,
+        )
+        .await?),
+        "nas_connect" => ok(crate::nas::nas_connect(
+            app,
+            arg(&args, "name")?,
+            arg(&args, "url")?,
+            arg(&args, "token")?,
+        )
+        .await?),
+        "nas_remove" => ok(crate::nas::nas_remove(app, arg(&args, "name")?).await?),
+        "nas_set_maps" => {
+            ok(crate::nas::nas_set_maps(app, arg(&args, "name")?, arg(&args, "maps")?).await?)
+        }
+        "nas_settings" => ok(crate::nas::nas_settings(app, arg(&args, "name")?).await?),
+        "nas_save_settings" => {
+            ok(
+                crate::nas::nas_save_settings(app, arg(&args, "name")?, arg(&args, "settings")?)
+                    .await?,
+            )
+        }
+        "nas_dirs" => {
+            ok(crate::nas::nas_dirs(app, arg(&args, "name")?, arg(&args, "path")?).await?)
+        }
+        "nas_search" => {
+            ok(crate::nas::nas_search(app, arg(&args, "query")?, arg(&args, "limit")?).await?)
+        }
+        "nas_pending" => ok(crate::nas::nas_pending(app).await?),
+        "nas_resolve" => ok(crate::nas::nas_resolve(
+            app,
+            arg(&args, "name")?,
+            arg(&args, "ids")?,
+            arg(&args, "decision")?,
+        )
+        .await?),
+        "nas_batches" => ok(crate::nas::nas_batches(app, arg(&args, "limit")?).await?),
+        "nas_batch_moves" => {
+            ok(
+                crate::nas::nas_batch_moves(app, arg(&args, "name")?, arg(&args, "batchId")?)
+                    .await?,
+            )
+        }
+        "nas_undo" => {
+            ok(crate::nas::nas_undo(app, arg(&args, "name")?, arg(&args, "batchId")?).await?)
+        }
+        "nas_organize_preview" => {
+            ok(
+                crate::nas::nas_organize_preview(app, arg(&args, "name")?, arg(&args, "path")?)
+                    .await?,
+            )
+        }
+        "nas_organize" => {
+            ok(crate::nas::nas_organize(app, arg(&args, "name")?, arg(&args, "path")?).await?)
+        }
         // Test-only: what open_url / open_folder recorded (TIDY_E2E_NO_OPEN).
         "debug_opened" => ok(about::opened()),
         other => Err(format!("unknown command {other}")),

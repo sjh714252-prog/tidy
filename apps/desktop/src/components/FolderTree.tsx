@@ -20,11 +20,15 @@ export function FolderTree({
   selected,
   onSelect,
   extraRoots = [],
+  source,
 }: {
   selected: string | null;
   onSelect: (path: string) => void;
   /** Folders to show on top (e.g. a collect root not saved yet). */
   extraRoots?: FsRoot[];
+  /** (M16) Another machine's folders (a NAS): its roots and listing; no
+   * "새 폴더" (the NAS makes folders itself when it moves files). */
+  source?: { roots: FsRoot[]; list: (path: string) => Promise<DirEntry[]> };
 }) {
   const [roots, setRoots] = useState<FsRoot[]>([]);
   const [nodes, setNodes] = useState<Record<string, NodeState>>({});
@@ -37,13 +41,14 @@ export function FolderTree({
   };
 
   useEffect(() => {
-    ipc.fsRoots().then(setRoots, (e) => setError(String(e)));
-  }, []);
+    if (source) setRoots(source.roots);
+    else ipc.fsRoots().then(setRoots, (e) => setError(String(e)));
+  }, [source]);
 
   const load = async (path: string) => {
     setNodes((n) => ({ ...n, [path]: { open: true, loading: true, children: n[path]?.children ?? null, error: null } }));
     try {
-      const children = await ipc.listDirs(path);
+      const children = await (source ? source.list(path) : ipc.listDirs(path));
       setNodes((n) => ({ ...n, [path]: { open: true, loading: false, children, error: null } }));
     } catch (e) {
       setNodes((n) => ({ ...n, [path]: { open: true, loading: false, children: [], error: String(e) } }));
@@ -110,9 +115,11 @@ export function FolderTree({
       <ul>{all.map((r) => row({ name: r.label, path: r.path }, 0, r.label))}</ul>
       <div className="tree-actions">
         <span className="muted small path">{sel ?? "폴더를 고르세요"}</span>
-        <button disabled={!sel} onClick={() => void newFolder()}>
-          새 폴더
-        </button>
+        {!source && (
+          <button disabled={!sel} onClick={() => void newFolder()}>
+            새 폴더
+          </button>
+        )}
       </div>
       {error && <p className="error small">{error}</p>}
     </div>

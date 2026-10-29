@@ -2,7 +2,7 @@
 # Headless GUI test (Linux/cloud): runs the dev app under Xvfb with a
 # throw-away config/DB, Vite on :1420, then drives the UI with Playwright
 # through the dev bridge. Needs: libwebkit2gtk-4.1-dev, xvfb, `npm i --no-save playwright`.
-#   S=/tmp/tidy-e2e bash e2e/run-headless.sh [m3|…|m16]   (default m3)
+#   S=/tmp/tidy-e2e bash e2e/run-headless.sh [m3|…|m18]   (default m3)
 # Each run starts from a fresh config/DB. APP_ENV adds environment for the
 # app, e.g. APP_ENV="TIDY_DEV_AUTOSTART=1" (m7 does this itself).
 set -euo pipefail
@@ -16,6 +16,8 @@ SCRIPT="${1:-m3}"
 [ "$SCRIPT" = m13 ] && APP_ENV="${APP_ENV:-TIDY_E2E_NO_OPEN=1}"
 # m14: "휴지통" is a folder (TIDY_E2E_TRASH) and "기존 파일 열기"/"휴지통 열기" are recorded.
 [ "$SCRIPT" = m14 ] && APP_ENV="${APP_ENV:-TIDY_E2E_NO_OPEN=1 TIDY_E2E_TRASH=${S:-/tmp/tidy-e2e}/t/휴지통}"
+# m18: a real `tidy serve` agent (built here) plays the NAS.
+[ "$SCRIPT" = m18 ] && (cd "$(dirname "$0")/../../.." && cargo build -p tidy-cli)
 S="${S:-/tmp/tidy-e2e}"; T="$S/t"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 pkill -9 -x tidy-desktop 2>/dev/null || true; sleep 1

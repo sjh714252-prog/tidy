@@ -487,3 +487,26 @@ pre.toml { font-size: 12px; background: var(--surface); padding: 6px 8px; border
   .dup-file > :nth-child(4), .dup-file > :nth-child(5) { display: none; }
   .cols-dup { grid-template-columns: 1fr; }
 }
+
+/* (M16) 설정 › NAS */
+.nas-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 14px; }
+.nas-steps > li { display: flex; flex-direction: column; gap: 6px; }
+.nas-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.nas-form > label { min-width: 110px; color: var(--fg-3); }
+.nas-form input[type="text"], .nas-form input[type="password"], .nas-form input:not([type]) { flex: 1 1 220px; min-width: 0; }
+textarea.compose { width: 100%; min-height: 220px; font-family: var(--mono); font-size: 12px; resize: vertical; box-sizing: border-box; }
+.nas-panel h3 { margin: 10px 0 2px; font-size: 14px; }
+.nas-watch { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; background: var(--surface-2); }
+.nas-watch-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.nas-watch-head .mono { min-width: 0; overflow-wrap: anywhere; }
+.nas-watch-opts { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; color: var(--fg-3); }
+.nas-picker { border: 1px dashed var(--dash); border-radius: var(--radius-sm); padding: 8px; max-height: 280px; overflow: auto; }
+.nas-index-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.nas-savebar { position: sticky; bottom: 0; background: var(--surface); padding: 10px 0 2px; border-top: 1px solid var(--line-2); }
+.nas-badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+.list-row.nas-row { grid-template-columns: minmax(120px, auto) minmax(0, 1fr); }
+.tag.nas { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.list-row.nas-pending-row { grid-template-columns: 20px minmax(0, 1.2fr) minmax(0, 1fr) auto; }
+.list-row.nas-batch-row { grid-template-columns: 130px minmax(0, auto) minmax(0, 1fr) auto; }
+.list-row .cell { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.list-row .cell.right { flex-direction: row; justify-content: flex-end; align-items: center; gap: 6px; }

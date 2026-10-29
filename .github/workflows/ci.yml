@@ -60,3 +60,24 @@ jobs:
         working-directory: apps/desktop/src-tauri
       - run: cargo clippy --all-targets -- -D warnings
         working-directory: apps/desktop/src-tauri
+
+  # M16: the NAS agent image builds, starts and answers with its password.
+  agent-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -f docker/agent.Dockerfile -t tidy-agent:ci .
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/nas/업무 /tmp/nas-config
+          docker run -d --name agent -p 7841:7841 -e TIDY_TOKEN=ci-password \
+            -v /tmp/nas-config:/config -v /tmp/nas/업무:/data/업무 tidy-agent:ci
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:7841/api/v1/hello && break; sleep 1; done
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:7841/api/v1/status)
+          test "$code" = 401
+          curl -fsS -H 'Authorization: Bearer ci-password' http://127.0.0.1:7841/api/v1/status | tee /tmp/status.json
+          grep -q '"dataRoot":"/data"' /tmp/status.json
+          docker exec agent tesseract --list-langs | grep -q kor
+          docker logs agent

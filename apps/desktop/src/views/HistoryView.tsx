@@ -3,6 +3,7 @@ import * as ipc from "../ipc/commands";
 import type { BatchSummary, MoveLogEntry } from "../ipc/types";
 import { formatTime } from "../components/format";
 import { PathText } from "../components/PathText";
+import { NasHistorySection } from "../components/NasSections";
 
 const BY: Record<string, string> = { rule: "규칙", ai: "AI", user: "확인", restructure: "정리 제안" };
 
@@ -149,6 +150,7 @@ export function HistoryView() {
           ))}
         </section>
       )}
+      <NasHistorySection />
     </div>
   );
 }

@@ -5343,6 +5343,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror 2.0.21",
+ "tiny_http",
  "tokio",
  "toml 0.8.23",
  "toml_edit 0.22.27",

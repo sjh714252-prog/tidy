@@ -6,7 +6,7 @@ import type { MainTab, SettingsKey } from "../ipc/types";
  * `#/main`, `#/main/pending`, `#/main/report`, `#/main/history`,
  * `#/main/settings/<key>`.
  */
-export const SETTINGS_KEYS: SettingsKey[] = ["watch", "rules", "context", "ai", "security", "advanced"];
+export const SETTINGS_KEYS: SettingsKey[] = ["watch", "rules", "context", "ai", "security", "nas", "advanced"];
 const TABS: MainTab[] = ["activity", "pending", "report", "history", "settings"];
 
 interface NavState {

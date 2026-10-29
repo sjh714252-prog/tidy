@@ -3,6 +3,7 @@ import * as ipc from "../ipc/commands";
 import type { ActivityKind } from "../ipc/types";
 import { useActivity } from "../store/activity";
 import { formatTime } from "../components/format";
+import { NasCard } from "../components/NasCard";
 import { CustomerCard, OrganizeCard, TodayCard, WatchPanel } from "../components/HomeCards";
 
 const LABEL: Record<ActivityKind, string> = {
@@ -49,6 +50,7 @@ export function ActivityView() {
     <div className="page activity">
       <WatchPanel />
       <OrganizeCard />
+      <NasCard />
       <div className="home-cols">
         <TodayCard onShowAll={showAll} />
         <CustomerCard />

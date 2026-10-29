@@ -47,6 +47,17 @@ import type {
   TrashResult,
   TodaySummary,
   UndoResult,
+  AgentSettings,
+  ComposeResult,
+  NasBatchList,
+  NasPendingList,
+  NasResolution,
+  NasSearchResult,
+  NasState,
+  OrganizePreview,
+  OrganizeResult,
+  PathMapping,
+  RemoteDir,
 } from "./types";
 
 export const getStatus = () => invoke<Status>("get_status");
@@ -196,3 +207,30 @@ export const installUpdate = () => invoke<"installing" | "opened">("install_upda
 // ── M13 ──
 /** 홈 "오늘 한 일": moves since `since` (unix seconds, local midnight). */
 export const todayMoves = (since: number, limit = 8) => invoke<TodaySummary>("today_moves", { since, limit });
+
+// ── M16 NAS agents ──
+export const nasList = () => invoke<NasState[]>("nas_list");
+/** New password (keychain) + docker-compose.yml with it, saved to Downloads. */
+export const nasCompose = (name: string, shares: string, volume: string) =>
+  invoke<ComposeResult>("nas_compose", { name, shares, volume });
+/** token null = the stored one (from "설치 파일 만들기"). */
+export const nasConnect = (name: string, url: string, token: string | null) =>
+  invoke<NasState>("nas_connect", { name, url, token });
+export const nasRemove = (name: string) => invoke<void>("nas_remove", { name });
+export const nasSetMaps = (name: string, maps: PathMapping[]) => invoke<void>("nas_set_maps", { name, maps });
+export const nasSettings = (name: string) => invoke<AgentSettings>("nas_settings", { name });
+export const nasSaveSettings = (name: string, settings: AgentSettings) =>
+  invoke<AgentSettings>("nas_save_settings", { name, settings });
+export const nasDirs = (name: string, path: string | null) => invoke<RemoteDir[]>("nas_dirs", { name, path });
+export const nasSearch = (query: string, limit = 30) => invoke<NasSearchResult>("nas_search", { query, limit });
+export const nasPending = () => invoke<NasPendingList>("nas_pending");
+export const nasResolve = (name: string, ids: number[], decision: Decision) =>
+  invoke<NasResolution[]>("nas_resolve", { name, ids, decision });
+export const nasBatches = (limit = 50) => invoke<NasBatchList>("nas_batches", { limit });
+export const nasBatchMoves = (name: string, batchId: string) =>
+  invoke<MoveLogEntry[]>("nas_batch_moves", { name, batchId });
+export const nasUndo = (name: string, batchId: string) => invoke<UndoResult>("nas_undo", { name, batchId });
+export const nasOrganizePreview = (name: string, path: string) =>
+  invoke<OrganizePreview>("nas_organize_preview", { name, path });
+/** Moves files on the NAS. Only from an explicit confirmation. */
+export const nasOrganize = (name: string, path: string) => invoke<OrganizeResult>("nas_organize", { name, path });
