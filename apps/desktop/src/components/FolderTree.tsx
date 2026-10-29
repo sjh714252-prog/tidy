@@ -26,7 +26,7 @@ export function FolderTree({
   onSelect: (path: string) => void;
   /** Folders to show on top (e.g. a collect root not saved yet). */
   extraRoots?: FsRoot[];
-  /** (M16) Another machine's folders (a NAS): its roots and listing; no
+  /** (M18) Another machine's folders (a NAS): its roots and listing; no
    * "새 폴더" (the NAS makes folders itself when it moves files). */
   source?: { roots: FsRoot[]; list: (path: string) => Promise<DirEntry[]> };
 }) {

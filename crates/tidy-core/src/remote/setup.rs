@@ -1,4 +1,4 @@
-//! (M16) The `docker-compose.yml` the PC app hands the user for their NAS
+//! (M18) The `docker-compose.yml` the PC app hands the user for their NAS
 //! ("설치 파일 만들기"): the agent image, the password the PC keeps in its
 //! keychain, and one `/data/<share>` mount per shared folder.
 

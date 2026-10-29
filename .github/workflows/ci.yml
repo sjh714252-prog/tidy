@@ -61,7 +61,7 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
         working-directory: apps/desktop/src-tauri
 
-  # M16: the NAS agent image builds, starts and answers with its password.
+  # M18: the NAS agent image builds, starts and answers with its password.
   agent-image:
     runs-on: ubuntu-latest
     steps:

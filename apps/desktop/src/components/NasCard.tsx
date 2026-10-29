@@ -4,7 +4,7 @@ import { useNas } from "../store/nas";
 import { useNav } from "../store/nav";
 
 /**
- * (M16) 홈 › NAS: one row per connected NAS — connected or not, what waits
+ * (M18) 홈 › NAS: one row per connected NAS — connected or not, what waits
  * for an answer there, and how many files it organized today. Hidden when
  * no NAS is connected.
  */

@@ -16,7 +16,7 @@ function useHasNas(): boolean {
 }
 
 /**
- * (M16) 확인 대기 › NAS 확인 대기: files a NAS rule asked about. Answers go
+ * (M18) 확인 대기 › NAS 확인 대기: files a NAS rule asked about. Answers go
  * to the NAS, which moves the file there (and logs it for undo there).
  */
 export function NasPendingSection() {
@@ -178,7 +178,7 @@ export function NasPendingSection() {
   );
 }
 
-/** (M16) 되돌리기 › NAS에서 한 일: the NAS's own move batches, undone there. */
+/** (M18) 되돌리기 › NAS에서 한 일: the NAS's own move batches, undone there. */
 export function NasHistorySection() {
   const has = useHasNas();
   const [batches, setBatches] = useState<NasBatch[]>([]);

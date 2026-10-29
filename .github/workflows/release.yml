@@ -6,7 +6,7 @@ name: Release
 #   version> is created here if missing (an existing release gets its files
 #   replaced), and the notes list the PRs merged since the previous release.
 # - Running it by hand on another branch only uploads workflow artifacts.
-# - (M16) The NAS agent image: amd64 + arm64, pushed to
+# - (M18) The NAS agent image: amd64 + arm64, pushed to
 #   ghcr.io/<owner>/tidy-agent:<version> and :latest when there is a
 #   release tag, and attached as tidy-agent_<version>_<arch>.tar.gz
 #   (Synology Container Manager › 이미지 › 추가 › 파일에서 추가).
@@ -186,7 +186,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          docker save ${{ steps.n.outputs.image }}:${{ steps.n.outputs.version }}-${{ matrix.arch }} \
+          # Also named :latest so the compose file from the app finds it
+          # after "파일에서 추가" (no registry needed).
+          docker tag ${{ steps.n.outputs.image }}:${{ steps.n.outputs.version }}-${{ matrix.arch }} ${{ steps.n.outputs.image }}:latest
+          docker save ${{ steps.n.outputs.image }}:latest \
             | gzip -9 > out/tidy-agent_${{ steps.n.outputs.version }}_${{ matrix.arch }}.tar.gz
       - uses: actions/upload-artifact@v4
         with:

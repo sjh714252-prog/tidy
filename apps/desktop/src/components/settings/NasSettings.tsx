@@ -6,7 +6,7 @@ import { FolderTree } from "../FolderTree";
 import { RuleCards } from "../RuleCards";
 
 /**
- * 설정 › NAS (M16, SPEC §14.13): install the Tidy agent on a NAS (compose
+ * 설정 › NAS (M18, SPEC §14.15): install the Tidy agent on a NAS (compose
  * file with a fresh password), connect, then edit what the NAS watches and
  * its rules. NAS settings are saved to the NAS right away with their own
  * button ("NAS에 저장"), not with the app's save bar.

@@ -1,4 +1,4 @@
-# Tidy NAS agent (`tidy serve`, SPEC §14.13). Build from the repo root:
+# Tidy NAS agent (`tidy serve`, SPEC §14.15). Build from the repo root:
 #   docker build -f docker/agent.Dockerfile -t tidy-agent .
 # Volumes: /config (config.toml, rules.toml, tidy.db, agent-token) and
 # /data (the NAS folders to organize). Port 7841.

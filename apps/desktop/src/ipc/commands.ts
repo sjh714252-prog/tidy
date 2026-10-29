@@ -208,7 +208,7 @@ export const installUpdate = () => invoke<"installing" | "opened">("install_upda
 /** 홈 "오늘 한 일": moves since `since` (unix seconds, local midnight). */
 export const todayMoves = (since: number, limit = 8) => invoke<TodaySummary>("today_moves", { since, limit });
 
-// ── M16 NAS agents ──
+// ── M18 NAS agents ──
 export const nasList = () => invoke<NasState[]>("nas_list");
 /** New password (keychain) + docker-compose.yml with it, saved to Downloads. */
 export const nasCompose = (name: string, shares: string, volume: string) =>

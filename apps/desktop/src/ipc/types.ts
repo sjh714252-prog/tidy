@@ -809,7 +809,7 @@ export interface ContextCandidates {
   files: number;
 }
 
-// ── M16 NAS agent (SPEC §14.13; core `remote::api`, camelCase) ──────────
+// ── M18 NAS agent (SPEC §14.15; core `remote::api`, camelCase) ──────────
 
 export interface AgentWatchState {
   path: string;

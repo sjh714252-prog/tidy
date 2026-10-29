@@ -238,7 +238,7 @@ impl Watcher {
                 }
             };
             let mut events = false;
-            // (M16) Too many folders for OS change events (Linux inotify
+            // (M18) Too many folders for OS change events (Linux inotify
             // watch limit, common on a NAS): poll this folder instead.
             let mut over_limit = false;
             if online && r.uses_events() {

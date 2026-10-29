@@ -341,12 +341,12 @@ pub struct Config {
     pub ocr: OcrCfg,
     /// (M16) Picture descriptions by a vision model.
     pub vision: VisionCfg,
-    /// (M16) NAS agents this PC connects to (`[[nas]]`, SPEC §14.13).
+    /// (M18) NAS agents this PC connects to (`[[nas]]`, SPEC §14.15).
     #[serde(rename = "nas")]
     pub nas: Vec<NasCfg>,
 }
 
-/// `[[nas]]` (SPEC §14.13, M16): a Tidy agent running on a NAS.
+/// `[[nas]]` (SPEC §14.15, M18): a Tidy agent running on a NAS.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
 pub struct NasCfg {
@@ -408,7 +408,7 @@ pub fn write_nas(path: &Path, nas: &[NasCfg]) -> Result<(), ConfigError> {
     write_doc(path, &doc)
 }
 
-/// Replace only `[[watch]]` and `[[index_only]]` (M16: the NAS agent's
+/// Replace only `[[watch]]` and `[[index_only]]` (M18: the NAS agent's
 /// folders, set from a PC).
 pub fn write_folders(
     path: &Path,

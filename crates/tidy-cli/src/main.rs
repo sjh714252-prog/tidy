@@ -97,10 +97,10 @@ enum Cmd {
     /// show the state, set the password (OS keychain only).
     #[command(subcommand)]
     Vault(VaultCmd),
-    /// (M16) Run as the NAS agent: watch, organize and index the folders on
+    /// (M18) Run as the NAS agent: watch, organize and index the folders on
     /// this machine and answer the PC app over HTTP (Docker: see docs).
     Serve(ServeArgs),
-    /// (M16) Talk to a NAS agent from this PC ([[nas]] in config.toml).
+    /// (M18) Talk to a NAS agent from this PC ([[nas]] in config.toml).
     #[command(subcommand)]
     Nas(NasCmd),
 }
@@ -2812,7 +2812,7 @@ fn cmd_curate(config: Option<PathBuf>, cmd: CurateCmd) -> Result<()> {
     }
 }
 
-// ── M16 NAS agent ───────────────────────────────────────────────────────
+// ── M18 NAS agent ───────────────────────────────────────────────────────
 
 fn cmd_serve(config: Option<PathBuf>, args: ServeArgs) -> Result<()> {
     use tidy_core::remote::server;

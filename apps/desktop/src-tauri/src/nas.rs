@@ -1,4 +1,4 @@
-//! (M16, SPEC §14.13) The PC side of NAS agents: connect, show their state,
+//! (M18, SPEC §14.15) The PC side of NAS agents: connect, show their state,
 //! search / queue / history / settings over HTTP. The NAS does the moving;
 //! nothing here touches a file. A NAS that is off or unreachable only shows
 //! up as an error string — every other part of the app keeps working.

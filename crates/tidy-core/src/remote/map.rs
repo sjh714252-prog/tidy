@@ -1,4 +1,4 @@
-//! (M16) NAS paths ↔ the paths this PC sees for them (`[[nas.map]]`), so a
+//! (M18) NAS paths ↔ the paths this PC sees for them (`[[nas.map]]`), so a
 //! NAS search result can be opened here.
 
 use std::path::{Path, PathBuf};

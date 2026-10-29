@@ -1,4 +1,4 @@
-//! (M16, SPEC §14.13) Tidy on a NAS: the headless agent (`tidy serve`,
+//! (M18, SPEC §14.15) Tidy on a NAS: the headless agent (`tidy serve`,
 //! [`server`]), the PC app's client for it ([`client`]), the JSON both
 //! speak ([`api`]) and NAS ↔ PC path mapping ([`map`]).
 

@@ -1,4 +1,4 @@
-//! (M16) The PC side: talk to a NAS agent. Every call has a short timeout
+//! (M18) The PC side: talk to a NAS agent. Every call has a short timeout
 //! and only reports failures — nothing on the PC waits on the NAS.
 
 use std::time::Duration;

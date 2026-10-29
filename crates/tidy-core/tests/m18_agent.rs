@@ -1,7 +1,7 @@
-//! M16: the NAS agent (`tidy serve`) driven by the PC client, end to end on
+//! M18: the NAS agent (`tidy serve`) driven by the PC client, end to end on
 //! a temp folder as the NAS: settings from the PC → new file moved by rule
 //! → confirm queue answered → existing files organized → undo, plus the
-//! password and the "only inside the data root" fences (SPEC §14.13).
+//! password and the "only inside the data root" fences (SPEC §14.15).
 
 use std::fs;
 use std::path::{Path, PathBuf};

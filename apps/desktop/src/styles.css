@@ -488,7 +488,7 @@ pre.toml { font-size: 12px; background: var(--surface); padding: 6px 8px; border
   .cols-dup { grid-template-columns: 1fr; }
 }
 
-/* (M16) 설정 › NAS */
+/* (M18) 설정 › NAS */
 .nas-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 14px; }
 .nas-steps > li { display: flex; flex-direction: column; gap: 6px; }
 .nas-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

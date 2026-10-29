@@ -1,4 +1,4 @@
-//! (M16, SPEC §14.13) The NAS agent: `tidy serve`. Runs the ordinary watch
+//! (M18, SPEC §14.15) The NAS agent: `tidy serve`. Runs the ordinary watch
 //! loop (rules → move / confirm queue, indexing) and text recognition on
 //! the NAS itself, and answers the PC app over HTTP (`/api/v1`, bearer
 //! token). Files are only ever moved by the [`Mover`] (CLAUDE.md rule 1).

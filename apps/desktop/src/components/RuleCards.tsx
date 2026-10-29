@@ -77,7 +77,7 @@ export function RuleCards({
   open: number | null;
   onOpen: (i: number | null) => void;
   onChange: (cards: RuleCard[]) => void;
-  /** (M16) "폴더 선택…" browses this machine instead (a NAS). */
+  /** (M18) "폴더 선택…" browses this machine instead (a NAS). */
   treeSource?: ComponentProps<typeof FolderTree>["source"];
 }) {
   const [drag, setDrag] = useState<number | null>(null);

@@ -375,7 +375,7 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "open_folder" => ok(about::open_folder(app, arg(&args, "path")?).await?),
         "check_update" => ok(about::check_update(app).await?),
         "install_update" => ok(about::install_update(app).await?),
-        // M16: NAS agents.
+        // M18: NAS agents.
         "nas_list" => ok(crate::nas::nas_list(app).await?),
         "nas_compose" => ok(crate::nas::nas_compose(
             arg(&args, "name")?,

@@ -1,4 +1,4 @@
-//! (M16, SPEC §14.13) What the NAS agent and the PC app send each other.
+//! (M18, SPEC §14.15) What the NAS agent and the PC app send each other.
 //! JSON, camelCase like the app's own DTOs so the app can pass most of it
 //! straight to the screen. Paths are the NAS's own path strings.
 

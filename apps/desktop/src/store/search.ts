@@ -16,7 +16,7 @@ interface SearchState {
   note: string | null;
   semantic: SemanticStatus | null;
   error: string | null;
-  /** (M16) Results from connected NAS agents, listed after this PC's. */
+  /** (M18) Results from connected NAS agents, listed after this PC's. */
   nasHits: NasHit[];
   nasLoading: boolean;
   /** NAS that did not answer ("사무실 NAS: 연결할 수 없습니다"). */

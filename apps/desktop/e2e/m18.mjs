@@ -1,4 +1,4 @@
-// M16 GUI test: organizing on the NAS (SPEC §14.13). A real `tidy serve`
+// M18 GUI test: organizing on the NAS (SPEC §14.15). A real `tidy serve`
 // agent plays the NAS (data root $T/nas), the app connects to it through
 // 설정 › NAS and everything is driven through the dev bridge:
 //
@@ -12,7 +12,7 @@
 //   E. search window lists NAS results after this PC's with the NAS badge
 //   F. home NAS card; 되돌리기 › NAS에서 한 일 → undo puts the file back
 //
-// Run: S=/tmp/tidy-e2e bash e2e/run-headless.sh m16
+// Run: S=/tmp/tidy-e2e bash e2e/run-headless.sh m18
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -44,7 +44,7 @@ async function startAgent(token) {
       TIDY_LISTEN: `127.0.0.1:${PORT}`,
       TIDY_CONFIG: path.join(T, "nas-config", "config.toml"),
     },
-    stdio: ["ignore", fs.openSync(path.join(S, "agent-m16.log"), "w"), fs.openSync(path.join(S, "agent-m16.err"), "w")],
+    stdio: ["ignore", fs.openSync(path.join(S, "agent-m18.log"), "w"), fs.openSync(path.join(S, "agent-m18.err"), "w")],
   });
   await waitFor(async () => {
     try {
@@ -79,7 +79,7 @@ await sleep(1000);
   await main.waitForSelector("[data-testid=nas-compose]");
   const y = await main.locator("[data-testid=nas-compose]").inputValue();
   ok("A", "설치 파일: 연결 암호·공유 폴더 마운트", /TIDY_TOKEN: "[0-9a-f]{64}"/.test(y) && y.includes('"/volume1/업무:/data/업무"'), "");
-  await setup.screenshot({ path: `${SHOT}/m16-A-setup.png` });
+  await setup.screenshot({ path: `${SHOT}/m18-A-setup.png` });
   // "Upload to the NAS": the agent runs with the compose file's password;
   // the app already has it in the keychain, so none is typed.
   await startAgent(y.match(/TIDY_TOKEN: "([0-9a-f]{64})"/)[1]);
@@ -125,7 +125,7 @@ await sleep(1000);
   ok("B", "NAS가 업무 폴더 감시", watching);
   const agentCfg = fs.readFileSync(path.join(T, "nas-config", "config.toml"), "utf8");
   ok("B", "NAS config: 감시 폴더 업무 + 검색만 할 폴더 사진", agentCfg.includes(WORK) && agentCfg.includes(path.join(NAS, "사진")), "");
-  await panel.screenshot({ path: `${SHOT}/m16-B-panel.png` });
+  await panel.screenshot({ path: `${SHOT}/m18-B-panel.png` });
 }
 
 // C. 지금 정리 (existing file, on the NAS)
@@ -152,7 +152,7 @@ await sleep(1000);
   const row = main.locator("[data-testid=nas-pending-row]").first();
   const text = await row.innerText();
   ok("D", "NAS 확인 대기 행: 이름·NAS·규칙", text.includes("회의 메모.txt") && text.includes("NAS · 사무실") && text.includes("규칙: 메모"), text.replace(/\n/g, " | "));
-  await main.locator("[data-testid=nas-pending]").screenshot({ path: `${SHOT}/m16-D-pending.png` });
+  await main.locator("[data-testid=nas-pending]").screenshot({ path: `${SHOT}/m18-D-pending.png` });
   await row.locator("[data-testid=nas-pending-move]").click();
   const done = await waitFor(() => fs.existsSync(path.join(WORK, "메모", "회의 메모.txt")), 10000);
   ok("D", "이동 → NAS에서 업무/메모로", done);
@@ -180,7 +180,7 @@ await sleep(1000);
   ok("E", "미리보기: NAS에 있는 파일", note.includes("NAS(사무실)"), note);
   const foot = await s.locator(".search-foot").innerText();
   ok("E", "아래줄 NAS 건수", /NAS \d+건/.test(foot), foot);
-  await s.screenshot({ path: `${SHOT}/m16-E-search.png` });
+  await s.screenshot({ path: `${SHOT}/m18-E-search.png` });
   await s.close();
 }
 
@@ -191,7 +191,7 @@ await sleep(1000);
   await sleep(500);
   const home = await main.locator("[data-testid=nas-row]").innerText();
   ok("F", "홈 NAS 카드: 오늘 정리 수", /오늘 [3-9]개 정리/.test(home), home.replace(/\n/g, " | "));
-  await main.locator("[data-testid=nas-card]").screenshot({ path: `${SHOT}/m16-F-home.png` });
+  await main.locator("[data-testid=nas-card]").screenshot({ path: `${SHOT}/m18-F-home.png` });
   await tab(main, "되돌리기").click();
   await main.waitForSelector("[data-testid=nas-history]");
   await waitFor(async () => (await main.locator("[data-testid=nas-batch-row]").count()) >= 3, 10000);
@@ -204,7 +204,7 @@ await sleep(1000);
   ok("F", "되돌리기 → NAS에서 원래 자리로", back && !fs.existsSync(path.join(WORK, "문서", "기존 보고서.pdf")));
   const msg = await main.locator("[data-testid=nas-history-msg]").innerText();
   ok("F", "결과 문구", msg.includes("NAS에서 1개 되돌림"), msg);
-  await main.locator("[data-testid=nas-history]").screenshot({ path: `${SHOT}/m16-F-history.png` });
+  await main.locator("[data-testid=nas-history]").screenshot({ path: `${SHOT}/m18-F-history.png` });
 }
 
 // G. NAS off → "연결 안 됨", the app keeps working
@@ -227,5 +227,5 @@ await sleep(1000);
 await browser.close();
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} passed`);
-fs.writeFileSync(path.join(S, "m16-results.json"), JSON.stringify(results, null, 2));
+fs.writeFileSync(path.join(S, "m18-results.json"), JSON.stringify(results, null, 2));
 process.exit(failed.length ? 1 : 0);

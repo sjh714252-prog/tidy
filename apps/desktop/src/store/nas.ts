@@ -3,7 +3,7 @@ import * as ipc from "../ipc/commands";
 import type { NasState } from "../ipc/types";
 
 /**
- * (M16) Connected NAS agents and their live state. Loaded on demand (home,
+ * (M18) Connected NAS agents and their live state. Loaded on demand (home,
  * settings, search window focus); a NAS that does not answer is just shown
  * as "연결 안 됨" — nothing else waits on it.
  */
