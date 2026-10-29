@@ -6,7 +6,9 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use super::provider::{parse_json_object, post_json, AiError, LlmProvider, LlmResponse, Usage};
+use super::provider::{
+    parse_json_object, post_json, AiError, ImageInput, LlmProvider, LlmResponse, Usage,
+};
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 
@@ -48,7 +50,22 @@ impl OpenAiProvider {
         }
     }
 
-    fn body(&self, system: &str, user: &str, schema: &Value, strict: bool) -> Value {
+    fn body(
+        &self,
+        system: &str,
+        user: &str,
+        image: Option<&ImageInput>,
+        schema: &Value,
+        strict: bool,
+    ) -> Value {
+        let user = match image {
+            None => json!(user),
+            Some(img) => json!([
+                { "type": "text", "text": user },
+                { "type": "image_url", "image_url": {
+                    "url": format!("data:{};base64,{}", img.media_type, img.base64) } }
+            ]),
+        };
         if strict {
             json!({
                 "model": self.model,
@@ -119,6 +136,36 @@ fn parse_response(v: &Value) -> Result<(String, Usage, Option<String>), AiError>
     ))
 }
 
+impl OpenAiProvider {
+    async fn complete(
+        &self,
+        system: &str,
+        user: &str,
+        image: Option<&ImageInput>,
+        schema: &Value,
+    ) -> Result<LlmResponse, AiError> {
+        let v = match self
+            .send(&self.body(system, user, image, schema, true))
+            .await
+        {
+            // Server without json_schema support: fall back once.
+            Err(AiError::Http {
+                status: 400 | 422, ..
+            }) => {
+                self.send(&self.body(system, user, image, schema, false))
+                    .await?
+            }
+            other => other?,
+        };
+        let (text, usage, model) = parse_response(&v)?;
+        Ok(LlmResponse {
+            value: parse_json_object(&text)?,
+            usage,
+            model: model.unwrap_or_else(|| self.model.clone()),
+        })
+    }
+}
+
 #[async_trait]
 impl LlmProvider for OpenAiProvider {
     async fn complete_json(
@@ -131,19 +178,18 @@ impl LlmProvider for OpenAiProvider {
         // Not forwarded: OpenAI-compatible servers disagree on the field
         // name (max_tokens / max_completion_tokens) and reject unknown ones.
         let _ = max_tokens;
-        let v = match self.send(&self.body(system, user, schema, true)).await {
-            // Server without json_schema support: fall back once.
-            Err(AiError::Http {
-                status: 400 | 422, ..
-            }) => self.send(&self.body(system, user, schema, false)).await?,
-            other => other?,
-        };
-        let (text, usage, model) = parse_response(&v)?;
-        Ok(LlmResponse {
-            value: parse_json_object(&text)?,
-            usage,
-            model: model.unwrap_or_else(|| self.model.clone()),
-        })
+        self.complete(system, user, None, schema).await
+    }
+
+    async fn complete_json_image(
+        &self,
+        system: &str,
+        user: &str,
+        image: &ImageInput,
+        schema: &Value,
+        _max_tokens: u32,
+    ) -> Result<LlmResponse, AiError> {
+        self.complete(system, user, Some(image), schema).await
     }
 
     fn name(&self) -> &str {
@@ -198,5 +244,38 @@ mod tests {
         assert!(reqs[1]
             .to_lowercase()
             .contains("authorization: bearer sk-not-real"));
+    }
+
+    #[tokio::test]
+    async fn picture_as_data_url() {
+        let ok = r#"{"model":"gpt","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"{\"caption\":\"x\"}"}}]}"#;
+        let (base, seen) = test_server::serve(vec![test_server::Canned {
+            status: 200,
+            headers: vec![],
+            body: ok.into(),
+        }])
+        .await;
+        let p = OpenAiProvider::new(
+            http_client(Duration::from_secs(5)).unwrap(),
+            None,
+            "gpt".into(),
+            Some(base),
+            0,
+        );
+        let img = ImageInput {
+            media_type: "image/png",
+            base64: "QUJD".into(),
+        };
+        let r = p
+            .complete_json_image("s", "u", &img, &json!({"type":"object"}), 256)
+            .await
+            .unwrap();
+        assert_eq!(r.value["caption"], "x");
+        let req = &seen.lock().unwrap()[0];
+        assert!(
+            req.contains(r#""url":"data:image/png;base64,QUJD""#),
+            "{req}"
+        );
+        assert!(req.contains(r#""type":"image_url""#));
     }
 }

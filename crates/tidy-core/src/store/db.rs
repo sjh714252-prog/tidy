@@ -317,6 +317,31 @@ UPDATE files SET ocr = 'pending'
         OR (text_status = 'ok' AND length(replace(replace(replace(replace(
               COALESCE(content, ''), ' ', ''), char(10), ''), char(13), ''), char(9), '')) < 30));
 "#,
+    // v11 (M16): picture descriptions from a vision model. `files.vision`
+    // NULL = not a target, else pending | ok | empty | failed | skipped
+    // (personal information: never sent). `files.caption` is the
+    // description, also appended to `content` (after any recognized text)
+    // so word and semantic search find it. `vision_cache` keeps answers by
+    // content hash so moved/copied pictures are not sent again. Pictures
+    // indexed before M16 start as pending (10KB..20MB, body indexing on);
+    // nothing is sent until `[vision] enabled`.
+    r#"
+ALTER TABLE files ADD COLUMN vision TEXT;
+ALTER TABLE files ADD COLUMN caption TEXT;
+CREATE INDEX idx_files_vision ON files(vision);
+CREATE TABLE vision_cache (
+  hash TEXT PRIMARY KEY,
+  caption TEXT NOT NULL,
+  tags TEXT NOT NULL,
+  kind TEXT,
+  model TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+UPDATE files SET vision = 'pending'
+ WHERE vault = 0 AND text_status != 'none'
+   AND ext IN ('png','jpg','jpeg','bmp','gif','tif','tiff','webp')
+   AND size >= 10240 AND size <= 20971520;
+"#,
 ];
 
 pub struct Store {

@@ -65,6 +65,8 @@ enum Cmd {
     Embed(EmbedArgs),
     /// (M15) Read the text in images and scanned PDFs so search finds them.
     Ocr(OcrArgs),
+    /// (M16) Describe pictures with the AI's vision model (search + sorting).
+    Vision(VisionArgs),
     /// AI status, API keys (OS keychain), test call, call log.
     #[command(subcommand)]
     Ai(AiCmd),
@@ -385,6 +387,21 @@ struct OcrArgs {
 }
 
 #[derive(Args)]
+struct VisionArgs {
+    /// Describe this picture only and print the answer (the index is not changed).
+    file: Option<PathBuf>,
+    /// Show the model and how many pictures wait / are done, and exit.
+    #[arg(long, conflicts_with = "file")]
+    status: bool,
+    /// Put pictures that failed back in the queue first.
+    #[arg(long, conflicts_with = "file")]
+    retry: bool,
+    /// Describe at most this many pictures in this run (the daily limit still applies).
+    #[arg(long, value_name = "N", conflicts_with = "file")]
+    limit: Option<usize>,
+}
+
+#[derive(Args)]
 struct PendingArgs {
     /// Move entry ID to its suggested folder (or --to).
     #[arg(long, value_name = "ID", conflicts_with_all = ["skip", "ignore"])]
@@ -515,6 +532,7 @@ fn main() -> Result<()> {
         Cmd::Search(args) => cmd_search(cli.config, args),
         Cmd::Embed(args) => cmd_embed(cli.config, args),
         Cmd::Ocr(args) => cmd_ocr(cli.config, args),
+        Cmd::Vision(args) => cmd_vision(cli.config, args),
         Cmd::Ai(cmd) => cmd_ai(cli.config, cmd),
         Cmd::Rules(cmd) => cmd_rules(cli.config, cmd),
         Cmd::Learn(args) => cmd_learn(cli.config, args),
@@ -738,6 +756,9 @@ fn cmd_watch(config: Option<PathBuf>, args: WatchArgs) -> Result<()> {
     }
     if !args.no_index && !args.dry_run {
         spawn_ocr_thread(&cfg);
+    }
+    if !args.no_ai && !args.no_index && !args.dry_run {
+        spawn_vision_thread(&cfg);
     }
     let stop = AtomicBool::new(false); // Ctrl+C ends the process
     run_watch(&cfg, &opts, ExpectedMoves::new(), &stop, |ev| match ev {
@@ -1429,6 +1450,108 @@ fn spawn_ocr_thread(cfg: &Config) {
             });
         if let Err(e) = res {
             eprintln!("# ocr stopped: {e}");
+        }
+    });
+}
+
+fn cmd_vision(config: Option<PathBuf>, args: VisionArgs) -> Result<()> {
+    use tidy_core::index::vision;
+    let cfg = load_config(config)?;
+    let store = open_store(&cfg)?;
+    if let Some(file) = &args.file {
+        let d = vision::VisionDescriber::from_config(&cfg)?;
+        eprintln!("# {} / {}", d.provider_name(), d.model());
+        let name = file
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let c = d.describe(&store, file, &name)?;
+        if c.is_empty() {
+            eprintln!("# nothing to describe");
+        } else {
+            println!("{}", c.line());
+            if let Some(k) = &c.kind {
+                eprintln!("# kind: {k}");
+            }
+        }
+        return Ok(());
+    }
+    if args.status {
+        let st = vision::status(&cfg, &store)?;
+        println!(
+            "vision: {}   model: {}{}",
+            if st.enabled {
+                "on"
+            } else {
+                "off ([vision] enabled = false)"
+            },
+            st.model.as_deref().unwrap_or("none"),
+            if st.local { " (local)" } else { "" }
+        );
+        if let Some(n) = &st.note {
+            println!("note: {n}");
+        }
+        let c = &st.counts;
+        println!(
+            "waiting: {}   described: {}   nothing to describe: {}   failed: {}   personal (not sent): {}",
+            c.pending, c.ok, c.empty, c.failed, c.skipped
+        );
+        println!(
+            "today: {} / {}   total sent: {}   est. cost: ${:.4}",
+            st.today, st.daily_limit, st.total, st.cost_usd
+        );
+        return Ok(());
+    }
+    if args.retry {
+        let n = store.vision_retry_failed()?;
+        eprintln!("# {n} failed picture(s) queued again");
+    }
+    let d = vision::VisionDescriber::from_config(&cfg)?;
+    eprintln!("# {} / {}", d.provider_name(), d.model());
+    let wait_for_ocr = cfg.ocr.enabled && tidy_core::index::ocr::build_engine(&cfg.ocr).is_ok();
+    let r = vision::run_pass(
+        &cfg,
+        &store,
+        &d,
+        args.limit.unwrap_or(usize::MAX),
+        wait_for_ocr,
+        |p| eprintln!("  {}", p.display()),
+    )?;
+    println!(
+        "described {}   nothing to describe {}   failed {}   personal (not sent) {}   still waiting {}",
+        r.described, r.empty, r.failed, r.skipped, r.remaining
+    );
+    if r.limited {
+        println!(
+            "daily limit reached ([vision] daily_limit = {})",
+            cfg.vision.daily_limit
+        );
+    }
+    if let Some(e) = &r.stopped {
+        println!("stopped: {e}");
+    }
+    Ok(())
+}
+
+/// Background picture descriptions next to `tidy watch` (`[vision] enabled`).
+fn spawn_vision_thread(cfg: &Config) {
+    if !cfg.vision.enabled {
+        return;
+    }
+    let cfg = cfg.clone();
+    std::thread::spawn(move || {
+        let stop = AtomicBool::new(false); // Ctrl+C ends the process
+        let res = tidy_core::service::run_vision_loop(&cfg, &stop, Duration::from_secs(60), |r| {
+            match r {
+                Ok(r) => eprintln!(
+                    "# vision: {} described, {} nothing to describe, {} failed, {} personal, {} waiting",
+                    r.described, r.empty, r.failed, r.skipped, r.remaining
+                ),
+                Err(e) => eprintln!("# vision: {e}"),
+            }
+        });
+        if let Err(e) = res {
+            eprintln!("# vision stopped: {e}");
         }
     });
 }
