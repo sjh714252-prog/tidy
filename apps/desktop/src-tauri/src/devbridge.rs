@@ -320,6 +320,12 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "plan_ai" => {
             ok(report_cmds::plan_ai(app, arg(&args, "path")?, arg(&args, "protect")?).await?)
         }
+        "run_command" => ok(report_cmds::run_command(
+            app,
+            arg(&args, "text")?,
+            arg(&args, "rulesOnly")?,
+        )
+        .await?),
         "preview_plan" => {
             ok(report_cmds::preview_plan(app, arg(&args, "id")?, arg(&args, "ids")?).await?)
         }

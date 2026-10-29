@@ -205,6 +205,30 @@ pub async fn plan_ai(app: AppHandle, path: String, protect: Vec<String>) -> CmdR
     .await
 }
 
+/// (M16) A natural-language command → what it understood, the files and
+/// (for a move) a saved plan. Nothing moves; `apply_plan` does, on click.
+#[tauri::command]
+pub async fn run_command(
+    app: AppHandle,
+    text: String,
+    rules_only: bool,
+) -> CmdResult<tidy_core::command::CommandResult> {
+    blocking(move || {
+        let cfg = app.state::<AppState>().config();
+        let store = Store::open(&cfg.store.db_path()).map_err(err)?;
+        let ai = if rules_only {
+            None
+        } else {
+            let rules = RuleSet::load(&cfg.classify.rules).unwrap_or_default();
+            AiClassifier::from_config(&cfg, &rules).ok()
+        };
+        let mut opts = tidy_core::command::CommandOptions::new(protected(&cfg, &[]));
+        opts.rules_only = rules_only;
+        tidy_core::command::run(&text, &cfg, &store, ai.as_ref(), &opts).map_err(err)
+    })
+    .await
+}
+
 /// Before/after trees for the moves the user ticked.
 #[tauri::command]
 pub async fn preview_plan(
@@ -273,10 +297,10 @@ pub async fn apply_plan(
             &plan.root,
             format!(
                 "{} #{id}: {}개 이동 (batch {})",
-                if plan.source == restructure::PlanSource::Context {
-                    "업무 맥락"
-                } else {
-                    "정리 제안"
+                match plan.source {
+                    restructure::PlanSource::Context => "업무 맥락",
+                    restructure::PlanSource::Command => "명령",
+                    _ => "정리 제안",
                 },
                 r.moved.len(),
                 &r.batch_id[..8]

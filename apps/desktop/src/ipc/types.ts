@@ -617,7 +617,7 @@ export interface ContextNote {
 export interface Plan {
   id: number;
   root: string;
-  source: "rules" | "ai" | "context";
+  source: "rules" | "ai" | "context" | "command";
   created_at: number;
   summary: string;
   folders: { path: string; reason: string }[];
@@ -782,4 +782,37 @@ export interface ContextCandidates {
   issue_types: { name: string; known: boolean }[];
   doc_kinds: { name: string; ext: string[]; known: boolean }[];
   files: number;
+}
+
+/** (M16, SPEC §14.13) A natural-language command, interpreted. Nothing moved. */
+export interface CommandIntent {
+  action: "move" | "find";
+  keywords: string[];
+  exts: string[];
+  after: string | null;
+  before: string | null;
+  source: string | null;
+  destination: string | null;
+  min_size: number | null;
+  max_size: number | null;
+}
+export interface FoundFile {
+  path: string;
+  size: number;
+  mtime: number;
+  matched_in: "name" | "content" | "both" | "filter" | "semantic";
+}
+export interface CommandResult {
+  text: string;
+  intent: CommandIntent;
+  parsed_by: "ai" | "rules";
+  note: string | null;
+  /** "기간 2026-09-01 ~ 2026-09-30", "종류 PDF", "옮길 곳 …" */
+  understood: string[];
+  files: FoundFile[];
+  truncated: boolean;
+  destination: { path: string; new_folder: boolean; alternatives: string[] } | null;
+  /** Saved move plan (move commands that found files). */
+  plan: Plan | null;
+  warnings: string[];
 }

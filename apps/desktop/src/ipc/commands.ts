@@ -6,6 +6,7 @@ import type {
   UpdateResult,
   AiSettings,
   ApplyResult,
+  CommandResult,
   BatchResult,
   BatchSummary,
   MoveLogEntry,
@@ -141,6 +142,9 @@ export const applyContextSuggestions = (suggestions: ContextSuggestion[]) =>
   invoke<CurateSettings>("apply_context_suggestions", { suggestions });
 export const extractContext = () => invoke<ContextCandidates>("extract_context");
 export const contextGroups = () => invoke<[string, string][]>("context_groups");
+/** (M16) Natural-language command → understood + files + saved plan. Nothing moves. */
+export const runCommand = (text: string, rulesOnly = false) =>
+  invoke<CommandResult>("run_command", { text, rulesOnly });
 export const previewPlan = (id: number, ids: number[]) => invoke<Preview>("preview_plan", { id, ids });
 /** Moves files. Only call from an explicit user confirmation. */
 export const applyPlan = (id: number, ids: number[], protect: string[]) =>

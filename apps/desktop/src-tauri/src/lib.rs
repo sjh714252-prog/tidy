@@ -182,6 +182,7 @@ pub fn run() {
             report_cmds::build_report,
             report_cmds::plan_rules,
             report_cmds::plan_ai,
+            report_cmds::run_command,
             report_cmds::preview_plan,
             report_cmds::apply_plan,
             report_cmds::list_plans,

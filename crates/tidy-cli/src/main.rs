@@ -78,6 +78,9 @@ enum Cmd {
     Report(ReportArgs),
     /// Propose a reorganisation (rules or AI), show the diff, apply on approval.
     Restructure(RestructureArgs),
+    /// (M16) A natural-language command: "지난달 받은 KT 엑셀 프로젝트 폴더로".
+    /// Shows what it understood and the files; moves only with --apply.
+    Ask(AskArgs),
     /// (M14) Identical files (content, any name): list groups with the copy
     /// kept by default; --apply sends the other copies to the OS trash.
     Dedupe(DedupeArgs),
@@ -140,6 +143,24 @@ struct DedupeArgs {
     /// Smallest file size to consider, in bytes.
     #[arg(long, default_value_t = 1024)]
     min_size: u64,
+}
+
+#[derive(Args)]
+struct AskArgs {
+    /// The command, e.g. "지난달 받은 PDF를 프로젝트 폴더로 옮겨줘".
+    #[arg(required_unless_present = "apply")]
+    text: Vec<String>,
+    /// Interpret without the AI (offline parser only).
+    #[arg(long)]
+    rules: bool,
+    /// Apply a saved command plan (all files, or --only).
+    #[arg(long, value_name = "PLAN", conflicts_with = "text")]
+    apply: Option<i64>,
+    /// Comma-separated file numbers for --apply, e.g. 1,3,5.
+    #[arg(long, value_delimiter = ',', value_name = "N,..", requires = "apply")]
+    only: Vec<u32>,
+    #[arg(short, long, value_enum, default_value_t = Format::Text)]
+    format: Format,
 }
 
 #[derive(Args)]
@@ -520,6 +541,7 @@ fn main() -> Result<()> {
         Cmd::Learn(args) => cmd_learn(cli.config, args),
         Cmd::Report(args) => cmd_report(cli.config, args),
         Cmd::Dedupe(args) => cmd_dedupe(cli.config, args),
+        Cmd::Ask(args) => cmd_ask(cli.config, args),
         Cmd::Restructure(args) => cmd_restructure(cli.config, args),
         Cmd::Pii(cmd) => cmd_pii(cli.config, cmd),
         Cmd::Curate(cmd) => cmd_curate(cli.config, cmd),
@@ -2104,6 +2126,102 @@ fn print_plan(plan: &restructure::Plan, only: Option<&[u32]>) -> Result<()> {
     }
     for d in &p.emptied {
         println!("  becomes empty (left in place, nothing is deleted): {d}/");
+    }
+    Ok(())
+}
+
+fn cmd_ask(config: Option<PathBuf>, args: AskArgs) -> Result<()> {
+    use tidy_core::command::{self, CommandOptions, ParsedBy};
+    let cfg = load_config(config)?;
+    let store = open_store(&cfg)?;
+    let protected = protected_dirs(&cfg, &[]);
+    if let Some(id) = args.apply {
+        let plan = restructure::load(&store, id)?;
+        if plan.source != restructure::PlanSource::Command {
+            bail!("plan #{id} is not a command plan (use `tidy restructure --apply {id}`)");
+        }
+        let only = (!args.only.is_empty()).then_some(args.only.as_slice());
+        let mover = Mover::new(store, cfg.mover.duplicate_policy);
+        let r = restructure::apply(
+            &mover,
+            &plan,
+            only,
+            &protected,
+            Some(&IndexOptions::from_config(&cfg)),
+        )?;
+        for (a, b) in &r.moved {
+            println!("moved     {} -> {}", a.display(), b.display());
+        }
+        for (p, why) in &r.skipped {
+            println!("skipped   {} ({why})", p.display());
+        }
+        for (p, e) in &r.errors {
+            eprintln!("error     {}: {e}", p.display());
+        }
+        println!(
+            "\n{} moved in batch {} — undo all with: tidy undo --batch {}",
+            r.moved.len(),
+            short(&r.batch_id),
+            short(&r.batch_id)
+        );
+        return Ok(());
+    }
+    let text = args.text.join(" ");
+    let ai = if args.rules {
+        None
+    } else {
+        let rules = RuleSet::load(&cfg.classify.rules).unwrap_or_default();
+        match AiClassifier::from_config(&cfg, &rules) {
+            Ok(ai) => Some(ai),
+            Err(ai::AiError::Disabled) => None,
+            Err(e) => {
+                eprintln!("# AI off: {e} (offline parser)");
+                None
+            }
+        }
+    };
+    let mut opts = CommandOptions::new(protected);
+    opts.rules_only = args.rules;
+    let r = command::run(&text, &cfg, &store, ai.as_ref(), &opts)?;
+    if let Format::Json = args.format {
+        println!("{}", serde_json::to_string_pretty(&r)?);
+        return Ok(());
+    }
+    println!(
+        "understood ({}): {}",
+        match r.parsed_by {
+            ParsedBy::Ai => "AI",
+            ParsedBy::Rules => "offline",
+        },
+        r.understood.join(" | ")
+    );
+    if let Some(n) = &r.note {
+        println!("# {n}");
+    }
+    for w in &r.warnings {
+        println!("! {w}");
+    }
+    for (i, f) in r.files.iter().enumerate() {
+        println!(
+            "{:>3}. {}  {:>9}  {}",
+            i + 1,
+            f.path.display(),
+            format_size(f.size, BINARY),
+            fmt_time(f.mtime)
+        );
+    }
+    match &r.plan {
+        Some(p) => println!(
+            "\nNothing has moved yet. Move {} file(s) with: tidy ask --apply {}{}",
+            p.moves.len(),
+            p.id,
+            if p.moves.len() > 1 {
+                "  [--only 1,2,...]"
+            } else {
+                ""
+            }
+        ),
+        None => println!("\n{} file(s)", r.files.len()),
     }
     Ok(())
 }
