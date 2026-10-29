@@ -5,11 +5,11 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::store::MoveLogEntry;
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DoneItem {
     /// Unix seconds of the newest move in the item.
     pub at: i64,
@@ -24,7 +24,7 @@ pub struct DoneItem {
     pub batch_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct TodaySummary {
     /// Files moved (and not undone).
     pub moved: usize,

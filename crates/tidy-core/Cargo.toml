@@ -48,6 +48,8 @@ same-file = "1"
 # (pure Rust codecs), base64 for the request body.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
 base64 = "0.22"
+# M16 NAS agent (`tidy serve`): small blocking HTTP server.
+tiny_http = "0.12"
 
 [target.'cfg(windows)'.dependencies]
 # M6: GetDriveTypeW (is this drive letter a network share?).

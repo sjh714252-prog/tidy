@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Who decided a move (`move_log.decided_by`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DecidedBy {
     Rule,
@@ -49,7 +49,7 @@ pub struct NewMove {
 }
 
 /// `move_log.op` (M9).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum MoveOp {
     #[default]
@@ -80,7 +80,7 @@ impl MoveOp {
 }
 
 /// A row of `move_log`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MoveLogEntry {
     pub id: i64,
     pub batch_id: String,

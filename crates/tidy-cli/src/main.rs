@@ -97,6 +97,58 @@ enum Cmd {
     /// show the state, set the password (OS keychain only).
     #[command(subcommand)]
     Vault(VaultCmd),
+    /// (M16) Run as the NAS agent: watch, organize and index the folders on
+    /// this machine and answer the PC app over HTTP (Docker: see docs).
+    Serve(ServeArgs),
+    /// (M16) Talk to a NAS agent from this PC ([[nas]] in config.toml).
+    #[command(subcommand)]
+    Nas(NasCmd),
+}
+
+#[derive(Args)]
+struct ServeArgs {
+    /// Address to listen on.
+    #[arg(long, env = "TIDY_LISTEN", default_value = "0.0.0.0:7841")]
+    listen: String,
+    /// The folder the PC may pick watch folders from (Docker: /data).
+    #[arg(long, env = "TIDY_DATA_ROOT", default_value = "/data")]
+    data_root: PathBuf,
+    /// Print the connection password (made on first start) and exit.
+    #[arg(long)]
+    print_token: bool,
+}
+
+#[derive(Subcommand)]
+enum NasCmd {
+    /// Connection, folders, queue and today's moves.
+    Status(NasTarget),
+    /// Search the NAS index.
+    Search {
+        #[command(flatten)]
+        target: NasTarget,
+        query: String,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// Files waiting for confirmation on the NAS.
+    Pending(NasTarget),
+    /// Recent move batches on the NAS.
+    Log {
+        #[command(flatten)]
+        target: NasTarget,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+}
+
+#[derive(Args)]
+struct NasTarget {
+    /// Which [[nas]] (default: the first).
+    #[arg(long)]
+    name: Option<String>,
+    /// Address instead of a configured NAS (password from TIDY_TOKEN).
+    #[arg(long)]
+    url: Option<String>,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -517,7 +569,13 @@ enum Format {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    init_logging(cli.verbose);
+    // The agent logs what it does by default (docker logs).
+    let serving = matches!(cli.cmd, Cmd::Serve(_));
+    init_logging(if serving {
+        cli.verbose.max(1)
+    } else {
+        cli.verbose
+    });
 
     match cli.cmd {
         Cmd::Scan(args) => cmd_scan(args),
@@ -543,6 +601,8 @@ fn main() -> Result<()> {
         Cmd::Curate(cmd) => cmd_curate(cli.config, cmd),
         Cmd::Context(cmd) => cmd_context(cli.config, cmd),
         Cmd::Vault(cmd) => cmd_vault(cli.config, cmd),
+        Cmd::Serve(args) => cmd_serve(cli.config, args),
+        Cmd::Nas(cmd) => cmd_nas(cli.config, cmd),
     }
 }
 
@@ -557,6 +617,7 @@ fn init_logging(verbosity: u8) {
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
         .with_writer(std::io::stderr)
         .init();
 }
@@ -2749,4 +2810,147 @@ fn cmd_curate(config: Option<PathBuf>, cmd: CurateCmd) -> Result<()> {
             Ok(())
         }
     }
+}
+
+// ── M16 NAS agent ───────────────────────────────────────────────────────
+
+fn cmd_serve(config: Option<PathBuf>, args: ServeArgs) -> Result<()> {
+    use tidy_core::remote::server;
+    let config_path = config
+        .or_else(|| std::env::var_os("TIDY_CONFIG").map(PathBuf::from))
+        .or_else(Config::default_path)
+        .context("no config path (use --config or TIDY_CONFIG)")?;
+    let token = server::load_or_create_token(&config_path, std::env::var("TIDY_TOKEN").ok())?;
+    if args.print_token {
+        // Only on request, only to stdout: never into the log.
+        println!("{token}");
+        return Ok(());
+    }
+    eprintln!("# config: {}", config_path.display());
+    eprintln!("# data root: {}", args.data_root.display());
+    if std::env::var("TIDY_TOKEN")
+        .map(|t| t.trim().is_empty())
+        .unwrap_or(true)
+    {
+        eprintln!(
+            "# password: {} (`tidy serve --print-token` shows it)",
+            server::token_path(&config_path).display()
+        );
+    }
+    let agent = server::start(server::AgentOptions {
+        config_path,
+        data_root: args.data_root,
+        listen: args.listen,
+        token,
+        watch_options: None,
+        reindex_every: Duration::from_secs(3600),
+    })?;
+    eprintln!("# listening on {} — Ctrl+C to stop", agent.addr());
+    agent.wait();
+    Ok(())
+}
+
+fn nas_client(config: Option<PathBuf>, t: &NasTarget) -> Result<tidy_core::remote::NasClient> {
+    use tidy_core::remote::NasClient;
+    if let Some(url) = &t.url {
+        let token = std::env::var("TIDY_TOKEN").context("set TIDY_TOKEN to the NAS password")?;
+        return Ok(NasClient::new(url, &token)?);
+    }
+    let cfg = load_config(config)?;
+    let nas = match &t.name {
+        Some(n) => cfg.nas.iter().find(|x| &x.name == n),
+        None => cfg.nas.first(),
+    }
+    .context("no [[nas]] configured (or use --url)")?;
+    let token = ai::keys::get_key(&nas.token_ref())?
+        .with_context(|| format!("no password in the keychain under {}", nas.token_ref()))?;
+    Ok(NasClient::new(&nas.url, &token)?)
+}
+
+fn cmd_nas(config: Option<PathBuf>, cmd: NasCmd) -> Result<()> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    match cmd {
+        NasCmd::Status(t) => {
+            let c = nas_client(config, &t)?;
+            let s = rt.block_on(c.status())?;
+            println!(
+                "{}  Tidy {}  data root {}",
+                c.base(),
+                s.version,
+                s.data_root
+            );
+            println!(
+                "watching: {}{}",
+                if s.watching { "yes" } else { "no" },
+                s.error.map(|e| format!(" ({e})")).unwrap_or_default()
+            );
+            for w in &s.watches {
+                println!(
+                    "  {} {} [{}{}]",
+                    if w.online { "●" } else { "○" },
+                    w.path,
+                    w.mode,
+                    if w.polling { ", polling" } else { "" }
+                );
+            }
+            println!(
+                "pending {}  indexed {}  ocr waiting {}  moved today {}",
+                s.pending, s.files, s.ocr_waiting, s.today_moved
+            );
+        }
+        NasCmd::Search {
+            target,
+            query,
+            limit,
+        } => {
+            let c = nas_client(config, &target)?;
+            let r = rt.block_on(c.search(&query, limit))?;
+            if r.hits.is_empty() {
+                println!("no results");
+            }
+            for h in r.hits {
+                println!("{}  [{}]", h.path, h.matched_in);
+                if !h.snippet.is_empty() {
+                    println!("    {}", h.snippet.replace(['\u{E000}', '\u{E001}'], "*"));
+                }
+            }
+        }
+        NasCmd::Pending(t) => {
+            let c = nas_client(config, &t)?;
+            let items = rt.block_on(c.pending())?;
+            if items.is_empty() {
+                println!("no pending files");
+            }
+            for p in items {
+                println!(
+                    "#{:<4} {} -> {}  [{}]",
+                    p.id,
+                    p.path,
+                    p.suggested_dest.unwrap_or_default(),
+                    p.rule.or(p.reason).unwrap_or_default()
+                );
+            }
+        }
+        NasCmd::Log { target, limit } => {
+            let c = nas_client(config, &target)?;
+            for b in rt.block_on(c.batches(limit))? {
+                println!(
+                    "{}  {}  {} files{}  {}  e.g. {}",
+                    short(&b.batch_id),
+                    fmt_time(b.last_at),
+                    b.moves,
+                    if b.undone > 0 {
+                        format!(" ({} undone)", b.undone)
+                    } else {
+                        String::new()
+                    },
+                    b.label.unwrap_or(b.decided_by),
+                    b.example.display()
+                );
+            }
+        }
+    }
+    Ok(())
 }

@@ -68,7 +68,7 @@ fn yes() -> bool {
 /// every other key and all comments as they are (`toml_edit`).
 /// Only the settings file is written; user files are never touched here.
 pub fn write_settings(path: &Path, patch: &SettingsPatch) -> Result<(), ConfigError> {
-    use toml_edit::{value, Array, ArrayOfTables, DocumentMut, Item, Table};
+    use toml_edit::{value, DocumentMut, Item, Table};
 
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
@@ -114,8 +114,41 @@ pub fn write_settings(path: &Path, patch: &SettingsPatch) -> Result<(), ConfigEr
         );
     }
 
+    doc.insert("watch", watches_item(&patch.watches));
+
+    match &patch.store_path {
+        Some(p) => {
+            let store = doc
+                .entry("store")
+                .or_insert(Item::Table(Table::new()))
+                .as_table_like_mut()
+                .expect("[store] is a table");
+            store.insert("path", value(p.to_string_lossy().into_owned()));
+        }
+        None => {
+            if let Some(store) = doc.get_mut("store").and_then(Item::as_table_like_mut) {
+                store.remove("path");
+            }
+        }
+    }
+
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    std::fs::write(path, doc.to_string()).map_err(|source| ConfigError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn watches_item(list: &[WatchRoot]) -> toml_edit::Item {
+    use toml_edit::{value, Array, ArrayOfTables, Item, Table};
+
     let mut watches = ArrayOfTables::new();
-    for w in &patch.watches {
+    for w in list {
         let mut t = Table::new();
         t.insert("path", value(w.path.to_string_lossy().into_owned()));
         if let Some(a) = w.alias.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
@@ -158,34 +191,7 @@ pub fn write_settings(path: &Path, patch: &SettingsPatch) -> Result<(), ConfigEr
         }
         watches.push(t);
     }
-    doc.insert("watch", Item::ArrayOfTables(watches));
-
-    match &patch.store_path {
-        Some(p) => {
-            let store = doc
-                .entry("store")
-                .or_insert(Item::Table(Table::new()))
-                .as_table_like_mut()
-                .expect("[store] is a table");
-            store.insert("path", value(p.to_string_lossy().into_owned()));
-        }
-        None => {
-            if let Some(store) = doc.get_mut("store").and_then(Item::as_table_like_mut) {
-                store.remove("path");
-            }
-        }
-    }
-
-    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
-            path: parent.to_path_buf(),
-            source,
-        })?;
-    }
-    std::fs::write(path, doc.to_string()).map_err(|source| ConfigError::Write {
-        path: path.to_path_buf(),
-        source,
-    })
+    Item::ArrayOfTables(watches)
 }
 
 /// The `[ai]` fields the desktop settings screen edits: global switches
@@ -335,6 +341,126 @@ pub struct Config {
     pub ocr: OcrCfg,
     /// (M16) Picture descriptions by a vision model.
     pub vision: VisionCfg,
+    /// (M16) NAS agents this PC connects to (`[[nas]]`, SPEC §14.13).
+    #[serde(rename = "nas")]
+    pub nas: Vec<NasCfg>,
+}
+
+/// `[[nas]]` (SPEC §14.13, M16): a Tidy agent running on a NAS.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct NasCfg {
+    /// Shown in the app ("NAS", "사무실 NAS"); also names the keychain entry.
+    pub name: String,
+    /// `http://192.168.0.10:7841` (or `https://…` behind a reverse proxy).
+    pub url: String,
+    /// Keychain entry of the connection password; `None` = `tidy/nas/<name>`.
+    pub token_ref: Option<String>,
+    /// NAS path → path this PC sees (`/data/업무` → `\\NAS\업무`).
+    pub map: Vec<PathMapping>,
+}
+
+impl NasCfg {
+    pub fn token_ref(&self) -> String {
+        self.token_ref
+            .clone()
+            .filter(|r| !r.trim().is_empty())
+            .unwrap_or_else(|| format!("tidy/nas/{}", self.name.trim()))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct PathMapping {
+    pub remote: String,
+    pub local: String,
+}
+
+/// Replace `[[nas]]` in the config file, keeping everything else.
+pub fn write_nas(path: &Path, nas: &[NasCfg]) -> Result<(), ConfigError> {
+    use toml_edit::{value, ArrayOfTables, Item, Table};
+    let mut doc = read_doc(path)?;
+    if nas.is_empty() {
+        doc.remove("nas");
+    } else {
+        let mut list = ArrayOfTables::new();
+        for n in nas {
+            let mut t = Table::new();
+            t.insert("name", value(n.name.trim()));
+            t.insert("url", value(n.url.trim()));
+            if let Some(r) = n.token_ref.as_deref().filter(|r| !r.trim().is_empty()) {
+                t.insert("token_ref", value(r));
+            }
+            let mut maps = ArrayOfTables::new();
+            for m in n.map.iter().filter(|m| !m.remote.trim().is_empty()) {
+                let mut mt = Table::new();
+                mt.insert("remote", value(m.remote.trim()));
+                mt.insert("local", value(m.local.trim()));
+                maps.push(mt);
+            }
+            if !maps.is_empty() {
+                t.insert("map", Item::ArrayOfTables(maps));
+            }
+            list.push(t);
+        }
+        doc.insert("nas", Item::ArrayOfTables(list));
+    }
+    write_doc(path, &doc)
+}
+
+/// Replace only `[[watch]]` and `[[index_only]]` (M16: the NAS agent's
+/// folders, set from a PC).
+pub fn write_folders(
+    path: &Path,
+    watches: &[WatchRoot],
+    index_only: &[IndexRoot],
+) -> Result<(), ConfigError> {
+    use toml_edit::{value, ArrayOfTables, Item, Table};
+    let mut doc = read_doc(path)?;
+    doc.insert("watch", watches_item(watches));
+    if index_only.is_empty() {
+        doc.remove("index_only");
+    } else {
+        let mut list = ArrayOfTables::new();
+        for r in index_only {
+            let mut t = Table::new();
+            t.insert("path", value(r.path.to_string_lossy().into_owned()));
+            t.insert("recursive", value(r.recursive));
+            list.push(t);
+        }
+        doc.insert("index_only", Item::ArrayOfTables(list));
+    }
+    write_doc(path, &doc)
+}
+
+fn read_doc(path: &Path) -> Result<toml_edit::DocumentMut, ConfigError> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(source) => {
+            return Err(ConfigError::Read {
+                path: path.to_path_buf(),
+                source,
+            })
+        }
+    };
+    text.parse().map_err(|e| ConfigError::Edit {
+        path: path.to_path_buf(),
+        source: Box::new(e),
+    })
+}
+
+fn write_doc(path: &Path, doc: &toml_edit::DocumentMut) -> Result<(), ConfigError> {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    std::fs::write(path, doc.to_string()).map_err(|source| ConfigError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 /// `[vision]` (SPEC §14.13, M16): describe pictures with the AI's vision

@@ -238,6 +238,9 @@ impl Watcher {
                 }
             };
             let mut events = false;
+            // (M16) Too many folders for OS change events (Linux inotify
+            // watch limit, common on a NAS): poll this folder instead.
+            let mut over_limit = false;
             if online && r.uses_events() {
                 let mode = if r.recursive {
                     RecursiveMode::Recursive
@@ -250,10 +253,19 @@ impl Watcher {
                     Err(e) if network => {
                         tracing::warn!(path = %path.display(), "events unavailable, polling only: {e}")
                     }
+                    Err(e) if matches!(e.kind, notify::ErrorKind::MaxFilesWatch) => {
+                        let _ = w.unwatch(&path);
+                        over_limit = true;
+                        tracing::warn!(path = %path.display(),
+                            "too many folders for change events, polling instead: {e}")
+                    }
                     Err(e) => return Err(e.into()),
                 }
             }
-            let interval = r.poll_interval().map(|i| opts.poll_override.unwrap_or(i));
+            let interval = r
+                .poll_interval()
+                .or(over_limit.then(|| Duration::from_secs(crate::config::DEFAULT_POLL_SECS)))
+                .map(|i| opts.poll_override.unwrap_or(i));
             tracing::info!(path = %path.display(), recursive = r.recursive, events,
                 poll_secs = interval.map(|i| i.as_secs()), "watching");
             states.push(RootState {

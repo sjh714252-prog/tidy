@@ -17,6 +17,7 @@ pub mod netio;
 pub mod paths;
 pub mod pending;
 pub mod pii;
+pub mod remote;
 pub mod report;
 pub mod search;
 pub mod security;

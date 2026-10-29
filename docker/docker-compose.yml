@@ -1,0 +1,18 @@
+# Tidy NAS agent — paste into Synology Container Manager › 프로젝트 › 만들기
+# (or `docker compose up -d`). The PC app's 설정 › NAS › [설치 파일 만들기]
+# writes this file with your own password filled in.
+services:
+  tidy-agent:
+    image: ghcr.io/sjh714252-prog/tidy-agent:latest
+    container_name: tidy-agent
+    restart: unless-stopped
+    ports:
+      - "7841:7841"
+    environment:
+      # Connection password; the PC app keeps the same one in its keychain.
+      TIDY_TOKEN: "change-me"
+      TZ: Asia/Seoul
+    volumes:
+      - /volume1/docker/tidy:/config
+      # Each shared folder Tidy may organize, under /data/<share name>.
+      - /volume1/업무:/data/업무
