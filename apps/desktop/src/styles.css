@@ -547,3 +547,5 @@ button.big { padding: 10px 22px; font-size: 15px; }
 .context-flow > li { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
 .context-flow > li h3 { margin: 0 0 4px; }
 .context-route { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.context-flow label.row { flex-wrap: nowrap; align-items: flex-start; }
+.context-flow label.row > input[type="checkbox"] { margin-top: 3px; flex: none; }
