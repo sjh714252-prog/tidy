@@ -8,6 +8,7 @@ mod commands;
 mod context_cmds;
 #[cfg(debug_assertions)]
 mod devbridge;
+mod legacy;
 mod nas;
 mod ocr;
 mod onboarding;
@@ -88,6 +89,10 @@ pub fn run() {
                     handle.state::<AppState>().set_error(e);
                 }
             }
+            if !first_run {
+                // Old example rules → organize location (before watching).
+                legacy::run(&handle);
+            }
             watch::restart(&handle);
             watch::spawn_index(&handle); // starts embedding when done
             watch::spawn_content_window_timer(&handle);
@@ -154,6 +159,7 @@ pub fn run() {
             commands::resolve_pending_batch,
             commands::undo_last,
             commands::pick_folder,
+            commands::pick_plan_file,
             commands::is_network_path,
             commands::get_settings,
             commands::check_rules,
@@ -186,6 +192,7 @@ pub fn run() {
             report_cmds::organize_target,
             report_cmds::build_report,
             report_cmds::plan_rules,
+            report_cmds::import_plan,
             report_cmds::plan_ai,
             report_cmds::run_command,
             report_cmds::preview_plan,

@@ -51,6 +51,8 @@ interface ReportState {
   learn: (picked: ContextSuggestion[]) => Promise<void>;
   dropSuggestions: () => void;
   openPlan: (id: number) => Promise<void>;
+  /** (0.11.2) "제안 파일 열기…": pick a plan file → saved plan + preview. */
+  importPlan: () => Promise<void>;
   toggle: (id: number) => void;
   setAll: (on: boolean) => void;
   apply: () => Promise<void>;
@@ -192,6 +194,19 @@ export const useReport = create<ReportState>((set, get) => ({
       set({ plan: r.plan, preview: r.preview, selected: defaultSelected(r.plan), applied: null, suggestions: [] });
     } catch (e) {
       set({ error: String(e) });
+    }
+  },
+  importPlan: async () => {
+    const file = await ipc.pickPlanFile();
+    if (!file) return;
+    set({ planning: "rules", error: null, applied: null, suggestions: [] });
+    try {
+      const r = await ipc.importPlan(file);
+      set({ path: r.plan.root, plan: r.plan, preview: r.preview, selected: defaultSelected(r.plan), leftover: null });
+    } catch (e) {
+      set({ error: String(e) });
+    } finally {
+      set({ planning: null });
     }
   },
   toggle: (id) => {

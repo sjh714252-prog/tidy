@@ -10,6 +10,8 @@
 pub mod backlog;
 pub mod dup;
 pub mod html;
+pub mod import;
+pub mod relocate;
 pub mod restructure;
 pub mod scan;
 pub mod stats;

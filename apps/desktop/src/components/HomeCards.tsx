@@ -306,7 +306,14 @@ export function WatchPanel() {
   );
 }
 
-const PLAN_SOURCE: Record<string, string> = { ai: "AI", rules: "규칙", context: "업무 맥락", command: "명령" };
+const PLAN_SOURCE: Record<string, string> = {
+  ai: "AI",
+  rules: "규칙",
+  context: "업무 맥락",
+  command: "명령",
+  relocate: "정리 위치로 옮기기",
+  imported: "제안 파일",
+};
 
 /**
  * (0.11.1) Previews made but never applied (last 14 days): nothing moved
@@ -314,6 +321,12 @@ const PLAN_SOURCE: Record<string, string> = { ai: "AI", rules: "규칙", context
  */
 function UnappliedPlans() {
   const [plans, setPlans] = useState<StoredPlan[]>([]);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    // Plans can be saved in the background (0.11.2 relocation): re-read on activity.
+    const sub = onActivity((a) => a.kind === "info" && setTick((t) => t + 1));
+    return () => void sub.then((f) => f());
+  }, []);
   useEffect(() => {
     const since = Date.now() / 1000 - 14 * 86400;
     void ipc
@@ -329,7 +342,7 @@ function UnappliedPlans() {
         );
       })
       .catch(() => setPlans([]));
-  }, []);
+  }, [tick]);
   if (!plans.length) return null;
   const reopen = async (p: StoredPlan) => {
     useNav.getState().setTab("report");

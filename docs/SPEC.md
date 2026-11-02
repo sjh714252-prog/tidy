@@ -1254,3 +1254,10 @@ send_content = false
 **CLI**: `tidy serve [--listen ADDR] [--data-root DIR] [--print-token]`, PC 쪽 `tidy nas status|search <q>|pending|log [--url URL]`(키체인 암호 또는 `TIDY_TOKEN`).
 
 **테스트**: e2e `m18.mjs`(실제 `tidy serve`를 NAS로 두고 설치 파일 → 연결 → 폴더·규칙 저장 → 지금 정리 → 새 파일 자동 정리 → NAS 확인 대기 → 검색 → 홈 카드 → 되돌리기 → NAS 꺼짐). `tests/m18_agent.rs` — 임시 폴더를 data root로 에이전트를 띄우고 클라이언트로 설정 저장 → 파일 생성 → 규칙 이동 → 검색 → 확인 대기 결정 → 되돌리기, 틀린 암호 401, data root 밖 경로 거부. CI에서 Docker 이미지를 빌드하고 컨테이너로 `status`를 확인한다. 실제 시놀로지 설치·성능은 로컬에서.
+
+### 14.16 예전 예시 규칙 이전 + 제안 파일 (0.11.2, 사용 피드백 2026-11-02)
+"정리 위치를 D:\정리로 했는데 문서\tidy로 간다": M1 예시 규칙의 절대 목적지가 남은 설정이었다.
+- 시작할 때(마법사 끝난 설정만) `report::relocate::migrate_rules_text`가 **예전 예시 목적지만** 상대 경로로 바꾼다: `~/Documents/Tidy/<X>/…` → `<X>/…`, `~/Pictures/Screenshots/…` → `캡처/…`, `~/Downloads/Installers` → `설치파일`, `~/Downloads/압축 파일` → `압축 파일`. 변수 부분은 그대로. 사용자가 직접 넣은 절대 경로는 건드리지 않는다. 원본은 `rules.toml.bak-0.11.2`, 활동 피드에 알림.
+- `plan_relocations`: 예전 폴더마다(지금 규칙이 아직 그곳을 쓰거나 적용 안 한 같은 제안이 있으면 건너뜀) Tidy가 둔 파일(`~/Documents/Tidy` 아래는 전부, 그 밖은 `move_log`에 기록된 것만)을 원래 감시 폴더의 기준 위치(없으면 첫 정리 위치) + 새 상대 경로로 옮기는 계획(`PlanSource::Relocate`)을 저장. 홈 "적용하지 않은 미리보기"로 보이고 승인 후 한 배치·undo.
+- **제안 파일**(`report::import`, `PlanSource::Imported`): `{tidy_plan: 1, root, summary, moves: [{from, into, reason}]}`. 파일은 `into` 안으로, 폴더는 통째로(`Mover::move_dir`, 같은 폴더로 여러 개 모으기 허용·같은 이름은 번호). `from`·`into`는 절대 경로이고 `root` 안이어야 하며 `..` 금지, 겹치는 항목·없는 원본·자기 안으로는 거부 목록, 최대 20,000 파일. 적용 뒤 옮긴 항목의 부모 중 빈 폴더는 `root` 직전까지 `Mover::prune_empty_parents`로 정리. 정리하기 › "제안 파일 열기…".
+- e2e `fix-relocate`(시작 전 설정은 `fix-relocate.setup.mjs`, `run-headless.sh`가 `<name>.setup.mjs`를 앱 시작 전에 실행).

@@ -327,6 +327,7 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
             arg(&args, "protect")?,
         )
         .await?),
+        "import_plan" => ok(report_cmds::import_plan(app, arg(&args, "path")?).await?),
         "plan_ai" => {
             ok(report_cmds::plan_ai(app, arg(&args, "path")?, arg(&args, "protect")?).await?)
         }
