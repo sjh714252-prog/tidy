@@ -1,0 +1,6 @@
+target
+apps
+docs
+.git
+**/node_modules
+*.db

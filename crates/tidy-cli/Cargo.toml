@@ -13,7 +13,7 @@ path = "src/main.rs"
 [dependencies]
 tidy-core = { path = "../tidy-core" }
 anyhow.workspace = true
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 serde_json.workspace = true
 humansize.workspace = true
 tracing.workspace = true
@@ -23,3 +23,4 @@ chrono.workspace = true
 rpassword = "7"
 dunce.workspace = true
 walkdir.workspace = true
+tokio.workspace = true

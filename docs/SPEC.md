@@ -788,6 +788,7 @@ send_content = false
 | M15 | 사진·스캔 PDF 속 글자 검색(OCR)(§14.12) | 0.8.0 |
 | M16 | 사진 내용 인식(AI 비전) — 설명으로 검색·분류(§14.13) | 0.9.0 |
 | M17 | 자연어 명령(§14.14) | 0.10.0 |
+| M18 | NAS에서 직접 정리 — NAS 에이전트(Docker)·PC 연결(§14.15) | 0.11.0 |
 
 각 마일스톤은 CLI로 먼저 검증한 뒤 UI를 붙인다.
 
@@ -1211,3 +1212,45 @@ send_content = false
 **CLI**: `tidy ask "<명령>" [--rules] [--format json]` → 해석·찾은 파일·계획 번호, 그리고 `tidy ask --apply <plan> [--only 1,3]`. `--rules`는 AI를 쓰지 않는다.
 
 **화면**: 홈 맨 위 한 줄 입력 "말로 시키기"(placeholder "예: 지난달 받은 PDF를 프로젝트 폴더로 옮겨줘") + [미리보기]. 결과 카드: 해석 조각(칩), "AI 없이 해석함" 배지, 경고, 파일 목록(체크·이름·지금 위치 PathText·크기·수정일, 기본 모두 선택), [N개 옮기기] [취소]. 찾기 명령이면 체크 없이 목록 + [옮길 곳 정하기…]는 없다(필요하면 "…로 옮겨줘"를 덧붙여 다시). 적용 결과 "N개 옮김" + [되돌리기](`undo_batch`). IPC `run_command(text, rulesOnly) -> CommandResult`, 적용은 `apply_plan`.
+
+### 14.15 M18 — NAS에서 직접 정리 (NAS 에이전트) (0.11.0, §2.2 2차 항목)
+
+**배경**: NAS 폴더는 PC 앱이 공유 폴더로 감시·정리해 왔다(M6). 그러면 PC가 꺼져 있으면 정리가 멈추고, 이동이 네트워크 복사-검증이라 느리며, 본문 인덱싱은 NAS를 오래 읽는다(기본 끔). §2.2 "NAS 측 헤드리스 에이전트(Docker) — NAS가 직접 감시·인덱싱, PC 앱은 결과 동기화"를 만든다.
+
+**구성**
+- **에이전트** = 같은 코어를 NAS에서 돌리는 `tidy serve`(화면 없음). Docker 이미지(`ghcr.io/sjh714252-prog/tidy-agent`, 릴리스에 `docker load`용 tar.gz도 첨부, amd64·arm64)로 시놀로지 Container Manager·QNAP Container Station 등에 올린다. 이미지에는 tesseract(+kor)·poppler가 들어 있어 NAS에서 OCR도 된다(M15).
+- NAS 안에서는 로컬 디스크라 이동은 `rename`(복사 없음), 이벤트 감시(inotify)가 기본이고 본문 인덱싱도 켠다. 감시 한도(inotify watches)를 넘으면 기존 폴링으로 떨어진다(M6 그대로).
+- **PC 앱**은 에이전트에 HTTP로 붙어 상태·검색·확인 대기·되돌리기·NAS 설정을 보여 준다. 결과(DB·인덱스)는 NAS에 있고 PC로 복사하지 않는다(질의할 때 묻는다). PC의 NAS 공유 폴더 감시(M6)는 그대로 둔다 — 에이전트를 쓰면 같은 폴더를 PC에서 감시하지 않도록 화면에서 안내한다.
+
+**에이전트 (`tidy serve`, `remote::server`)**
+- 환경 변수: `TIDY_CONFIG`(기본 `/config/config.toml`), `TIDY_DATA_ROOT`(기본 `/data`, PC가 고를 수 있는 폴더의 맨 위; 감시 폴더·정리 위치는 이 안이어야 함), `TIDY_LISTEN`(기본 `0.0.0.0:7841`), `TIDY_TOKEN`(연결 암호).
+- 설정 파일이 없으면 만든다: 감시 폴더 없음(아무것도 안 옮김), DB·`rules.toml`은 설정 파일 옆(상대 경로). PC가 감시 폴더·규칙을 보내면 쓰고 감시를 다시 시작한다.
+- 연결 암호: `TIDY_TOKEN`이 있으면 그것, 없으면 처음 시작 때 32바이트 난수를 설정 폴더 `agent-token`(권한 600)에 만든다(`tidy serve --print-token`이 화면에만 출력, 로그에는 절대 안 씀). 모든 API는 `Authorization: Bearer <암호>`(상수 시간 비교), 틀리면 401 + 1초 지연. PC 쪽 암호는 OS 키체인 `tidy/nas/<이름>`에만 둔다(절대 규칙 5). HTTPS는 NAS의 역방향 프록시에 맡기고(주소에 `https://` 그대로 사용), 기본은 같은 망(LAN) 전제.
+- 감시 루프는 `service::run_watch` 그대로(규칙 → 자동 이동 / 확인 대기, 인덱싱), 같은 프로세스에 OCR 루프. 처음부터 있던 파일은 건드리지 않고, PC의 "지금 정리"(`POST organize`)로만 한 배치로 처리한다. AI는 NAS에서 쓰지 않는다(컨테이너에 키체인이 없음 — 규칙+검색 모드, 절대 규칙 4). 규칙에 안 걸린 파일은 NAS의 확인 대기에 쌓인다.
+- 이동·되돌리기는 에이전트 안의 `Mover`만 한다(절대 규칙 1·3). 감시 루프와 API가 같은 `ExpectedMoves`를 나눠 써 서로의 이동을 새 파일로 보지 않는다.
+
+**API (`/api/v1`, JSON, 요청 본문 1MB 상한)** — 경로는 모두 NAS 쪽 경로 문자열.
+| 메서드·경로 | 내용 |
+|---|---|
+| `GET status` | 버전, data root, 감시 폴더(별칭·온라인·방식), 확인 대기 수, 인덱스 파일 수, OCR 대기, 오늘 정리 수, 감시 오류 |
+| `GET search?q=&limit=` | 단어 검색(FTS, M2 문법 그대로) 결과 |
+| `GET pending` · `POST pending/resolve {ids, decision}` | 확인 대기 목록·결정(한 배치) |
+| `GET batches?limit=` · `GET batch?id=` · `POST undo {batch}` | 이동 기록·배치 되돌리기 |
+| `GET today?since=` | 오늘 한 일(M13 `today::summarize`) |
+| `GET dirs?path=` | data root 아래 하위 폴더(폴더 고르기) |
+| `GET settings` · `PUT settings {watches, indexOnly, rules}` | 감시 폴더·검색만 할 폴더·규칙(TOML) 읽기/쓰기(폴더는 data root 안·존재 확인, 규칙은 파싱 검사 후 저장) → 감시 재시작·다시 인덱싱 |
+| `GET organize?path=` · `POST organize {path}` | 기존 파일 중 규칙에 걸리는 수(미리보기, 이동 없음) · 그 파일들을 한 배치로 정리 |
+
+**PC 쪽 설정 `[[nas]]`**: `name`, `url`, `token_ref`(기본 `tidy/nas/<name>`), `[[nas.map]] remote = "/data/업무" local = '\\NAS\업무'`(파일 열기·폴더 열기용 경로 바꾸기, 가장 긴 접두어). 연결할 때 에이전트의 감시 폴더마다 `\\<주소의 호스트>\<data root 다음 폴더 이름>`을 기본값으로 채운다(시놀로지 공유 폴더를 `/data/<공유이름>`에 연결하는 안내와 맞춤).
+
+**화면**
+- 설정 › **NAS** 쪽(새 메뉴): 연결이 없으면 3단계 안내 — ① [설치 파일 만들기]: 암호를 새로 만들어 키체인에 넣고 그 암호가 든 `docker-compose.yml`을 보여 주고 저장(다운로드 폴더) ② 시놀로지 Container Manager › 프로젝트 › 만들기에 붙여넣기(설명서 그림) ③ NAS 주소 입력 → [연결 확인]. 연결 후: 상태 한 줄, NAS 감시 폴더(NAS 폴더 트리로 고르기·하위 폴더 포함·정리 위치; 고른 폴더의 공유 폴더 전체를 "검색만 할 폴더"에 자동으로 넣음), 검색만 할 폴더, NAS 규칙(규칙 카드 그대로 + [PC 규칙 가져오기]), PC에서 보이는 경로, [규칙대로 지금 정리](개수 확인 후), [연결 끊기].
+- 홈: 연결된 NAS가 있으면 NAS 카드 — NAS마다 한 줄 "이름 · 연결됨/연결 안 됨 · 감시 폴더 N개 · 오늘 N개 정리 · 확인 대기 N"(누르면 해당 탭), 1분마다 새로 고침.
+- 검색 창: 내 PC 결과 뒤에 NAS 결과를 이어 붙인다(입력이 멈추면 따로 요청, 답이 없으면 아래줄에 "NAS 응답 없음"만 표시 — 내 PC 검색을 기다리게 하지 않음. 고객사 필터를 고르면 NAS는 묻지 않음). NAS 결과는 "NAS" 표시, 열기·폴더 열기는 PC 경로로 바꿔서, 바꿀 수 없으면 경로만 보여 준다.
+- 확인 대기: 맨 아래 "NAS 확인 대기" 묶음 — 제안 위치로 옮기기 / 건너뛰기 / 무시(선택 여러 개 한 배치).
+- 되돌리기: "NAS에서 한 일" 묶음 — 배치별 되돌리기.
+- NAS가 꺼져 있거나 주소가 틀려도 PC 기능은 모두 그대로 동작한다(요청 8초 제한, "지금 정리"만 10분, 실패는 표시만).
+
+**CLI**: `tidy serve [--listen ADDR] [--data-root DIR] [--print-token]`, PC 쪽 `tidy nas status|search <q>|pending|log [--url URL]`(키체인 암호 또는 `TIDY_TOKEN`).
+
+**테스트**: e2e `m18.mjs`(실제 `tidy serve`를 NAS로 두고 설치 파일 → 연결 → 폴더·규칙 저장 → 지금 정리 → 새 파일 자동 정리 → NAS 확인 대기 → 검색 → 홈 카드 → 되돌리기 → NAS 꺼짐). `tests/m18_agent.rs` — 임시 폴더를 data root로 에이전트를 띄우고 클라이언트로 설정 저장 → 파일 생성 → 규칙 이동 → 검색 → 확인 대기 결정 → 되돌리기, 틀린 암호 401, data root 밖 경로 거부. CI에서 Docker 이미지를 빌드하고 컨테이너로 `status`를 확인한다. 실제 시놀로지 설치·성능은 로컬에서.

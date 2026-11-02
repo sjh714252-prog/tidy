@@ -88,3 +88,17 @@ grep -a -c -e "dev bridge" -e "tidy-devbridge" -e "127.0.0.1:1421" src-tauri/tar
 (Windows `%APPDATA%\tidy\`·`%LOCALAPPDATA%\tidy\`, macOS `~/Library/Application Support/tidy/`, Linux `~/.config/tidy/`·`~/.local/share/tidy/`).
 API 키는 OS 키체인(Windows 자격 증명 관리자 / macOS 키체인 / Linux Secret Service)에 `tidy/…` 이름으로 남으므로
 필요하면 설정 → AI에서 “키 삭제” 후 제거한다.
+
+## NAS 에이전트 이미지 (M18, SPEC §14.15)
+
+`docker/agent.Dockerfile` — `tidy serve`(화면 없음) + tesseract(+kor)·poppler. 로컬:
+
+```
+docker build -f docker/agent.Dockerfile -t tidy-agent .
+docker run -d -p 7841:7841 -e TIDY_TOKEN=암호 -v $PWD/cfg:/config -v /공유폴더:/data/공유폴더 tidy-agent
+```
+
+릴리스 워크플로의 `agent` 작업이 amd64(ubuntu-latest)·arm64(ubuntu-24.04-arm)를 각각 빌드·기동 확인한 뒤
+`ghcr.io/<owner>/tidy-agent:<버전>-<arch>`로 올리고, `agent-manifest`가 `:<버전>`(공개 릴리스면 `:latest`도)로 묶는다.
+릴리스에는 `docker load`/Container Manager "파일에서 추가"용 `tidy-agent_<버전>_<arch>.tar.gz`(이름 `:latest`)도 붙는다.
+ghcr 패키지가 처음 만들어지면 비공개일 수 있다 — 저장소 소유자가 패키지 설정에서 Public으로 한 번 바꿔야 NAS가 로그인 없이 받는다.

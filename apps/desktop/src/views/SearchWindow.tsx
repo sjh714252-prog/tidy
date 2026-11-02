@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { hideCurrentWindow } from "../ipc/transport";
 import * as ipc from "../ipc/commands";
 import { onFocusSearch } from "../ipc/events";
-import { useSearch } from "../store/search";
+import { allHits, isNasHit, useSearch } from "../store/search";
 import { Highlight } from "../components/Highlight";
 import { formatSize, formatTime } from "../components/format";
 
@@ -17,7 +17,10 @@ const pct = (x: number) => `${Math.round(x * 100)}%`;
 export function SearchWindow() {
   const {
     query,
-    hits,
+    hits: pcHits,
+    nasHits,
+    nasLoading,
+    nasErrors,
     selected,
     loading,
     semanticLoading,
@@ -60,13 +63,20 @@ export function SearchWindow() {
     list.current?.querySelector<HTMLElement>(`[data-i="${selected}"]`)?.scrollIntoView({ block: "nearest" });
   }, [selected]);
 
+  const hits = allHits({ hits: pcHits, nasHits });
   const current = hits[selected];
+  /** NAS results open through the PC's own path to the share (설정 › NAS). */
+  const target = current ? (isNasHit(current) ? current.localPath : current.path) : null;
   const hide = () => void hideCurrentWindow();
   const open = async (folder: boolean) => {
     if (!current) return;
+    if (!target) {
+      alert("이 PC에서 NAS 폴더로 가는 경로를 모릅니다. 설정 › NAS에서 'PC에서 보는 경로'를 정해 주세요.");
+      return;
+    }
     try {
-      if (folder) await ipc.revealPath(current.path);
-      else await ipc.openPath(current.path);
+      if (folder) await ipc.revealPath(target);
+      else await ipc.openPath(target);
       hide();
     } catch (e) {
       alert(String(e));
@@ -131,14 +141,20 @@ export function SearchWindow() {
         <ul className="results" ref={list}>
           {hits.map((h, i) => (
             <li
-              key={h.path}
+              key={isNasHit(h) ? `nas:${h.nas}:${h.path}` : h.path}
               data-i={i}
+              data-nas={isNasHit(h) ? h.nas : undefined}
               className={i === selected ? "sel" : ""}
               onMouseEnter={() => select(i)}
               onDoubleClick={() => void open(false)}
             >
               <div className="r-name">
                 <Highlight text={h.nameHighlight} />
+                {isNasHit(h) && (
+                  <span className="tag nas" data-testid="nas-badge" title="NAS가 직접 찾은 파일">
+                    NAS · {h.nas}
+                  </span>
+                )}
                 {h.matchedIn === "semantic" && (
                   <span className="tag sem" title="단어는 없지만 뜻이 가까운 파일">
                     의미 {h.similarity != null ? pct(h.similarity) : ""}
@@ -166,10 +182,10 @@ export function SearchWindow() {
                 )}
                 {!h.exists && <span className="tag warn">없음</span>}
               </div>
-              <div className="r-dir">{h.dir}</div>
+              <div className="r-dir">{isNasHit(h) && h.localPath ? h.localPath.slice(0, h.localPath.length - h.name.length - 1) || h.dir : h.dir}</div>
             </li>
           ))}
-          {!hits.length && query.trim() && !loading && (
+          {!hits.length && query.trim() && !loading && !nasLoading && (
             <li className="empty">{error ? `오류: ${error}` : "결과 없음"}</li>
           )}
         </ul>
@@ -179,7 +195,12 @@ export function SearchWindow() {
               <h3>
                 <Highlight text={current.nameHighlight} />
               </h3>
-              <p className="muted">{current.path}</p>
+              <p className="muted">{target ?? current.path}</p>
+              {isNasHit(current) && (
+                <p className="muted small" data-testid="nas-note">
+                  NAS({current.nas})에 있는 파일{current.localPath ? "" : ` · NAS 경로 ${current.path}`}
+                </p>
+              )}
               {current.vault && (
                 <p className="small" data-testid="lock-note">
                   🔒 암호화 보관 파일{current.pii ? ` · 개인정보: ${current.pii}` : ""}. 열기를 누르면 보관 비밀번호로 임시
@@ -210,7 +231,7 @@ export function SearchWindow() {
               <div className="actions">
                 <button onClick={() => void open(false)}>열기 ⏎</button>
                 <button onClick={() => void open(true)}>폴더 열기 Ctrl+⏎</button>
-                <button onClick={() => void navigator.clipboard.writeText(current.path)}>경로 복사</button>
+                <button onClick={() => void navigator.clipboard.writeText(target ?? current.path)}>경로 복사</button>
               </div>
             </>
           ) : (
@@ -219,7 +240,17 @@ export function SearchWindow() {
         </aside>
       </div>
       <footer className="search-foot muted">
-        <span>{loading ? "검색 중…" : hits.length ? `${hits.length}건` : ""}</span>
+        <span>
+          {loading ? "검색 중…" : hits.length ? `${pcHits.length}건` : ""}
+          {nasHits.length > 0 && ` · NAS ${nasHits.length}건`}
+          {nasLoading && " · NAS 찾는 중…"}
+          {nasErrors.length > 0 && (
+            <span className="warn" title={nasErrors.join("\n")}>
+              {" "}
+              · NAS 응답 없음
+            </span>
+          )}
+        </span>
         <span className="search-mode" data-mode={mode ?? ""}>
           {semanticLoading
             ? "의미 분석 중…"

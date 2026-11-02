@@ -4,6 +4,7 @@ import type { ActivityKind } from "../ipc/types";
 import { useActivity } from "../store/activity";
 import { formatTime } from "../components/format";
 import { CommandCard } from "../components/CommandCard";
+import { NasCard } from "../components/NasCard";
 import { CustomerCard, OrganizeCard, TodayCard, WatchPanel } from "../components/HomeCards";
 
 const LABEL: Record<ActivityKind, string> = {
@@ -51,6 +52,7 @@ export function ActivityView() {
       <WatchPanel />
       <CommandCard />
       <OrganizeCard />
+      <NasCard />
       <div className="home-cols">
         <TodayCard onShowAll={showAll} />
         <CustomerCard />

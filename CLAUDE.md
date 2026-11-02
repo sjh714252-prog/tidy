@@ -57,6 +57,7 @@ cargo run -p tidy-cli -- embed [--status | --rebuild | --limit N]   # 의미검�
 cargo run -p tidy-cli -- ocr [--status | --retry | --limit N | <파일>]   # 사진·스캔 PDF 글자 인식(M15, watch 중 자동). 클라우드: apt install tesseract-ocr tesseract-ocr-kor poppler-utils
 cargo run -p tidy-cli -- vision [--status | --retry | --limit N | <사진>]   # 사진 내용 인식(M16, AI 비전, 기본 꺼짐 [vision] enabled, 하루 한도, watch 중 자동)
 cargo run -p tidy-cli -- ask "지난달 받은 PDF를 프로젝트 폴더로 옮겨줘" [--rules]  → ask --apply <plan> [--only 1,3]   # 자연어 명령(M17, 승인 전 무이동)
+cargo run -p tidy-cli -- serve [--listen 0.0.0.0:7841 --data-root /data --print-token]   # NAS 에이전트(M18, TIDY_TOKEN·TIDY_CONFIG), 이미지: docker build -f docker/agent.Dockerfile -t tidy-agent . / PC 쪽: tidy nas status|search <q>|pending|log
 cargo run -p tidy-cli -- ai status / ai key set tidy/anthropic / ai test <파일> / ai log
 cargo run -p tidy-cli -- learn [--accept N | --dismiss N]   # 학습 규칙 제안
 cargo run -p tidy-cli -- rules check [rules.toml] [--each]   # 규칙별 지금 매치되는 파일 수·예시 (이동 없음)
@@ -96,6 +97,7 @@ node apps/desktop/e2e/fake-llm.mjs 18095   # 느린·긴 가짜 Anthropic/OpenAI
 - [x] M15 사진·스캔 PDF 속 글자 검색(OCR) (2026-10-28, 0.8.0) — Windows 내장 OCR(`Windows.Media.Ocr`, PDF는 `Windows.Data.Pdf`로 렌더링)·그 밖은 tesseract(+pdftoppm), 인덱서는 `files.ocr = pending`만 표시(store v10, 기존 이미지·스캔 PDF도 마이그레이션 때 대기), 백그라운드 `run_ocr_loop`가 본문으로 저장(단어·의미검색·개인정보 판정), 내용 해시 `ocr_cache`, `tidy ocr`, 설정 › 고급 카드·검색 "사진 속 글자" 표시, e2e m15. 실제 Windows OCR·한국어 언어팩 확인은 로컬에서(CI windows에서 tests/m15_ocr.rs가 실제 엔진으로 돎)
 - [x] M16 사진 내용 인식(AI 비전) (2026-10-29, 0.9.0) — 분류 제공자로 사진 첨부(`complete_json_image`: Anthropic image 블록·OpenAI image_url·Ollama images), 1568px JPEG·EXIF 방향, store v11(`files.vision`·`caption`, `vision_cache`), 설명을 본문 끝 `[사진 설명]`으로(FTS·의미검색·분류·맥락 정리가 그대로 봄, OCR 글자는 앞에 유지), 백그라운드 `run_vision_loop`(최근 것부터·하루 한도·지금 못 씀=대기 유지), 새 사진은 분류 전에 설명(로컬 OCR로 개인정보 먼저 확인), send_content=false·개인정보·보관 파일은 안 보냄, `tidy vision`, 설정 › AI 카드·검색 "사진 설명", e2e m16. 실제 Claude/Ollama 비전 응답 품질·비용은 로컬에서
 - [x] M17 자연어 명령 (2026-10-29, 0.10.0) — `command` 모듈: AI 해석(문장·날짜·폴더 이름만 전송, purpose=command) → 실패·없음이면 오프라인 규칙 해석기(기간·종류·출처·크기·옮길 곳·조사 떼기), 지우기·이름 바꾸기 거절, 인덱스 검색(최대 500) → `PlanSource::Command` 계획 저장 → 승인 후 `restructure::apply` 한 배치("명령 #N")·undo, 옮길 곳은 정리 위치·감시 폴더 3단계에서 이름으로(없으면 새 폴더 경고), `tidy ask`, 홈 맨 위 "말로 시키기" 카드, e2e m17. 실제 AI 해석 품질·창 확인은 로컬에서
+- [x] M18 NAS에서 직접 정리 (2026-10-29, 0.11.0) — `tidy serve` 에이전트(`remote::server`, tiny_http, `/api/v1` Bearer 암호·401+1초, data root 밖 거부, 감시=`run_watch` 규칙만·인덱싱·OCR, 지금 정리=한 배치, 확인 대기·되돌리기·검색·폴더 트리·설정 PUT), Docker 이미지(tesseract+kor, amd64·arm64, ghcr + 릴리스 tar.gz), PC `[[nas]]`(암호는 키체인 `tidy/nas/<이름>`, `[[nas.map]]` 경로 바꾸기)·설정 › NAS(설치 파일 만들기→연결→NAS 폴더·규칙 저장)·홈 NAS 카드·검색 NAS 결과·NAS 확인 대기·NAS에서 한 일, inotify 한도 넘으면 폴링, e2e m18. 실제 시놀로지 설치·ghcr 공개 여부·ARM NAS는 로컬에서
 - [x] 0.2.x 핫픽스 (2026-10-22~23) — 규칙 카드 정렬(#12), AI 응답 잘림 분할 재시도(#13), HTTP 타임아웃 상한(#14), 감시 폴더 제외 폴더(SPEC §14.5)
 
 ## 열린 결정

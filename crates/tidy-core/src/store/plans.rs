@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use rusqlite::{params, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::db::{now, path_str, Store, StoreError};
 
@@ -21,7 +21,7 @@ pub struct StoredPlan {
 }
 
 /// One batch of moves, for the history timeline (SPEC §9.6).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchSummary {
     pub batch_id: String,
     pub first_at: i64,
