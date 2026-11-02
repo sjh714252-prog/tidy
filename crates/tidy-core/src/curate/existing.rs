@@ -91,7 +91,10 @@ pub fn reuse_existing(dir: &Path, anchor: &Path, merge_days: u32) -> PathBuf {
     for comp in rel.components() {
         let name = comp.as_os_str().to_string_lossy();
         let direct = cur.join(&*name);
-        if !parent_exists || direct.is_dir() {
+        // Exact on-disk name first: on case-insensitive file systems
+        // (Windows, macOS) `direct.is_dir()` is true for "kt…" when "KT…"
+        // exists, and the folder's own spelling should be kept.
+        if !parent_exists || sub_dirs(&cur).iter().any(|s| *s == *name) {
             parent_exists = parent_exists && direct.is_dir();
             cur = direct;
             continue;
