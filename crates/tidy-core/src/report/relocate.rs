@@ -59,9 +59,16 @@ fn split_static(dest: &str) -> (String, String) {
     )
 }
 
+/// Same folder: component by component (so `\\` and `/` agree), and
+/// case-insensitively on Windows.
 fn same(a: &Path, b: &Path) -> bool {
     if cfg!(windows) {
-        a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+        let parts = |p: &Path| -> Vec<String> {
+            p.components()
+                .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+                .collect()
+        };
+        parts(a) == parts(b)
     } else {
         a == b
     }
