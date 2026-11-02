@@ -237,7 +237,14 @@ pub async fn curate_estimate_all(app: AppHandle) -> CmdResult<EstimateDto> {
         let filter = filter_of(&cfg);
         let (mut inputs, mut folders, mut unsettled) = (Vec::new(), 0, 0);
         for s in &sources {
-            let items = cur.items_in(&s.root, &s.anchor, &filter, &cfg.report.protected, &s.skip, &store);
+            let items = cur.items_in(
+                &s.root,
+                &s.anchor,
+                &filter,
+                &cfg.report.protected,
+                &s.skip,
+                &store,
+            );
             folders += items.folders();
             unsettled += items.unsettled.len();
             inputs.extend(items.inputs);
@@ -550,11 +557,19 @@ pub async fn extract_context(app: AppHandle) -> CmdResult<ContextCandidates> {
         let mut top: Vec<String> = Vec::new();
         let mut folders: Vec<String> = Vec::new();
         let names = cur.output_names(Some(&store));
-        let anchors: Vec<PathBuf> = cfg.watches.iter().map(|w| w.anchor().to_path_buf()).collect();
+        let anchors: Vec<PathBuf> = cfg
+            .watches
+            .iter()
+            .map(|w| w.anchor().to_path_buf())
+            .collect();
         cur.note_existing(&anchors);
         for w in &cfg.watches {
             if let Ok(root) = dunce::canonicalize(&w.path) {
-                folders.push(w.alias.clone().unwrap_or_else(|| root.display().to_string()));
+                folders.push(
+                    w.alias
+                        .clone()
+                        .unwrap_or_else(|| root.display().to_string()),
+                );
                 inputs.extend(files_for(&cfg, &cur, &store, &root, w.recursive));
                 // (M12) Folder names directly in the watch folder first:
                 // the strongest customer hints.
