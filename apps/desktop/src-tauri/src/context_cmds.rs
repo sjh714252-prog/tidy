@@ -554,7 +554,7 @@ pub async fn extract_context(app: AppHandle) -> CmdResult<ContextCandidates> {
         let cur = Curator::from_config(&cfg).map_err(err)?;
         let store = Store::open(&cfg.store.db_path()).map_err(err)?;
         let mut inputs = Vec::new();
-        let mut top: Vec<String> = Vec::new();
+        let mut top: Vec<Vec<String>> = Vec::new();
         let mut folders: Vec<String> = Vec::new();
         let names = cur.output_names(Some(&store));
         let anchors: Vec<PathBuf> = cfg
@@ -570,9 +570,12 @@ pub async fn extract_context(app: AppHandle) -> CmdResult<ContextCandidates> {
                         .clone()
                         .unwrap_or_else(|| root.display().to_string()),
                 );
-                inputs.extend(files_for(&cfg, &cur, &store, &root, w.recursive));
+                // (0.12.1) Kept per watch folder: the AI sample is shared
+                // out evenly, whatever the number of folders.
+                inputs.push(files_for(&cfg, &cur, &store, &root, w.recursive));
                 // (M12) Folder names directly in the watch folder first:
                 // the strongest customer hints.
+                let mut here = Vec::new();
                 if let Ok(rd) = std::fs::read_dir(&root) {
                     let filter = filter_of(&cfg);
                     for e in rd.filter_map(Result::ok) {
@@ -582,19 +585,20 @@ pub async fn extract_context(app: AppHandle) -> CmdResult<ContextCandidates> {
                             && !n.starts_with('.')
                             && !filter.in_excluded_dir(&p)
                             && !names.contains(&n)
-                            && !top.contains(&n)
+                            && !top.iter().flatten().any(|t| *t == n)
+                            && !here.contains(&n)
                         {
-                            top.push(n);
+                            here.push(n);
                         }
                     }
                 }
+                here.sort();
+                top.push(here);
             }
         }
-        if inputs.is_empty() && top.is_empty() {
+        if inputs.iter().all(Vec::is_empty) && top.iter().all(Vec::is_empty) {
             return Err("감시 폴더에 파일이 없습니다".into());
         }
-        top.sort();
-        top.truncate(100);
         let mut out = cur
             .extract_context(&ai, &store, &inputs, &top)
             .map_err(err)?;

@@ -127,6 +127,35 @@ fn curate_timeout(files: usize) -> std::time::Duration {
 }
 /// Files sent to "감시 폴더에서 뽑기".
 const MAX_EXTRACT_FILES: usize = 200;
+/// Folder names (right inside the watch folders) sent along with them.
+const MAX_EXTRACT_FOLDERS: usize = 100;
+
+/// (0.12.1) Up to `cap` items from several groups (one per watch folder),
+/// split as evenly as the groups allow: a small group gives everything and
+/// what it leaves over goes to the bigger ones. Items keep their group order.
+pub fn fair_share<T>(groups: &[Vec<T>], cap: usize) -> Vec<&T> {
+    let mut quota = vec![0usize; groups.len()];
+    let mut left = cap;
+    loop {
+        let open: Vec<usize> = (0..groups.len())
+            .filter(|&g| quota[g] < groups[g].len())
+            .collect();
+        if open.is_empty() || left == 0 {
+            break;
+        }
+        let each = (left / open.len()).max(1);
+        for g in open {
+            let add = each.min(groups[g].len() - quota[g]).min(left);
+            quota[g] += add;
+            left -= add;
+        }
+    }
+    groups
+        .iter()
+        .zip(quota)
+        .flat_map(|(g, q)| g.iter().take(q))
+        .collect()
+}
 
 impl CurateInput {
     /// Gather facts about `path`; the start of the text only when
@@ -1409,12 +1438,20 @@ impl Curator {
         &self,
         ai: &AiClassifier,
         store: &Store,
-        inputs: &[CurateInput],
-        top_folders: &[String],
+        inputs: &[Vec<CurateInput>],
+        top_folders: &[Vec<String>],
     ) -> Result<ContextCandidates, CurateError> {
-        let lines: Vec<prompts::CurateFileLine> = inputs
-            .iter()
-            .take(MAX_EXTRACT_FILES)
+        // (0.12.1) Every watch folder gets its share of the sample, so a
+        // crowded 바탕 화면 cannot push the other folders out.
+        let mut top_folders: Vec<String> = fair_share(top_folders, MAX_EXTRACT_FOLDERS)
+            .into_iter()
+            .cloned()
+            .collect();
+        top_folders.sort();
+        top_folders.dedup();
+        let top_folders = &top_folders[..];
+        let lines: Vec<prompts::CurateFileLine> = fair_share(inputs, MAX_EXTRACT_FILES)
+            .into_iter()
             .enumerate()
             .map(|(n, i)| {
                 let mut l = self.file_line(n + 1, i);
@@ -1697,6 +1734,40 @@ mod tests {
 
     fn d(s: &str) -> NaiveDate {
         NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    #[test]
+    fn fair_share_gives_every_watch_folder_a_part() {
+        let g = |n: usize, tag: u32| (0..n).map(|i| tag * 1000 + i as u32).collect::<Vec<_>>();
+        let count = |v: &[&u32], tag: u32| v.iter().filter(|x| ***x / 1000 == tag).count();
+        // A crowded desktop and six small folders: everyone is in.
+        let groups = vec![
+            g(900, 1),
+            g(3, 2),
+            g(40, 3),
+            g(0, 4),
+            g(80, 5),
+            g(10, 6),
+            g(70, 7),
+        ];
+        let got = fair_share(&groups, 200);
+        assert_eq!(got.len(), 200);
+        assert_eq!(count(&got, 2), 3, "small folder: all of it");
+        assert_eq!(count(&got, 6), 10);
+        assert_eq!(count(&got, 3), 40);
+        // 147 left over for 1, 5, 7 → 49 each.
+        assert_eq!(
+            (count(&got, 1), count(&got, 5), count(&got, 7)),
+            (49, 49, 49)
+        );
+        // Group order kept.
+        assert_eq!(*got[0], 1000);
+        // Under the cap: everything.
+        assert_eq!(fair_share(&[g(5, 1), g(5, 2)], 200).len(), 10);
+        // More folders than the cap: one each, as far as it goes.
+        let many: Vec<Vec<u32>> = (1..=8).map(|t| g(5, t)).collect();
+        assert_eq!(fair_share(&many, 3).len(), 3);
+        assert!(fair_share::<u32>(&[], 10).is_empty());
     }
 
     #[test]
