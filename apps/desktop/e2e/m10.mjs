@@ -98,7 +98,7 @@ const save = () => saveSettings(main, 2500);
   await main.waitForSelector(".settings-nav");
   await sleep(500);
   const labels = await main.locator(".settings-nav [data-testid^=settings-nav-]").allInnerTexts();
-  ok("A", "왼쪽 메뉴 6개 (한국어)", labels.length === 6 && labels[2].includes("업무 맥락") && labels[3].includes("AI 연결"), labels.join(" | ").replace(/\n/g, " "));
+  ok("A", "왼쪽 메뉴 7개(M18 NAS 포함) (한국어)", labels.length === 7 && labels[2].includes("업무 맥락") && labels[3].includes("AI 연결"), labels.join(" | ").replace(/\n/g, " "));
   ok("A", "기본 페이지 = 감시 폴더 (#/main/settings/watch)", (await main.locator("[data-testid=settings-watch]").count()) === 1 && main.url().endsWith("#/main/settings/watch"), main.url());
   ok("A", "저장 버튼은 하나 (#8)", (await main.getByRole("button", { name: "저장", exact: true }).count()) === 1);
   await gotoSettings(main, "advanced");

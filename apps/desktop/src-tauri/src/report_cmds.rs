@@ -334,17 +334,32 @@ pub async fn apply_plan(
 }
 
 #[tauri::command]
-pub async fn list_plans(app: AppHandle) -> CmdResult<Vec<StoredPlan>> {
+pub async fn list_plans(app: AppHandle) -> CmdResult<Vec<PlanListItem>> {
     blocking(move || {
         let cfg = app.state::<AppState>().config();
         let store = Store::open(&cfg.store.db_path()).map_err(err)?;
-        let mut plans = store.recent_plans(20).map_err(err)?;
-        for p in &mut plans {
-            p.plan_json.clear(); // list view only
-        }
-        Ok(plans)
+        let plans = store.recent_plans(20).map_err(err)?;
+        Ok(plans
+            .into_iter()
+            .map(|mut p| {
+                let moves = serde_json::from_str::<restructure::Plan>(&p.plan_json)
+                    .map(|x| x.moves.iter().filter(|m| m.from != m.to).count())
+                    .unwrap_or(0);
+                p.plan_json.clear(); // list view only
+                PlanListItem { plan: p, moves }
+            })
+            .collect())
     })
     .await
+}
+
+/// A saved plan for the list, with (0.11.1) how many items it would move
+/// ("적용하지 않은 미리보기" on the home tab).
+#[derive(Debug, Serialize)]
+pub struct PlanListItem {
+    #[serde(flatten)]
+    pub plan: StoredPlan,
+    pub moves: usize,
 }
 
 #[tauri::command]

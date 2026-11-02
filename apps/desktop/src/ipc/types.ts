@@ -669,6 +669,8 @@ export interface StoredPlan {
   created_at: number;
   applied_batch: string | null;
   applied_at: number | null;
+  /** (0.11.1) Items it would move. */
+  moves: number;
 }
 
 export interface BatchSummary {

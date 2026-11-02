@@ -3,6 +3,7 @@ import * as ipc from "../ipc/commands";
 import type { StoredPlan } from "../ipc/types";
 import { guardTarget, useReport } from "../store/report";
 import { useStatus } from "../store/status";
+import { useNav } from "../store/nav";
 import { formatTime } from "./format";
 import { AiNeeded, useAiOn } from "./AiNeeded";
 import { ContextTable, Suggestions } from "./ContextPlan";
@@ -94,15 +95,18 @@ export function RestructurePanel() {
         <p className="muted small">config.toml의 [report] protected 목록도 항상 적용됩니다.</p>
       </details>
 
-      {r.suggestCurate && aiOn && !r.planning && plan?.source === "rules" && (
-        <p className="small notice" data-testid="curate-hint">
-          규칙에 안 맞는 파일은 "업무 맥락으로 정리"로 고객사·이슈별로 묶을 수도 있습니다(분석 전 비용 안내).
-        </p>
-      )}
+      {!r.planning && plan?.source === "rules" && !plan.applied_batch && <Leftover moves={plan.moves.length} />}
       {plan && (
         <div className="plan">
-          <p className="notice small no-move" data-testid="no-move-notice">
-            적용을 누르기 전에는 아무것도 옮기지 않습니다. 적용 후에도 되돌리기 탭에서 되돌릴 수 있습니다.
+          <p className={`notice small no-move${plan.applied_batch ? "" : " warn"}`} data-testid="no-move-notice">
+            {plan.applied_batch ? (
+              "이 제안은 적용되었습니다. 되돌리기 탭에서 되돌릴 수 있습니다."
+            ) : (
+              <>
+                <b>미리보기입니다.</b> 적용을 누르기 전에는 아무것도 옮기지 않습니다. 아래 [선택한 N개 적용]을 눌러야
+                정리 위치에 폴더가 만들어지고 파일이 옮겨집니다. 적용 후에도 되돌리기 탭에서 되돌릴 수 있습니다.
+              </>
+            )}
           </p>
           <div className="row">
             <strong>
@@ -154,7 +158,7 @@ export function RestructurePanel() {
                   <pre className="tree">{r.preview.before}</pre>
                 </div>
                 <div>
-                  <h4>적용 후 ({r.preview.files_moved}개 파일 이동)</h4>
+                  <h4>{plan.applied_batch ? "적용 후" : "적용하면 (미리보기)"} ({r.preview.files_moved}개 파일 이동)</h4>
                   <pre className="tree">{r.preview.after}</pre>
                 </div>
               </div>
@@ -170,11 +174,13 @@ export function RestructurePanel() {
           )}
 
           {!plan.applied_batch && plan.moves.length > 0 && (
-            <div className="row">
+            <div className="row apply-bar" data-testid="apply-bar">
               <button className="primary" disabled={r.applying || !r.selected.size} onClick={confirmApply}>
                 {r.applying ? "옮기는 중…" : `선택한 ${r.selected.size}개 적용`}
               </button>
               <span className="muted small">적용 전에는 아무것도 옮겨지지 않습니다.</span>
+              <div className="spacer" />
+              <span className="small">{r.preview ? `${r.preview.files_moved}개 파일 이동 예정` : ""}</span>
             </div>
           )}
           {r.applied && (
@@ -202,5 +208,49 @@ export function RestructurePanel() {
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * (0.11.1) What a rules preview leaves where it is: files no rule takes and
+ * sub-folders (only "업무 맥락으로 정리" moves those). Without this a
+ * dictionary-only setup saw "옮길 것이 없습니다" and nothing ever moved.
+ */
+function Leftover({ moves }: { moves: number }) {
+  const r = useReport();
+  const aiOn = useAiOn();
+  const goSettings = useNav((s) => s.goSettings);
+  const left = r.leftover;
+  const files = left?.files ?? 0;
+  const folders = left?.folders ?? 0;
+  if (!files && !folders && !(moves === 0 && aiOn)) return null;
+  const what = [files ? `파일 ${files.toLocaleString()}개` : "", folders ? `폴더 ${folders.toLocaleString()}개` : ""]
+    .filter(Boolean)
+    .join("와 ");
+  return (
+    <div className="notice warn" data-testid="curate-hint">
+      <div>
+        {moves === 0 ? "규칙으로 옮길 파일이 없습니다." : `규칙에 맞는 ${moves}개만 옮깁니다.`}{" "}
+        {what && `규칙에 안 맞는 ${what}는 그대로 남습니다.`}
+      </div>
+      {aiOn ? (
+        <div className="row" style={{ marginTop: 6 }}>
+          <button className="primary sm" data-testid="curate-rest" onClick={() => void r.curate()}>
+            업무 맥락으로 {moves ? "나머지도 " : ""}정리 미리보기
+          </button>
+          <span className="muted small">고객사·이슈별로 묶습니다(분석 전 비용 안내, 적용 전엔 무이동).</span>
+        </div>
+      ) : (
+        <div className="row" style={{ marginTop: 6 }}>
+          <span className="small">남은 파일을 정리하려면 규칙을 추가하거나 AI를 켜세요.</span>
+          <button className="link" onClick={() => goSettings("rules")}>
+            규칙 만들기
+          </button>
+          <button className="link" onClick={() => goSettings("ai")}>
+            AI 켜기
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

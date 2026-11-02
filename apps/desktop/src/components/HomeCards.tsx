@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import * as ipc from "../ipc/commands";
 import { onActivity, onOrganize, onStatus } from "../ipc/events";
-import type { CustomerStat, FolderOverview, Overview, TodaySummary } from "../ipc/types";
+import type { CustomerStat, FolderOverview, Overview, StoredPlan, TodaySummary } from "../ipc/types";
 import { organizeFolders, organizeNow, useHome } from "../store/home";
 import { useNav } from "../store/nav";
 import { useStatus } from "../store/status";
 import { useAiOn } from "./AiNeeded";
 import { PathText } from "./PathText";
-import { aliasOf } from "./paths";
+import { aliasOf, baseName } from "./paths";
+import { useReport } from "../store/report";
 
 const STATE: Record<FolderOverview["state"], { label: string; cls: string }> = {
   ok: { label: "정상", cls: "ok" },
@@ -46,9 +47,11 @@ export function OrganizeCard() {
       <div className="card-head baseline">
         <h2>아직 정리 안 된 기존 파일</h2>
         <span className="sub">
-          새 파일은 자동으로 정리됩니다. 감시를 시작하기 전부터 있던 파일은 여기서 한 번 정리하세요.
+          감시를 시작하기 전부터 있던 파일은 [지금 정리] → 미리보기 → [적용]을 눌러야 옮겨집니다. 새 파일은 감시 중
+          정리되고, 새 고객사·이슈 폴더가 필요하면 확인 대기에서 묻습니다.
         </span>
       </div>
+      <UnappliedPlans />
       <div className="folder-grid">
         {o.folders.map((f) => (
           <FolderCard key={f.path} f={f} o={o} />
@@ -300,5 +303,52 @@ export function WatchPanel() {
         </div>
       )}
     </section>
+  );
+}
+
+const PLAN_SOURCE: Record<string, string> = { ai: "AI", rules: "규칙", context: "업무 맥락", command: "명령" };
+
+/**
+ * (0.11.1) Previews made but never applied (last 14 days): nothing moved
+ * for them, which looked like "정리가 안 돈다". One click reopens it.
+ */
+function UnappliedPlans() {
+  const [plans, setPlans] = useState<StoredPlan[]>([]);
+  useEffect(() => {
+    const since = Date.now() / 1000 - 14 * 86400;
+    void ipc
+      .listPlans()
+      .then((ps) => {
+        const seen = new Set<string>();
+        setPlans(
+          ps.filter((p) => {
+            if (p.applied_batch || !p.moves || p.created_at < since || seen.has(p.root)) return false;
+            seen.add(p.root);
+            return true;
+          }),
+        );
+      })
+      .catch(() => setPlans([]));
+  }, []);
+  if (!plans.length) return null;
+  const reopen = async (p: StoredPlan) => {
+    useNav.getState().setTab("report");
+    await useReport.getState().setPath(p.root);
+    await useReport.getState().openPlan(p.id);
+  };
+  return (
+    <div className="notice warn" data-testid="unapplied-plans">
+      {plans.map((p) => (
+        <div key={p.id} className="row">
+          <span>
+            <b>적용하지 않은 미리보기</b> · {baseName(p.root)} · {PLAN_SOURCE[p.source] ?? p.source} {p.moves.toLocaleString()}개 —
+            아직 아무것도 옮기지 않았습니다.
+          </span>
+          <button className="sm primary" onClick={() => void reopen(p)}>
+            이어서 보기
+          </button>
+        </div>
+      ))}
+    </div>
   );
 }

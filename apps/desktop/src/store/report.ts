@@ -31,6 +31,9 @@ interface ReportState {
   target: string | null;
   /** (M11) "지금 정리" with AI + a context dictionary: highlight "업무 맥락으로 정리". */
   suggestCurate: boolean;
+  /** (0.11.1) From the home card: files no rule takes and sub-folders —
+   * what a rules preview leaves where it is. */
+  leftover: { files: number; folders: number } | null;
 
   loadRoots: () => Promise<void>;
   setPath: (p: string) => Promise<void>;
@@ -88,6 +91,7 @@ export const useReport = create<ReportState>((set, get) => ({
   splitting: null,
   target: null,
   suggestCurate: false,
+  leftover: null,
 
   loadRoots: async () => {
     try {
@@ -99,7 +103,7 @@ export const useReport = create<ReportState>((set, get) => ({
     }
   },
   setPath: async (path) => {
-    set({ path, report: null, plan: null, preview: null, applied: null, target: null, suggestCurate: false });
+    set({ path, report: null, plan: null, preview: null, applied: null, target: null, suggestCurate: false, leftover: null });
     if (!path) return;
     try {
       const target = await ipc.organizeTarget(path);
