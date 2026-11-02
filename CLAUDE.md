@@ -70,7 +70,7 @@ cargo run -p tidy-cli -- recover [--grace-secs 0]        # 중단된 이동(복�
 cargo run -p tidy-cli -- pii scan <폴더> [--all] [--format json]   # 개인정보 의심 파일 (읽기만)
 cargo run -p tidy-cli -- vault password / status / lock <파일> [--to DIR] / unlock <zip>   # 암호화 보관(AES zip, 키체인 tidy/vault)
 cargo run -p tidy-cli -- context list / add <이름> [--alias A,B | --issue | --kind --ext log] / alias <고객사> <별칭>   # 맥락 사전 context.toml
-cargo run -p tidy-cli -- curate scan [폴더] [--dry-run]  → [curate settle <plan-id> [--by-kind]] → curate apply <plan-id> [--only 1,3]   # 업무 맥락 정리(AI, 승인 전 무이동). 하위 폴더는 통째로 한 항목(M12)
+cargo run -p tidy-cli -- curate scan [폴더 | --all] [--dry-run]  → [curate settle <plan-id> [--by-kind]] → curate apply <plan-id> [--only 1,3]   # 업무 맥락 정리(AI, 승인 전 무이동). 하위 폴더는 통째로 한 항목(M12)
 cd apps/desktop && npm ci && npm run tauri dev   # 클라우드: npm run build + (src-tauri) cargo clippy 까지만
 cd apps/desktop && npx tauri build [--bundles deb,appimage]   # 설치 패키지 (docs/packaging.md), 태그 v*는 release.yml
 S=/tmp/tidy-e2e bash apps/desktop/e2e/run-headless.sh m14    # 헤드리스 GUI e2e (m3~m17, m15는 tesseract 필요, m16은 가짜 LLM이 비전 모델 역할, m17은 자연어 명령(AI 없이), m14는 휴지통 = $T/휴지통 폴더(TIDY_E2E_TRASH), 공통 도우미 e2e/lib.mjs, 가짜 OpenAI 호환 서버 e2e/fake-embed.mjs, 느린 가짜 LLM e2e/fake-llm.mjs)
@@ -101,6 +101,7 @@ node apps/desktop/e2e/fake-llm.mjs 18095   # 느린·긴 가짜 Anthropic/OpenAI
 - [x] 0.11.1 수정 (2026-11-02) — "지금 정리"가 규칙 0개(맥락 사전만)일 때 빈 규칙 미리보기에서 멈추던 문제: 바로 업무 맥락 비용 안내로, 남는 파일·폴더 수 안내+업무 맥락/규칙·AI 링크, 미리보기 안내 강화·적용 버튼 줄 고정(sticky)·"적용하면 (미리보기)", 홈 "적용하지 않은 미리보기 [이어서 보기]"(list_plans `moves`), e2e fix-organize
 - [x] 0.11.2 수정 (2026-11-02) — 예전 예시 규칙의 절대 목적지(`~/Documents/Tidy/…` 등)를 시작 때 정리 위치 기준으로 자동 변환(백업 `rules.toml.bak-0.11.2`)+이미 옮긴 파일 "정리 위치로 옮기기" 계획(`report::relocate`), 제안 파일 열기(`report::import`, 옮기기만·root 안·폴더 통째·빈 부모 폴더 정리), e2e fix-relocate. SPEC §14.16
 - [x] 0.11.3 수정 (2026-11-02) — 정리하기 화면 개편: 단계 표시 ①②③ + 큰 버튼 하나("정리 미리보기 만들기" = 홈 지금 정리와 같은 `start`), 나머지 방법은 "다른 방법으로 정리하기"에 접음, 미리보기 한 줄 요약, 미분류 한 번에 정하기(`Curator::settle_unclassified`: AI 추측대로 / 기타/미분류/{종류}, `tidy curate settle`), 0개일 때 옮기기 줄에 이유+버튼, [선택한 N개 옮기기], 적용 뒤 "남은 파일로 다시 미리보기", e2e fix-flow. SPEC §14.17
+- [x] 0.12.0 업무 맥락 흐름 다시 짜기 (2026-11-02) — 설정 › 업무 맥락을 가져올 곳(감시 폴더)→만들 곳(정리 위치·기존 폴더 수) + ①사전("감시 폴더 N곳에서 뽑기") ②처음 전체 훑기 ③새 파일 순서로, 정리하기 "모든 감시 폴더 한 번에"(`Curator::plan_many`·`curate::all_sources`, `tidy curate scan --all`) + 폴더 구성안(`Preview.structure`, 기존/새 폴더), 정리 위치의 기존 폴더 재사용(`curate::existing`: 철자·띄어쓰기 무시, 14일 안의 같은 이슈 폴더, AI 프롬프트 힌트), 감시 중 새 파일도 같은 재사용·폴더로 고객사 인식, e2e fix-context. SPEC §14.18. 실제 AI 판단 품질·창 확인은 로컬에서
 - [x] 0.2.x 핫픽스 (2026-10-22~23) — 규칙 카드 정렬(#12), AI 응답 잘림 분할 재시도(#13), HTTP 타임아웃 상한(#14), 감시 폴더 제외 폴더(SPEC §14.5)
 
 ## 열린 결정

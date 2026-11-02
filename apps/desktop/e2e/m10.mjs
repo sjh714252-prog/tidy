@@ -178,7 +178,7 @@ let planId = null;
   ok("D", "분석 전 비용 안내 (파일 수·토큰)", dialogs.length > 0 && /파일 11개/.test(dialogs[0]) && /토큰/.test(dialogs[0]), dialogs[0]?.replace(/\n/g, " ") ?? "(없음)");
   ok("D", "미리보기 표 표시", shown);
   ok("D", "분석만으로 무이동", Object.keys(FILES).every((n) => fs.existsSync(at(n))));
-  const after = await panel.locator(".diff pre.tree").nth(1).innerText().catch(() => "");
+  const after = await panel.locator(".diff pre.tree").nth(1).textContent().catch(() => "");
   ok("D", "적용 후 트리: 가람정보/20261014_과금이슈/로그", /가람정보[\s\S]*20261014_과금이슈[\s\S]*로그/.test(after));
   ok("D", "14일 안 날짜 병합: 20261020 안내문도 20261014_과금이슈로", !after.includes("20261020"));
   ok("D", "하늘통신/20261005_번호전환 (회의록 병합) + 20260915_장애", after.includes("하늘통신") && after.includes("20261005_번호전환") && after.includes("회의록") && after.includes("20260915_장애"));
@@ -211,7 +211,7 @@ let planId = null;
   await sleep(1000);
   const t = fs.readFileSync(CTX, "utf8");
   ok("E", "사전에 반영 → context.toml 별칭 RiverInfo", t.includes("RiverInfo"));
-  const after = await panel.locator(".diff pre.tree").nth(1).innerText();
+  const after = await panel.locator(".diff pre.tree").nth(1).textContent();
   ok("E", "트리에 RiverInfo 폴더 없음", !after.includes("RiverInfo"));
 }
 
@@ -300,8 +300,9 @@ const DEST = {
   await panel.locator("h2").first().scrollIntoViewIfNeeded();
   ok("H", "리포트: 업무 맥락으로 정리 비활성", await panel.locator("[data-testid=curate-plan]").isDisabled());
   const badge = panel.locator("[data-testid=ai-needed]");
-  ok("H", "리포트: 'AI 필요' + 'AI 연결에서 켜기'", (await badge.count()) === 1 && (await badge.innerText()).includes("AI 연결에서 켜기"));
+  ok("H", "리포트: 'AI 필요' + 'AI 연결에서 켜기'", (await badge.count()) === 1 && ((await badge.textContent()) ?? "").includes("AI 연결에서 켜기"));
   await main.screenshot({ path: `${SHOT}/m10-H-ai-needed.png` });
+  await moreWays(main);
   await badge.getByRole("button", { name: "AI 연결에서 켜기" }).click();
   await sleep(800);
   ok("H", "링크 → 설정 → AI 연결 페이지", main.url().endsWith("#/main/settings/ai") && (await main.locator("[data-testid=ai-section]").isVisible()), main.url());

@@ -290,6 +290,10 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
                     .await?,
             )
         }
+        "curate_estimate_all" => ok(context_cmds::curate_estimate_all(app).await?),
+        "plan_context_all" => {
+            ok(context_cmds::plan_context_all(app, arg(&args, "protect")?).await?)
+        }
         "split_context_folder" => ok(context_cmds::split_context_folder(
             app,
             arg(&args, "id")?,

@@ -233,6 +233,20 @@ function Row({
       </td>
       <td className="path" title={m.to}>
         {stays ? <span className="muted">그대로 둠</span> : rel(m.to)}
+        {!stays && c.folder_state === "existing" && (
+          <div>
+            <span className="tag ok" data-testid="ctx-existing" title="정리 위치에 이미 있는 폴더에 넣습니다">
+              기존 폴더
+            </span>
+          </div>
+        )}
+        {!stays && c.folder_state === "new" && (
+          <div>
+            <span className="tag new" data-testid="ctx-new" title={`새로 만드는 폴더: ${c.new_dir ?? ""}`}>
+              새 폴더{c.new_dir ? `: ${c.new_dir}` : ""}
+            </span>
+          </div>
+        )}
       </td>
       <td className="small">
         {c.unclassified ? (

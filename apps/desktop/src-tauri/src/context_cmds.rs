@@ -1,7 +1,8 @@
 //! (M10) Work-context commands (SPEC §14.3): the context dictionary and
-//! `[curate]` settings, "바탕화면에서 뽑기", cost estimate, the work-context
-//! plan with per-item edits (→ dictionary suggestions). Plans reuse the
-//! restructure preview/apply commands; nothing here moves a file.
+//! `[curate]` settings, "감시 폴더에서 뽑기", cost estimate, the work-context
+//! plan (one folder, or (0.12.0) every watch folder at once) with per-item
+//! edits (→ dictionary suggestions). Plans reuse the restructure
+//! preview/apply commands; nothing here moves a file.
 
 use std::path::{Path, PathBuf};
 
@@ -50,6 +51,58 @@ pub struct CurateDto {
     /// Files analysed so far (cache rows).
     #[serde(default)]
     pub analysed: u64,
+    /// (0.12.0) Where files come from: the watch folders.
+    #[serde(default)]
+    pub sources: Vec<SourceDto>,
+    /// (0.12.0) Where folders are made: the organize roots, with the
+    /// folders already in them (reused).
+    #[serde(default)]
+    pub targets: Vec<TargetDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceDto {
+    pub path: String,
+    pub alias: Option<String>,
+    /// Results stay in this folder (`in_place`) instead of the organize root.
+    pub in_place: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetDto {
+    pub path: String,
+    /// Folders directly in it (customers / topics).
+    pub folders: usize,
+    /// The first few of their names.
+    pub names: Vec<String>,
+}
+
+fn sources_targets(cfg: &Config) -> (Vec<SourceDto>, Vec<TargetDto>) {
+    let sources = cfg
+        .watches
+        .iter()
+        .map(|w| SourceDto {
+            path: w.path.display().to_string(),
+            alias: w.alias.clone(),
+            in_place: w.anchor() == w.path.as_path(),
+        })
+        .collect();
+    let mut targets: Vec<TargetDto> = Vec::new();
+    for w in &cfg.watches {
+        let a = w.anchor();
+        if a == w.path.as_path() || targets.iter().any(|t| Path::new(&t.path) == a) {
+            continue;
+        }
+        let names = tidy_core::curate::existing::sub_dirs(a);
+        targets.push(TargetDto {
+            path: a.display().to_string(),
+            folders: names.len(),
+            names: names.into_iter().take(12).collect(),
+        });
+    }
+    (sources, targets)
 }
 
 fn curate_dto(cfg: &Config, store: Option<&Store>) -> CmdResult<CurateDto> {
@@ -66,6 +119,8 @@ fn curate_dto(cfg: &Config, store: Option<&Store>) -> CmdResult<CurateDto> {
         context_path: c.context.display().to_string(),
         context_exists: c.context.is_file(),
         analysed: store.and_then(|s| s.curation_count().ok()).unwrap_or(0),
+        sources: sources_targets(cfg).0,
+        targets: sources_targets(cfg).1,
     })
 }
 
@@ -165,6 +220,80 @@ pub async fn curate_estimate(app: AppHandle, path: String) -> CmdResult<Estimate
     .await
 }
 
+/// (0.12.0) The cost notice for "모든 감시 폴더 훑기".
+#[tauri::command]
+pub async fn curate_estimate_all(app: AppHandle) -> CmdResult<EstimateDto> {
+    blocking(move || {
+        let cfg = app.state::<AppState>().config();
+        let cur = Curator::from_config(&cfg).map_err(err)?;
+        let store = Store::open(&cfg.store.db_path()).map_err(err)?;
+        let rules = RuleSet::load(&cfg.classify.rules).unwrap_or_default();
+        let sources = tidy_core::curate::all_sources(&cfg, &rules);
+        if sources.is_empty() {
+            return Err("열 수 있는 감시 폴더가 없습니다 — 설정 → 감시 폴더를 확인하세요".into());
+        }
+        let anchors: Vec<PathBuf> = sources.iter().map(|s| s.anchor.clone()).collect();
+        cur.note_existing(&anchors);
+        let filter = filter_of(&cfg);
+        let (mut inputs, mut folders, mut unsettled) = (Vec::new(), 0, 0);
+        for s in &sources {
+            let items = cur.items_in(
+                &s.root,
+                &s.anchor,
+                &filter,
+                &cfg.report.protected,
+                &s.skip,
+                &store,
+            );
+            folders += items.folders();
+            unsettled += items.unsettled.len();
+            inputs.extend(items.inputs);
+        }
+        let (provider, model) = cfg
+            .ai
+            .active()
+            .and_then(|p| p.classify.as_ref())
+            .map(|p| (p.provider.as_str().to_string(), p.model.clone()))
+            .unwrap_or_default();
+        Ok(EstimateDto {
+            estimate: cur.estimate(&store, &inputs, &provider, &model),
+            folders,
+            unsettled,
+        })
+    })
+    .await
+}
+
+/// (0.12.0) "모든 감시 폴더 훑기": one work-context plan over every watch
+/// folder, laid out under the organize root(s) with existing folders
+/// reused. Nothing moves.
+#[tauri::command]
+pub async fn plan_context_all(app: AppHandle, protect: Vec<String>) -> CmdResult<PlanDto> {
+    blocking(move || {
+        let cfg = app.state::<AppState>().config();
+        let ai = ai_for(&cfg)?;
+        let cur = Curator::from_config(&cfg).map_err(err)?;
+        let store = Store::open(&cfg.store.db_path()).map_err(err)?;
+        let rules = RuleSet::load(&cfg.classify.rules).unwrap_or_default();
+        let sources = tidy_core::curate::all_sources(&cfg, &rules);
+        let mut protected: Vec<PathBuf> = cfg.report.protected.clone();
+        protected.extend(
+            protect
+                .iter()
+                .filter(|p| !p.trim().is_empty())
+                .map(|p| expand(p)),
+        );
+        let plan = cur
+            .plan_many(&ai, &store, &sources, &filter_of(&cfg), &protected)
+            .map_err(err)?;
+        let plan = restructure::save(&store, plan).map_err(err)?;
+        let ids: Vec<u32> = classified(&plan);
+        let preview = restructure::preview(&plan, Some(&ids)).map_err(err)?;
+        Ok(PlanDto { plan, preview })
+    })
+    .await
+}
+
 /// The cost notice plus (M12) how many items are whole folders.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -200,6 +329,7 @@ pub async fn plan_context(
         );
         let rules = RuleSet::load(&cfg.classify.rules).unwrap_or_default();
         let skip = tidy_core::curate::skip_dirs(&cfg, &rules, &anchor);
+        cur.note_existing(std::slice::from_ref(&anchor));
         let plan = cur
             .plan(
                 &ai,
@@ -413,7 +543,9 @@ pub async fn apply_context_suggestions(
     .await
 }
 
-/// "바탕화면에서 뽑기": candidates from the watch folders (nothing saved).
+/// "감시 폴더에서 뽑기": candidates from every watch folder (nothing
+/// saved). (0.12.0) The folders already in the organize roots go along as
+/// a hint, so their spelling is kept.
 #[tauri::command]
 pub async fn extract_context(app: AppHandle) -> CmdResult<ContextCandidates> {
     blocking(move || {
@@ -423,9 +555,21 @@ pub async fn extract_context(app: AppHandle) -> CmdResult<ContextCandidates> {
         let store = Store::open(&cfg.store.db_path()).map_err(err)?;
         let mut inputs = Vec::new();
         let mut top: Vec<String> = Vec::new();
+        let mut folders: Vec<String> = Vec::new();
         let names = cur.output_names(Some(&store));
+        let anchors: Vec<PathBuf> = cfg
+            .watches
+            .iter()
+            .map(|w| w.anchor().to_path_buf())
+            .collect();
+        cur.note_existing(&anchors);
         for w in &cfg.watches {
             if let Ok(root) = dunce::canonicalize(&w.path) {
+                folders.push(
+                    w.alias
+                        .clone()
+                        .unwrap_or_else(|| root.display().to_string()),
+                );
                 inputs.extend(files_for(&cfg, &cur, &store, &root, w.recursive));
                 // (M12) Folder names directly in the watch folder first:
                 // the strongest customer hints.
@@ -451,7 +595,11 @@ pub async fn extract_context(app: AppHandle) -> CmdResult<ContextCandidates> {
         }
         top.sort();
         top.truncate(100);
-        cur.extract_context(&ai, &store, &inputs, &top).map_err(err)
+        let mut out = cur
+            .extract_context(&ai, &store, &inputs, &top)
+            .map_err(err)?;
+        out.folders = folders;
+        Ok(out)
     })
     .await
 }

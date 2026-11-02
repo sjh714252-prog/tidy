@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import * as ipc from "../ipc/commands";
-import type { PlannedMove, StoredPlan } from "../ipc/types";
-import { guardTarget, useReport } from "../store/report";
+import type { PlannedMove, StoredPlan, StructDir } from "../ipc/types";
+import { ALL_WATCHES, guardTarget, useReport } from "../store/report";
+import { useCurate } from "../store/curate";
 import { useStatus } from "../store/status";
 import { useNav } from "../store/nav";
 import { formatTime } from "./format";
@@ -28,7 +29,15 @@ export function RestructurePanel() {
   }, [r.plan?.id, r.applied]);
 
   const plan = r.plan;
-  const rel = (p: string) => (plan && p.startsWith(plan.root) ? p.slice(plan.root.length + 1) || "." : p);
+  const all = r.path === ALL_WATCHES;
+  const rel = (p: string) => {
+    if (!plan) return p;
+    if (p.startsWith(plan.root)) return p.slice(plan.root.length + 1) || ".";
+    // (0.12.0) A "모든 감시 폴더" plan: sources by their folder name.
+    const src = (plan.sources ?? []).find((s) => p.startsWith(s));
+    if (src) return `${src.split(/[\\/]/).pop()}/${p.slice(src.length + 1)}`;
+    return p;
+  };
   const plan_ = (kind: "rules" | "ai") => {
     if (guardTarget(r.target)) void r.makePlan(kind, recursive);
   };
@@ -68,15 +77,21 @@ export function RestructurePanel() {
               ? "AI가 업무 맥락을 보는 중…"
               : r.planning
                 ? "미리보기 만드는 중…"
-                : "정리 미리보기 만들기"}
+                : all
+                  ? "전체 훑어 폴더 구성안 만들기"
+                  : "정리 미리보기 만들기"}
           </button>
-          <p className="muted small">
-            규칙에 맞는 파일부터 보여 줍니다.{" "}
-            {aiOn
-              ? "규칙으로 옮길 게 없으면 AI가 고객사·이슈별로 묶습니다(분석 전에 비용을 먼저 알려 줍니다)."
-              : "규칙에 안 맞는 파일은 그대로 둡니다."}{" "}
-            미리보기만 만들고 아무것도 옮기지 않습니다.
-          </p>
+          {all ? (
+            <AllWatchesNote />
+          ) : (
+            <p className="muted small">
+              규칙에 맞는 파일부터 보여 줍니다.{" "}
+              {aiOn
+                ? "규칙으로 옮길 게 없으면 AI가 고객사·이슈별로 묶습니다(분석 전에 비용을 먼저 알려 줍니다)."
+                : "규칙에 안 맞는 파일은 그대로 둡니다."}{" "}
+              미리보기만 만들고 아무것도 옮기지 않습니다.
+            </p>
+          )}
         </div>
       )}
 
@@ -125,6 +140,9 @@ export function RestructurePanel() {
                 </li>
               ))}
             </ul>
+          )}
+          {plan.source === "context" && (r.preview?.structure?.length ?? 0) > 0 && (
+            <Structure dirs={r.preview!.structure!} applied={!!plan.applied_batch} />
           )}
           {plan.moves.length === 0 ? (
             <p className="muted">옮길 것이 없습니다.</p>
@@ -242,7 +260,7 @@ export function RestructurePanel() {
       <details className="more-ways" data-testid="more-ways">
         <summary>다른 방법으로 정리하기 · 지난 제안 열기</summary>
         <div className="row">
-          <button disabled={!r.path || !!r.planning} onClick={() => plan_("rules")}>
+          <button disabled={!r.path || all || !!r.planning} onClick={() => plan_("rules")}>
             {r.planning === "rules" ? "계산 중…" : "규칙으로 정리 미리보기"}
           </button>
           <label className="small" title="규칙 정리에만 적용됩니다. 업무 맥락 정리는 하위 폴더를 통째로 한 항목으로 봅니다.">
@@ -262,7 +280,7 @@ export function RestructurePanel() {
             {r.planning === "context" ? "AI가 업무 맥락을 보는 중…" : "업무 맥락으로 정리"}
           </button>
           <button
-            disabled={!r.path || !!r.planning || aiState !== "ready"}
+            disabled={!r.path || all || !!r.planning || aiState !== "ready"}
             title={aiState === "ready" ? "AI가 폴더 구조 전체를 보고 새 구조를 제안합니다" : "설정 → AI 연결에서 AI를 켜고 연결 테스트를 통과해야 합니다"}
             onClick={() => plan_("ai")}
           >
@@ -302,6 +320,80 @@ export function RestructurePanel() {
         </details>
       </details>
     </section>
+  );
+}
+
+/** (0.12.0) What "모든 감시 폴더" does: where files come from and where the
+ * folders go (with how many are already there). */
+function AllWatchesNote() {
+  const d = useCurate((s) => s.loaded ?? s.draft);
+  const load = useCurate((s) => s.load);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  const sources = d?.sources ?? [];
+  const targets = d?.targets ?? [];
+  return (
+    <div className="muted small" data-testid="all-watches-note">
+      감시 폴더 {sources.length ? `${sources.length}곳(${sources.map((s) => s.alias || s.path.split(/[\\/]/).pop()).join(", ")})` : ""}의
+      파일과 하위 폴더를 한 번에 보고, 고객사·이슈별 <b>폴더 구성안</b>을 먼저 보여 줍니다.{" "}
+      {targets.length > 0 &&
+        `정리 위치(${targets.map((t) => `${t.path} — 이미 있는 폴더 ${t.folders}개`).join(", ")})의 같은 고객사·이슈 폴더는 새로 만들지 않고 다시 씁니다. `}
+      분석 전에 비용을 먼저 알려 주고, 구성안을 확인하고 옮기기 전에는 아무것도 옮기지 않습니다.
+    </div>
+  );
+}
+
+/**
+ * (0.12.0) The folder layout a work-context plan proposes (customer →
+ * issue → kind): which folders already exist and are reused, which are
+ * made — the thing to approve before anything moves.
+ */
+function Structure({ dirs, applied }: { dirs: StructDir[]; applied: boolean }) {
+  const anchors = [...new Set(dirs.map((d) => d.anchor))];
+  const fresh = dirs.filter((d) => !d.exists);
+  // Count only the top-most new folders (a new customer brings its issues).
+  const newTop = fresh.filter((d) => !fresh.some((o) => o !== d && o.anchor === d.anchor && d.path.startsWith(`${o.path}/`)));
+  const reused = dirs.filter((d) => d.exists).length;
+  return (
+    <details className="structure-box" open data-testid="structure">
+      <summary>
+        <b>폴더 구성안</b> — 이미 있는 폴더 {reused}곳을 다시 쓰고, 새 폴더 {newTop.length}곳을{" "}
+        {applied ? "만들었습니다" : "만듭니다"}
+      </summary>
+      {anchors.map((a) => (
+        <div key={a} className="structure">
+          <div className="muted small" title={a}>
+            📂 {a}
+          </div>
+          <ul>
+            {dirs
+              .filter((d) => d.anchor === a)
+              .map((d) => (
+                <li
+                  key={d.path}
+                  style={{ paddingLeft: `${(d.depth - 1) * 18}px` }}
+                  data-testid="structure-dir"
+                  data-exists={d.exists ? "1" : "0"}
+                >
+                  📁 {d.path.split("/").pop()}{" "}
+                  {d.exists ? (
+                    <span className="tag ok">기존</span>
+                  ) : (
+                    <span className="tag new">새 폴더</span>
+                  )}{" "}
+                  <span className="muted small">
+                    {d.items}개 항목 · 파일 {d.files.toLocaleString()}개
+                  </span>
+                </li>
+              ))}
+          </ul>
+        </div>
+      ))}
+      <p className="muted small">
+        고객사·이슈를 표에서 고치면 구성안도 바로 바뀝니다. 체크한 항목만 옮기고, 새 폴더는 옮길 때 만들어집니다.
+      </p>
+    </details>
   );
 }
 

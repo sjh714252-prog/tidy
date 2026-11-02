@@ -181,6 +181,8 @@ pub fn run() {
             context_cmds::save_curate_settings,
             context_cmds::curate_estimate,
             context_cmds::plan_context,
+            context_cmds::curate_estimate_all,
+            context_cmds::plan_context_all,
             context_cmds::edit_context_move,
             context_cmds::apply_context_suggestions,
             context_cmds::extract_context,

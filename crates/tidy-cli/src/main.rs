@@ -276,6 +276,10 @@ enum CurateCmd {
         /// Only show the cost estimate (files, tokens, price); no AI call.
         #[arg(long)]
         dry_run: bool,
+        /// Every watch folder in one plan (first run: the whole folder
+        /// layout at once, existing folders in the organize root reused).
+        #[arg(long, conflicts_with = "folder")]
+        all: bool,
     },
     /// Place the 미분류 items of a saved plan (nothing moves): the AI's own
     /// unsure answer, or with --by-kind 기타/미분류/{종류}.
@@ -2891,25 +2895,55 @@ fn cmd_curate(config: Option<PathBuf>, cmd: CurateCmd) -> Result<()> {
             );
             Ok(())
         }
-        CurateCmd::Scan { folder, dry_run } => {
-            let root = default_folder(&cfg, folder)?;
-            let root = dunce::canonicalize(&root)
-                .with_context(|| format!("no such folder: {}", root.display()))?;
+        CurateCmd::Scan {
+            folder,
+            dry_run,
+            all,
+        } => {
             let cur = Curator::from_config(&cfg)?;
             let protected = protected_dirs(&cfg, &[]);
             let rules = RuleSet::load(&cfg.classify.rules).unwrap_or_default();
-            let anchors = tidy_core::classify::Anchors::from_config(&cfg);
-            let anchor = anchors.for_path(&root).unwrap_or(&root).to_path_buf();
-            let skip = tidy_core::curate::skip_dirs(&cfg, &rules, &anchor);
-            // (M12) Files directly in the folder + its sub-folders as whole items.
-            let items = cur.items_in(
-                &root,
-                &anchor,
-                &cfg.ignore_filter()?,
-                &protected,
-                &skip,
-                &store,
-            );
+            let sources = if all {
+                let s = tidy_core::curate::all_sources(&cfg, &rules);
+                if s.is_empty() {
+                    anyhow::bail!("열 수 있는 감시 폴더가 없습니다");
+                }
+                s
+            } else {
+                let root = default_folder(&cfg, folder)?;
+                let root = dunce::canonicalize(&root)
+                    .with_context(|| format!("no such folder: {}", root.display()))?;
+                let anchors = tidy_core::classify::Anchors::from_config(&cfg);
+                let anchor = anchors.for_path(&root).unwrap_or(&root).to_path_buf();
+                let skip = tidy_core::curate::skip_dirs(&cfg, &rules, &anchor);
+                vec![tidy_core::curate::Source { root, anchor, skip }]
+            };
+            let filter = cfg.ignore_filter()?;
+            // (M12) Files directly in each folder + its sub-folders as whole items.
+            let mut items = tidy_core::curate::Items::default();
+            for src in &sources {
+                let it = cur.items_in(
+                    &src.root,
+                    &src.anchor,
+                    &filter,
+                    &protected,
+                    &src.skip,
+                    &store,
+                );
+                items.inputs.extend(it.inputs);
+                items.unsettled.extend(it.unsettled);
+            }
+            if all {
+                println!(
+                    "감시 폴더 {}곳: {}",
+                    sources.len(),
+                    sources
+                        .iter()
+                        .map(|s| s.root.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
             if !items.unsettled.is_empty() {
                 eprintln!(
                     "# 아직 바뀌는 중인 폴더 {}개는 뺐습니다: {}",
@@ -2948,23 +2982,41 @@ fn cmd_curate(config: Option<PathBuf>, cmd: CurateCmd) -> Result<()> {
             let ai = AiClassifier::from_config(&cfg, &rules)
                 .context("업무 맥락 정리는 AI가 필요합니다 — [ai]를 켜고 분류 모델을 정하세요 (tidy ai status)")?;
             eprintln!("# asking {} / {} …", ai.provider_name(), ai.model());
-            let plan = cur.plan(
-                &ai,
-                &store,
-                &root,
-                &anchor,
-                &cfg.ignore_filter()?,
-                &protected,
-                &skip,
-            )?;
+            let plan = cur.plan_many(&ai, &store, &sources, &filter, &protected)?;
             let plan = restructure::save(&store, plan)?;
             print_plan(&plan, None)?;
+            print_structure(&plan);
             println!(
                 "\n적용: tidy curate apply {} [--only 1,3]  (승인 전에는 아무것도 옮기지 않음)",
                 plan.id
             );
             Ok(())
         }
+    }
+}
+
+/// (0.12.0) The proposed folder layout of a work-context plan: existing
+/// folders vs new ones.
+fn print_structure(plan: &restructure::Plan) {
+    let dirs = restructure::structure(plan, None);
+    if dirs.is_empty() {
+        return;
+    }
+    println!("\n폴더 구성안 (✚ = 새로 만듦):");
+    let mut anchor = None;
+    for d in &dirs {
+        if anchor != Some(&d.anchor) {
+            println!("{}", d.anchor.display());
+            anchor = Some(&d.anchor);
+        }
+        let name = d.path.rsplit('/').next().unwrap_or(&d.path);
+        println!(
+            "{}{} {name}  ({}개 항목, 파일 {}개)",
+            "  ".repeat(d.depth),
+            if d.exists { "·" } else { "✚" },
+            d.items,
+            d.files
+        );
     }
 }
 

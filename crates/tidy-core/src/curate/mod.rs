@@ -14,6 +14,7 @@
 
 pub mod context;
 pub mod customers;
+pub mod existing;
 pub mod folder;
 pub mod template;
 
@@ -28,6 +29,7 @@ use thiserror::Error;
 
 pub use context::{ContextDict, ContextError, ContextSuggestion, DocKind, Entity, IssueType};
 pub use customers::{customer_dirs, customer_names, customer_overview, CustomerStat};
+pub use existing::{reuse_existing, ExistingTree};
 pub use folder::{FolderUnit, FOLDER_SCAN_CAP};
 pub use template::{clean, FolderTemplate, TemplateVals};
 
@@ -123,7 +125,7 @@ const CURATE_MAX_TOKENS: u32 = 16_000;
 fn curate_timeout(files: usize) -> std::time::Duration {
     std::time::Duration::from_secs((60 + 6 * files as u64).min(300))
 }
-/// Files sent to "바탕화면에서 뽑기".
+/// Files sent to "감시 폴더에서 뽑기".
 const MAX_EXTRACT_FILES: usize = 200;
 
 impl CurateInput {
@@ -225,6 +227,29 @@ pub fn skip_dirs(cfg: &Config, rules: &crate::classify::RuleSet, anchor: &Path) 
     out
 }
 
+/// (0.12.0) Every watch folder as a work-context source ("모든 감시
+/// 폴더 훑기"), with its organize root. Folders that do not open, and watch
+/// folders lying inside an organize root (results), are left out.
+pub fn all_sources(cfg: &Config, rules: &crate::classify::RuleSet) -> Vec<Source> {
+    let anchors = crate::classify::Anchors::from_config(cfg);
+    let mut out: Vec<Source> = Vec::new();
+    for w in &cfg.watches {
+        let Ok(root) = dunce::canonicalize(&w.path) else {
+            continue;
+        };
+        if !root.is_dir()
+            || crate::report::backlog::organize_root_of(&cfg.watches, &root).is_some()
+            || out.iter().any(|s| s.root == root)
+        {
+            continue;
+        }
+        let anchor = anchors.for_path(&root).unwrap_or(&root).to_path_buf();
+        let skip = skip_dirs(cfg, rules, &anchor);
+        out.push(Source { root, anchor, skip });
+    }
+    out
+}
+
 fn same_path(a: &Path, b: &Path) -> bool {
     a == b || matches!((dunce::canonicalize(a), dunce::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
 }
@@ -243,6 +268,15 @@ fn rel_dir(path: &Path, root: Option<&Path>) -> String {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| ".".into())
+}
+
+/// (0.12.0) A folder a work-context plan gathers from: its organize root
+/// (`anchor`, where results go) and the folders there to leave alone.
+#[derive(Debug, Clone)]
+pub struct Source {
+    pub root: PathBuf,
+    pub anchor: PathBuf,
+    pub skip: Vec<PathBuf>,
 }
 
 /// What a work-context run looks at in one folder (SPEC §14.7): the files
@@ -276,13 +310,16 @@ pub struct Estimate {
     pub model: String,
 }
 
-/// Candidates from "바탕화면에서 뽑기" (nothing saved until confirmed).
+/// Candidates from "감시 폴더에서 뽑기" (nothing saved until confirmed).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContextCandidates {
     pub entities: Vec<EntityCandidate>,
     pub issue_types: Vec<NameCandidate>,
     pub doc_kinds: Vec<KindCandidate>,
     pub files: usize,
+    /// (0.12.0) The watch folders the files came from.
+    #[serde(default)]
+    pub folders: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -317,8 +354,11 @@ pub struct Placement {
     pub date: NaiveDate,
     /// The customer / issue folder already exists (auto move allowed).
     pub known_folder: bool,
-    /// The customer is in the dictionary.
+    /// The customer is in the dictionary (or (0.12.0) has a folder).
     pub known_entity: bool,
+    /// (0.12.0) The first folder that would be made, relative to the
+    /// organize root (`None`: goes into an existing folder).
+    pub new_dir: Option<String>,
 }
 
 pub struct Curator {
@@ -329,6 +369,8 @@ pub struct Curator {
     send_content: bool,
     vault_mode: bool,
     max_bytes: u64,
+    /// (0.12.0) Folders already in the organize roots (prompt hint).
+    existing: std::sync::Mutex<Vec<ExistingTree>>,
 }
 
 impl std::fmt::Debug for Curator {
@@ -352,6 +394,7 @@ impl Curator {
             send_content,
             vault_mode: false,
             max_bytes: 200 * 1024 * 1024,
+            existing: std::sync::Mutex::new(Vec::new()),
         })
     }
 
@@ -371,6 +414,40 @@ impl Curator {
 
     pub fn cfg(&self) -> &CurateCfg {
         &self.cfg
+    }
+
+    /// (0.12.0) Look at what is already in these organize roots, so the AI
+    /// is told the folder names to reuse (see [`existing`]).
+    pub fn note_existing(&self, anchors: &[PathBuf]) {
+        let mut seen: Vec<&PathBuf> = Vec::new();
+        let trees = anchors
+            .iter()
+            .filter(|a| {
+                let new = !seen.contains(a);
+                seen.push(a);
+                new
+            })
+            .map(|a| ExistingTree::scan(a))
+            .collect();
+        if let Ok(mut e) = self.existing.lock() {
+            *e = trees;
+        }
+    }
+
+    /// The dictionary as sent to the AI, plus (0.12.0) the folders that
+    /// already exist in the organize roots.
+    fn dict_text(&self) -> String {
+        let mut s = self.dict.prompt_text();
+        let hint = self
+            .existing
+            .lock()
+            .map(|e| existing::prompt_hint(&e))
+            .unwrap_or_default();
+        if !hint.is_empty() {
+            s.push_str("## 정리 위치에 이미 있는 폴더 (고객사·주제 폴더: 그 아래 이슈 폴더)\n");
+            s.push_str(&hint);
+        }
+        s
     }
 
     /// Characters of text sent per file (0 without `send_content`).
@@ -575,8 +652,8 @@ impl Curator {
             .collect();
         let batch = self.cfg.batch_size.max(1);
         let requests = misses.len().div_ceil(batch);
-        let fixed = (prompts::CURATE_SYSTEM.chars().count()
-            + self.dict.prompt_text().chars().count()) as u64
+        let fixed = (prompts::CURATE_SYSTEM.chars().count() + self.dict_text().chars().count())
+            as u64
             * requests as u64;
         let per_file: u64 = misses
             .iter()
@@ -654,7 +731,7 @@ impl Curator {
             .enumerate()
             .map(|(k, &n)| self.file_line(k + 1, &inputs[n]))
             .collect();
-        let user = prompts::curate_user(&self.dict.prompt_text(), &lines);
+        let user = prompts::curate_user(&self.dict_text(), &lines);
         let call = AiCall {
             purpose: "curate",
             system: prompts::CURATE_SYSTEM,
@@ -791,16 +868,58 @@ impl Curator {
     ) -> Result<Plan, CurateError> {
         let root = dunce::canonicalize(root)
             .map_err(|_| CurateError::NotADirectory(root.to_path_buf()))?;
-        let items = self.items_in(&root, anchor, filter, protected, skip, store);
-        let unsettled = items.unsettled.len();
-        let inputs = items.inputs;
+        let src = Source {
+            root,
+            anchor: anchor.to_path_buf(),
+            skip: skip.to_vec(),
+        };
+        self.plan_many(ai, store, std::slice::from_ref(&src), filter, protected)
+    }
+
+    /// (0.12.0, SPEC §14.18) One work-context plan over several folders
+    /// ("모든 감시 폴더 훑기"): every folder's files and sub-folders, judged
+    /// together, laid out under each folder's organize root with the
+    /// folders already there reused. With more than one source the plan's
+    /// `root` is the first organize root (where the results go) and
+    /// `sources` lists the folders. Nothing moves.
+    pub fn plan_many(
+        &self,
+        ai: &AiClassifier,
+        store: &Store,
+        sources: &[Source],
+        filter: &IgnoreFilter,
+        protected: &[PathBuf],
+    ) -> Result<Plan, CurateError> {
+        let first = sources
+            .first()
+            .ok_or_else(|| CurateError::NotADirectory(PathBuf::new()))?;
+        let many = sources.len() > 1;
+        let anchors: Vec<PathBuf> = sources.iter().map(|s| s.anchor.clone()).collect();
+        self.note_existing(&anchors);
+        let mut inputs: Vec<CurateInput> = Vec::new();
+        let mut input_anchor: Vec<PathBuf> = Vec::new();
+        let mut unsettled = 0;
+        for src in sources {
+            let items = self.items_in(&src.root, &src.anchor, filter, protected, &src.skip, store);
+            unsettled += items.unsettled.len();
+            for i in items.inputs {
+                if inputs.iter().any(|x| x.path == i.path) {
+                    continue;
+                }
+                inputs.push(i);
+                input_anchor.push(src.anchor.clone());
+            }
+        }
         let judged = self.analyze(ai, store, &inputs)?;
         let mut moves = Vec::new();
-        for (i, c) in inputs.iter().zip(judged) {
-            let note = match c {
+        for ((i, c), anchor) in inputs.iter().zip(judged).zip(input_anchor) {
+            let mut note = match c {
                 Some(c) => note_for(i, &c, !self.is_classified(&c)),
                 None => unanswered(i),
             };
+            if many {
+                note.anchor = Some(anchor);
+            }
             let encrypt = !i.is_folder()
                 && self.vault_mode
                 && store
@@ -813,7 +932,11 @@ impl Curator {
         }
         let mut plan = Plan {
             id: 0,
-            root: root.clone(),
+            root: if many {
+                first.anchor.clone()
+            } else {
+                first.root.clone()
+            },
             source: PlanSource::Context,
             created_at: chrono::Utc::now().timestamp(),
             summary: String::new(),
@@ -821,7 +944,12 @@ impl Curator {
             moves,
             rejected: Vec::new(),
             applied_batch: None,
-            anchor: Some(anchor.to_path_buf()),
+            anchor: Some(first.anchor.clone()),
+            sources: if many {
+                sources.iter().map(|s| s.root.clone()).collect()
+            } else {
+                Vec::new()
+            },
         };
         self.relayout(&mut plan, Some(store));
         if unsettled > 0 {
@@ -849,29 +977,75 @@ impl Curator {
             .position(|m| m.id == id && m.is_dir)
             .ok_or(CurateError::NoSuchMove(id))?;
         let dir = plan.moves[pos].from.clone();
+        let anchor = plan.moves[pos]
+            .context
+            .as_ref()
+            .and_then(|n| n.anchor.clone());
+        // Path context: the folder the item came from.
+        let base = plan
+            .sources
+            .iter()
+            .find(|s| dir.starts_with(s))
+            .cloned()
+            .unwrap_or_else(|| plan.root.clone());
         let inputs: Vec<CurateInput> = Self::files_in(&dir, true, filter, &[])
             .iter()
-            .filter_map(|p| self.input_in(p, &plan.root, Some(store)).ok())
+            .filter_map(|p| self.input_in(p, &base, Some(store)).ok())
             .collect();
         let judged = self.analyze(ai, store, &inputs)?;
         plan.moves.remove(pos);
         let first = plan.moves.iter().map(|m| m.id).max().unwrap_or(0) + 1;
         for (next, (i, c)) in (first..).zip(inputs.iter().zip(judged)) {
-            let note = match c {
+            let mut note = match c {
                 Some(c) => note_for(i, &c, !self.is_classified(&c)),
                 None => unanswered(i),
             };
+            note.anchor = anchor.clone();
             plan.moves.push(planned(next, i, note, false));
         }
         self.relayout(plan, Some(store));
         Ok(inputs.len())
     }
 
+    /// (0.12.0) One spelling per customer (and per customer's issue) in a
+    /// plan: "KT 스마트메시지" and "KT스마트메시지" become the first one
+    /// seen, so they do not end up in two folders.
+    fn unify_names(plan: &mut Plan) {
+        let mut ents: HashMap<String, String> = HashMap::new();
+        let mut issues: HashMap<(String, String), String> = HashMap::new();
+        for m in plan.moves.iter_mut() {
+            let Some(n) = m.context.as_mut() else {
+                continue;
+            };
+            if n.unclassified {
+                continue;
+            }
+            if let Some(e) = n.entity.clone() {
+                let k = existing::norm(&e);
+                if !k.is_empty() {
+                    let e = ents.entry(k.clone()).or_insert(e).clone();
+                    n.entity = Some(e);
+                    let ik = existing::norm(&n.issue);
+                    if !ik.is_empty() {
+                        n.issue = issues
+                            .entry((k, ik))
+                            .or_insert_with(|| n.issue.clone())
+                            .clone();
+                    }
+                }
+            }
+        }
+    }
+
     /// Recompute folder dates and destinations of every work-context item
-    /// (after analysis and after each user edit).
+    /// (after analysis and after each user edit). (0.12.0) Folders that
+    /// already exist in the organize root are reused (same name spelled
+    /// differently, same issue within `merge_days`), and each item says
+    /// whether it goes into an existing folder or a new one.
     pub fn relayout(&self, plan: &mut Plan, store: Option<&Store>) {
-        let anchor = plan.anchor.clone().unwrap_or_else(|| plan.root.clone());
+        let plan_anchor = plan.anchor.clone().unwrap_or_else(|| plan.root.clone());
         let parse = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok();
+        Self::unify_names(plan);
         // Own dates per (customer, issue) group in this plan.
         let mut groups: HashMap<(String, String), Vec<NaiveDate>> = HashMap::new();
         for m in &plan.moves {
@@ -886,18 +1060,22 @@ impl Curator {
             }
         }
         let mut stored: HashMap<(String, String), Vec<NaiveDate>> = HashMap::new();
-        let (mut placed, mut unclassified) = (0, 0);
+        let (mut placed, mut unclassified, mut into_existing) = (0, 0, 0);
+        let mut new_dirs: Vec<PathBuf> = Vec::new();
         let mut entities: Vec<String> = Vec::new();
         let mut issues: Vec<(String, String)> = Vec::new();
         for m in plan.moves.iter_mut() {
             let Some(n) = m.context.as_mut() else {
                 continue;
             };
+            n.folder_state.clear();
+            n.new_dir = None;
             if n.unclassified {
                 m.to = m.from.clone();
                 unclassified += 1;
                 continue;
             }
+            let anchor = n.anchor.clone().unwrap_or_else(|| plan_anchor.clone());
             let own = parse(&n.own_date).unwrap_or_else(|| Local::now().date_naive());
             let date = match n.entity.as_deref() {
                 Some(e) => {
@@ -923,7 +1101,6 @@ impl Curator {
                 }
                 None => own,
             };
-            n.date = date.format("%Y-%m-%d").to_string();
             let c = Curation {
                 entity: n.entity.clone(),
                 issue: n.issue.clone(),
@@ -939,15 +1116,56 @@ impl Curator {
                 .file_name()
                 .map(|x| x.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            m.to = if m.is_dir {
-                self.dest_for(&c, date, &anchor, Some(&name))
+            let (dir, leaf) = if m.is_dir {
+                let to = self.dest_for(&c, date, &anchor, Some(&name));
+                let leaf = to
+                    .file_name()
+                    .map(|x| x.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| name.clone());
+                (to.parent().map(Path::to_path_buf).unwrap_or(to), leaf)
             } else {
-                let dir = self.dest_dir(&c, date, &anchor);
-                dir.join(if m.encrypt { zip_name_for(&name) } else { name })
+                let leaf = if m.encrypt { zip_name_for(&name) } else { name };
+                (self.dest_dir(&c, date, &anchor), leaf)
             };
+            let dir = existing::reuse_existing(&dir, &anchor, self.cfg.merge_days);
+            // The date of the issue folder actually used (an existing one
+            // may be a few days off).
+            let used = dir
+                .strip_prefix(&anchor)
+                .ok()
+                .and_then(|r| {
+                    r.components().find_map(|x| {
+                        existing::split_dated(&x.as_os_str().to_string_lossy()).map(|(d, _)| d)
+                    })
+                })
+                .filter(|_| n.entity.is_some());
+            n.date = used.unwrap_or(date).format("%Y-%m-%d").to_string();
+            m.to = dir.join(leaf);
             m.reason = n.reason.clone();
             m.warnings.clear();
-            if m.to.exists() && m.to != m.from {
+            if m.to == m.from {
+                // Already where it belongs.
+                m.warnings.push("이미 이 자리에 있습니다".into());
+                continue;
+            }
+            placed += 1;
+            match existing::first_new(&dir, &anchor) {
+                None => {
+                    n.folder_state = "existing".into();
+                    into_existing += 1;
+                }
+                Some(first) => {
+                    n.folder_state = "new".into();
+                    n.new_dir = first
+                        .strip_prefix(&anchor)
+                        .ok()
+                        .map(|r| r.to_string_lossy().replace('\\', "/"));
+                    if !new_dirs.contains(&first) {
+                        new_dirs.push(first);
+                    }
+                }
+            }
+            if m.to.exists() {
                 m.warnings.push(if m.is_dir {
                     "목적지에 같은 이름의 폴더가 있어 그 안에 합칩니다(같은 이름 파일은 '(1)')"
                         .into()
@@ -959,19 +1177,14 @@ impl Curator {
                 m.warnings
                     .push("개인정보 파일 — 암호화 zip으로 보관합니다".into());
             }
-            if m.to == m.from {
-                // Already where it belongs.
-                m.warnings.push("이미 이 자리에 있습니다".into());
-            } else {
-                placed += 1;
-            }
         }
         let folders = plan.moves.iter().filter(|m| m.is_dir).count();
         plan.summary = format!(
-            "항목 {}개(폴더 {folders}개 통째 포함) 중 {placed}개를 고객사 {}곳 · 이슈 {}건과 기타 주제로 묶습니다. 미분류 {unclassified}개는 그대로 둡니다.",
+            "항목 {}개(폴더 {folders}개 통째 포함) 중 {placed}개를 고객사 {}곳 · 이슈 {}건과 기타 주제로 묶습니다 — 이미 있는 폴더로 {into_existing}개, 새로 만들 폴더 {}곳. 미분류 {unclassified}개는 그대로 둡니다.",
             plan.moves.len(),
             entities.len(),
             issues.len(),
+            new_dirs.len(),
         );
     }
 
@@ -1133,6 +1346,7 @@ impl Curator {
         input: &CurateInput,
         anchor: &Path,
     ) -> Result<Option<Placement>, CurateError> {
+        self.note_existing(&[anchor.to_path_buf()]);
         let Some(c) = self
             .analyze(ai, store, std::slice::from_ref(input))?
             .pop()
@@ -1145,23 +1359,51 @@ impl Curator {
             Some(e) => self.group_date(own, &store.curation_dates(e, &c.issue)?),
             None => own,
         };
-        let dest_dir = self.dest_dir(&c, date, anchor);
+        // (0.12.0) Into the folders already there when they stand for the
+        // same customer / issue (spelling, a few days apart).
+        let dest_dir = existing::reuse_existing(
+            &self.dest_dir(&c, date, anchor),
+            anchor,
+            self.cfg.merge_days,
+        );
+        let date = dest_dir
+            .strip_prefix(anchor)
+            .ok()
+            .and_then(|r| {
+                r.components().find_map(|x| {
+                    existing::split_dated(&x.as_os_str().to_string_lossy()).map(|(d, _)| d)
+                })
+            })
+            .filter(|_| c.entity.is_some())
+            .unwrap_or(date);
         let known_folder =
             dest_dir.is_dir() || dest_dir.parent().is_some_and(|p| p != anchor && p.is_dir());
-        let known_entity = c
-            .entity
-            .as_deref()
-            .is_some_and(|e| self.dict.canonical_entity(e).is_some());
+        // A customer is known from the dictionary or from its folder.
+        let entity_dir = dest_dir
+            .strip_prefix(anchor)
+            .ok()
+            .and_then(|r| r.components().next())
+            .map(|x| anchor.join(x));
+        let known_entity = c.entity.as_deref().is_some_and(|e| {
+            self.dict.canonical_entity(e).is_some()
+                || entity_dir.as_ref().is_some_and(|d| d.is_dir())
+        });
+        let new_dir = existing::first_new(&dest_dir, anchor).and_then(|f| {
+            f.strip_prefix(anchor)
+                .ok()
+                .map(|r| r.to_string_lossy().replace('\\', "/"))
+        });
         Ok(Some(Placement {
             curation: c,
             dest_dir,
             date,
             known_folder,
             known_entity,
+            new_dir,
         }))
     }
 
-    /// "바탕화면에서 뽑기": candidate customers / issue types / kinds from
+    /// "감시 폴더에서 뽑기" (once "바탕화면에서 뽑기"): candidate customers / issue types / kinds from
     /// the files' names and (with `send_content`) the start of their text.
     pub fn extract_context(
         &self,
@@ -1180,7 +1422,7 @@ impl Curator {
                 l
             })
             .collect();
-        let user = prompts::context_user(&self.dict.prompt_text(), top_folders, &lines);
+        let user = prompts::context_user(&self.dict_text(), top_folders, &lines);
         let call = AiCall {
             purpose: "context",
             system: prompts::CONTEXT_SYSTEM,
@@ -1240,6 +1482,7 @@ fn note_for(i: &CurateInput, c: &Curation, unclassified: bool) -> ContextNote {
         settled: String::new(),
         key: i.key.clone(),
         tree: i.unit.as_ref().map(|u| inner_tree(&u.path)),
+        ..Default::default()
     }
 }
 

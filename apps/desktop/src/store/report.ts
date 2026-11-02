@@ -49,6 +49,9 @@ interface ReportState {
    * moves anything and the AI is on, straight on to the work context
    * (cost notice + confirm first). Nothing moves. */
   start: (recursive?: boolean) => Promise<void>;
+  /** (0.12.0) "모든 감시 폴더 훑기": pick every watch folder and start the
+   * work-context plan (cost notice + confirm first). Nothing moves. */
+  surveyAll: () => Promise<void>;
   /** (0.11.3) Place 미분류 work-context items in one click (nothing moves). */
   settle: (how: "guess" | "by_kind", ids?: number[]) => Promise<void>;
   settling: boolean;
@@ -66,6 +69,10 @@ interface ReportState {
   apply: () => Promise<void>;
   closePlan: () => void;
 }
+
+/** (0.12.0) The "정리할 폴더" choice meaning every watch folder at once
+ * (work context only: one plan, laid out under the organize root). */
+export const ALL_WATCHES = "*all-watches*";
 
 const protectList = (s: string) =>
   s
@@ -115,7 +122,7 @@ export const useReport = create<ReportState>((set, get) => ({
   },
   setPath: async (path) => {
     set({ path, report: null, plan: null, preview: null, applied: null, target: null, suggestCurate: false, leftover: null });
-    if (!path) return;
+    if (!path || path === ALL_WATCHES) return;
     try {
       const target = await ipc.organizeTarget(path);
       if (get().path === path) set({ target });
@@ -128,7 +135,7 @@ export const useReport = create<ReportState>((set, get) => ({
   setProtect: (protect) => set({ protect }),
   build: async () => {
     const { path, dups } = get();
-    if (!path) return;
+    if (!path || path === ALL_WATCHES) return;
     set({ loading: true, error: null });
     try {
       set({ report: await ipc.buildReport(path, dups) });
@@ -141,13 +148,19 @@ export const useReport = create<ReportState>((set, get) => ({
   makePlan: async (kind, recursive = false) => {
     const { path, protect } = get();
     if (!path) return;
+    if (path === ALL_WATCHES && kind !== "context") {
+      set({ error: "모든 감시 폴더는 업무 맥락으로만 한 번에 정리합니다. 규칙·AI 구조 제안은 폴더를 하나 고르세요." });
+      return;
+    }
     set({ planning: kind, error: null, applied: null, suggestions: [], learnt: null });
     try {
       const r =
         kind === "ai"
           ? await ipc.planAi(path, protectList(protect))
           : kind === "context"
-            ? await ipc.planContext(path, protectList(protect))
+            ? path === ALL_WATCHES
+              ? await ipc.planContextAll(protectList(protect))
+              : await ipc.planContext(path, protectList(protect))
             : await ipc.planRules(path, recursive, protectList(protect));
       set({ plan: r.plan, preview: r.preview, selected: defaultSelected(r.plan) });
     } catch (e) {
@@ -160,7 +173,7 @@ export const useReport = create<ReportState>((set, get) => ({
     const { path, target } = get();
     if (!path || (!skipGuard && !guardTarget(target))) return;
     try {
-      const est = await ipc.curateEstimate(path);
+      const est = path === ALL_WATCHES ? await ipc.curateEstimateAll() : await ipc.curateEstimate(path);
       if (!est.files) {
         window.alert(est.unsettled ? `${unsettledText(est.unsettled)}\n\n지금 정리할 항목은 없습니다.` : "정리할 파일이 없습니다.");
         return;
@@ -174,6 +187,12 @@ export const useReport = create<ReportState>((set, get) => ({
   },
   start: async (recursive) => {
     const st = get();
+    if (st.path === ALL_WATCHES) {
+      const ai = useStatus.getState().status?.aiState;
+      if (ai === "ready" || ai === "starting") await get().curate(true);
+      else set({ error: "모든 감시 폴더를 한 번에 훑는 정리는 AI가 필요합니다 — 설정 → AI 연결에서 켜 주세요." });
+      return;
+    }
     if (!st.path || !guardTarget(st.target)) return;
     await get().makePlan("rules", recursive ?? st.recursive);
     const after = get();
@@ -183,6 +202,10 @@ export const useReport = create<ReportState>((set, get) => ({
       // target already confirmed above: skip the second guard.
       await get().curate(true);
     }
+  },
+  surveyAll: async () => {
+    await get().setPath(ALL_WATCHES);
+    await get().curate(true);
   },
   settle: async (how, ids) => {
     const { plan, selected } = get();

@@ -125,6 +125,18 @@ pub struct ContextNote {
     /// (M12) A folder item: its inner tree (a few levels) for the preview.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tree: Option<String>,
+    /// (0.12.0) The organize root this item's layout uses — set when a
+    /// plan covers several watch folders with different roots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<PathBuf>,
+    /// (0.12.0) "existing": goes into a folder that is already there;
+    /// "new": a folder is made for it (`new_dir`). Empty for 미분류.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub folder_state: String,
+    /// (0.12.0) The first folder made for this item, relative to its root
+    /// ("가람정보" for a new customer, "KT/20261101_과금" for a new issue).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -156,6 +168,10 @@ pub struct Plan {
     /// (M10) Anchor relative layouts were resolved against.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anchor: Option<PathBuf>,
+    /// (0.12.0) The folders a "모든 감시 폴더" plan gathered from (`root`
+    /// is then the organize root the results go to). Empty: just `root`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -169,6 +185,24 @@ pub struct Preview {
     /// Folders (relative) that end up with no files. They are left in
     /// place — nothing is deleted.
     pub emptied: Vec<String>,
+    /// (0.12.0) Work-context plans: the folder layout the selected items
+    /// get (customer → issue → kind), existing vs new.
+    pub structure: Vec<StructDir>,
+}
+
+/// (0.12.0) One folder of a work-context plan's proposed layout.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StructDir {
+    /// Organize root it is under.
+    pub anchor: PathBuf,
+    /// Relative to `anchor`, '/'-separated.
+    pub path: String,
+    pub depth: usize,
+    /// Already there (else made when applied).
+    pub exists: bool,
+    /// Selected items going into it or below.
+    pub items: usize,
+    pub files: u64,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -302,6 +336,7 @@ pub fn plan_from_rules_in(
         rejected: Vec::new(),
         applied_batch: None,
         anchor: None,
+        sources: Vec::new(),
     })
 }
 
@@ -564,6 +599,7 @@ fn validate_ai_plan(
         rejected,
         applied_batch: None,
         anchor: None,
+        sources: Vec::new(),
     }
 }
 
@@ -683,6 +719,25 @@ pub fn preview(plan: &Plan, ids: Option<&[u32]>) -> Result<Preview, PlanError> {
             }
         }
     });
+    // (0.12.0) A plan gathering from other folders (root = the organize
+    // root): files coming in show up in the "after" tree too.
+    for m in &moves {
+        if m.src.starts_with(&res.root) {
+            continue;
+        }
+        let name = m.new_name.clone().unwrap_or_else(|| name_of(&m.src));
+        let name = if m.encrypt {
+            crate::mover::zip_name_for(&name)
+        } else {
+            name
+        };
+        let target = m.dest_dir.join(&name);
+        if let Ok(r) = target.strip_prefix(&res.root) {
+            moved += 1;
+            let size = std::fs::metadata(&m.src).map(|x| x.len()).unwrap_or(0);
+            after_files.push((r.to_string_lossy().replace('\\', "/"), size));
+        }
+    }
     let after_tree = DirNode::from_files(
         &res.tree.name,
         after_files.iter().map(|(p, s)| (p.as_str(), *s)),
@@ -726,7 +781,57 @@ pub fn preview(plan: &Plan, ids: Option<&[u32]>) -> Result<Preview, PlanError> {
         outside,
         files_moved: moved,
         emptied: tops,
+        structure: structure(plan, ids),
     })
+}
+
+/// Deepest layout level shown in the proposed structure (customer → issue
+/// → kind).
+const STRUCT_DEPTH: usize = 3;
+
+/// (0.12.0) The folder layout the selected work-context items get: every
+/// folder on the way from the organize root to each destination (three
+/// levels), with item / file counts and whether it already exists.
+pub fn structure(plan: &Plan, ids: Option<&[u32]>) -> Vec<StructDir> {
+    if plan.source != PlanSource::Context {
+        return Vec::new();
+    }
+    let plan_anchor = plan.anchor.clone().unwrap_or_else(|| plan.root.clone());
+    let mut map: std::collections::BTreeMap<(PathBuf, String), StructDir> =
+        std::collections::BTreeMap::new();
+    for m in selected(plan, ids).filter(|m| m.from != m.to) {
+        let anchor = m
+            .context
+            .as_ref()
+            .and_then(|n| n.anchor.clone())
+            .unwrap_or_else(|| plan_anchor.clone());
+        let Some(dir) = m.to.parent() else { continue };
+        let Ok(rel) = dir.strip_prefix(&anchor) else {
+            continue;
+        };
+        let mut cur = anchor.clone();
+        let mut path = String::new();
+        for (depth, comp) in rel.components().take(STRUCT_DEPTH).enumerate() {
+            cur.push(comp);
+            if !path.is_empty() {
+                path.push('/');
+            }
+            path.push_str(&comp.as_os_str().to_string_lossy());
+            let e = map
+                .entry((anchor.clone(), path.clone()))
+                .or_insert_with(|| StructDir {
+                    anchor: anchor.clone(),
+                    path: path.clone(),
+                    depth: depth + 1,
+                    exists: cur.is_dir(),
+                    items: 0,
+                    files: 0,
+                });
+            e.items += 1;
+            e.files += m.files;
+        }
+    }
+    map.into_values().collect()
 }
 
 /// Apply the selected moves of a saved plan (`None` = all) as ONE batch

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import * as ipc from "../ipc/commands";
-import { useReport } from "../store/report";
+import { ALL_WATCHES, useReport } from "../store/report";
 import { formatSize, formatTime } from "../components/format";
 import { RestructurePanel } from "../components/RestructurePanel";
 import { DuplicateGroups } from "../components/DuplicateGroups";
@@ -35,7 +35,12 @@ export function ReportView() {
             aria-label="정리할 폴더"
             onChange={(e) => void r.setPath(e.target.value)}
           >
-            {r.path && !r.roots.includes(r.path) && <option value={r.path}>{shortenTo(r.path, 40)} (다른 폴더)</option>}
+            <option value={ALL_WATCHES} data-testid="report-folder-all">
+              모든 감시 폴더 한 번에 (업무 맥락 · 처음 정리)
+            </option>
+            {r.path && r.path !== ALL_WATCHES && !r.roots.includes(r.path) && (
+              <option value={r.path}>{shortenTo(r.path, 40)} (다른 폴더)</option>
+            )}
             {r.roots.map((p) => {
               const w = watchOf(p, names);
               const label = w && w.path === p ? `${w.alias} — ${shortenTo(p, 32)}` : shortenTo(p, 48);
@@ -66,7 +71,11 @@ export function ReportView() {
           <label className="check">
             <input type="checkbox" checked={r.dups} onChange={(e) => r.setDups(e.target.checked)} /> 중복 찾기(내용 읽음)
           </label>
-          <button disabled={!r.path || r.loading} onClick={() => void r.build()}>
+          <button
+            disabled={!r.path || r.path === ALL_WATCHES || r.loading}
+            title={r.path === ALL_WATCHES ? "리포트는 폴더를 하나 골라야 만들 수 있습니다" : undefined}
+            onClick={() => void r.build()}
+          >
             {r.loading ? "분석 중…" : "리포트 만들기"}
           </button>
         </div>

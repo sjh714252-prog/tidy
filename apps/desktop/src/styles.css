@@ -123,6 +123,7 @@ input.narrow { width: 110px; }
 .tag.ok { color: var(--ok); }
 .tag.warn, .tag.pending, .tag.warning { color: var(--warn); }
 .tag.error { color: var(--err); }
+.tag.new { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
 .tag.moved { color: var(--ok); }
 .tag.ai, .tag.sem { color: var(--accent); }
 .tag.lock { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
@@ -536,3 +537,15 @@ button.big { padding: 10px 22px; font-size: 15px; }
 .more-ways[open] > summary { margin-bottom: 8px; }
 .more-ways .row { margin-bottom: 6px; }
 .diff-box > summary { cursor: pointer; }
+
+/* (0.12.0) work-context folder layout */
+.structure-box { margin: 8px 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
+.structure-box summary { cursor: pointer; }
+.structure ul { list-style: none; margin: 4px 0 6px; padding: 0; max-height: 320px; overflow: auto; }
+.structure li { padding: 2px 0; white-space: nowrap; }
+.context-flow { margin: 0 0 12px; padding: 0; list-style: none; display: grid; gap: 10px; }
+.context-flow > li { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.context-flow > li h3 { margin: 0 0 4px; }
+.context-route { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.context-flow label.row { flex-wrap: nowrap; align-items: flex-start; }
+.context-flow label.row > input[type="checkbox"] { margin-top: 3px; flex: none; }
