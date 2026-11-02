@@ -179,6 +179,22 @@ pub async fn plan_rules(
     .await
 }
 
+/// (0.11.2) Open a plan file (`.json`, see `tidy_core::report::import`):
+/// saved as a plan and previewed; nothing moves until applied.
+#[tauri::command]
+pub async fn import_plan(app: AppHandle, path: String) -> CmdResult<PlanDto> {
+    blocking(move || {
+        let cfg = app.state::<AppState>().config();
+        let text = std::fs::read_to_string(expand(&path)).map_err(err)?;
+        let plan = tidy_core::report::import::import_plan(&text).map_err(err)?;
+        let store = Store::open(&cfg.store.db_path()).map_err(err)?;
+        let plan = restructure::save(&store, plan).map_err(err)?;
+        let preview = restructure::preview(&plan, None).map_err(err)?;
+        Ok(PlanDto { plan, preview })
+    })
+    .await
+}
+
 /// Ask the AI for a restructure plan (can take a minute; nothing moves).
 #[tauri::command]
 pub async fn plan_ai(app: AppHandle, path: String, protect: Vec<String>) -> CmdResult<PlanDto> {
@@ -300,6 +316,8 @@ pub async fn apply_plan(
                 match plan.source {
                     restructure::PlanSource::Context => "업무 맥락",
                     restructure::PlanSource::Command => "명령",
+                    restructure::PlanSource::Relocate => "정리 위치로 옮기기",
+                    restructure::PlanSource::Imported => "제안 파일",
                     _ => "정리 제안",
                 },
                 r.moved.len(),

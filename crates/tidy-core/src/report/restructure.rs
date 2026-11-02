@@ -52,6 +52,11 @@ pub enum PlanSource {
     Context,
     /// (M17) A natural-language command (§14.14).
     Command,
+    /// (0.11.2) Files the first example rules put outside the organize
+    /// location, moved under it ([`super::relocate`]).
+    Relocate,
+    /// (0.11.2) Opened from a plan file ([`super::import`]).
+    Imported,
 }
 
 impl PlanSource {
@@ -61,6 +66,8 @@ impl PlanSource {
             PlanSource::Ai => "ai",
             PlanSource::Context => "context",
             PlanSource::Command => "command",
+            PlanSource::Relocate => "relocate",
+            PlanSource::Imported => "imported",
         }
     }
 }
@@ -738,6 +745,8 @@ pub fn apply(
     let label = match plan.source {
         PlanSource::Context => format!("업무 맥락 #{}", plan.id),
         PlanSource::Command => format!("명령 #{}", plan.id),
+        PlanSource::Relocate => format!("정리 위치로 옮기기 #{}", plan.id),
+        PlanSource::Imported => format!("제안 파일 #{}", plan.id),
         _ => format!("정리 제안 #{}", plan.id),
     };
     let mut report = ApplyReport {
@@ -860,6 +869,15 @@ pub fn apply(
         }
         let out = mover.move_file(&req).map_err(|e| e.to_string());
         record(&mut report, out, &fm.src, fm.context.as_ref(), fm.encrypt);
+    }
+    if plan.source == PlanSource::Imported {
+        // (0.11.2) A cleanup plan: also drop the folders it emptied
+        // (e.g. 기타/개발 once all its topic folders went), inside root only.
+        for m in selected(plan, ids) {
+            if let Some(parent) = m.from.parent() {
+                mover.prune_empty_parents(parent, &plan.root);
+            }
+        }
     }
     if plan.id > 0 && !report.moved.is_empty() {
         store.mark_plan_applied(plan.id, &batch_id)?;

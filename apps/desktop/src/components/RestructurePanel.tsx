@@ -9,7 +9,7 @@ import { AiNeeded, useAiOn } from "./AiNeeded";
 import { ContextTable, Suggestions } from "./ContextPlan";
 import { PlanMoves } from "./PlanMoves";
 
-const SOURCE: Record<string, string> = { ai: "AI", rules: "규칙", context: "업무 맥락" };
+const SOURCE: Record<string, string> = { ai: "AI", rules: "규칙", context: "업무 맥락", relocate: "정리 위치로 옮기기", imported: "제안 파일" };
 
 /**
  * Restructure (SPEC §5.7): plan from rules (no AI) or from the AI →
@@ -73,6 +73,14 @@ export function RestructurePanel() {
           {r.planning === "context" ? "AI가 업무 맥락을 보는 중…" : "업무 맥락으로 정리"}
         </button>
         <AiNeeded />
+        <button
+          data-testid="import-plan"
+          disabled={!!r.planning}
+          title="다른 곳에서 만든 정리 제안(.json)을 엽니다. 미리보기 후 적용해야 옮깁니다"
+          onClick={() => void r.importPlan()}
+        >
+          제안 파일 열기…
+        </button>
         {plans.length > 0 && (
           <select value="" onChange={(e) => e.target.value && void r.openPlan(Number(e.target.value))}>
             <option value="">지난 제안 열기…</option>

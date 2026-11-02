@@ -148,6 +148,27 @@ impl Mover {
         );
         Ok(report)
     }
+
+    /// (0.11.2) After a plan moved things out: remove the now-empty
+    /// folders from `start` upward, never `stop` itself or above it.
+    /// `remove_dir` only succeeds on empty folders, so nothing with files
+    /// (or other folders) in it is touched. Returns how many went.
+    pub fn prune_empty_parents(&self, start: &Path, stop: &Path) -> usize {
+        let mut n = 0;
+        let mut cur = start.to_path_buf();
+        while cur.starts_with(stop) && cur != stop {
+            self.expected.expect(&cur);
+            if fs::remove_dir(&cur).is_err() {
+                break;
+            }
+            n += 1;
+            match cur.parent() {
+                Some(p) => cur = p.to_path_buf(),
+                None => break,
+            }
+        }
+        n
+    }
 }
 
 #[cfg(test)]

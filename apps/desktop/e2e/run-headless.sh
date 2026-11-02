@@ -23,6 +23,8 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 pkill -9 -x tidy-desktop 2>/dev/null || true; sleep 1
 rm -rf "$T" "$HOME/Documents/Tidy" "$HOME/.local/share/tidy"; mkdir -p "$T/바탕 화면"
 (cd "$HERE/src-tauri" && cargo build)
+# Fixtures the app must find at start (config, rules): e2e/<name>.setup.mjs.
+[ -f "$HERE/e2e/$SCRIPT.setup.mjs" ] && T="$T" S="$S" node "$HERE/e2e/$SCRIPT.setup.mjs"
 pgrep -f "vite --port 1420" >/dev/null || (cd "$HERE" && nohup npx vite --port 1420 >"$S/vite.log" 2>&1 &)
 # A throw-away keychain service for the vault password (M9): never the real one.
 (cd "$HERE/src-tauri" && env ${APP_ENV:-} TIDY_VAULT_KEYCHAIN="tidy-e2e-$$-$(date +%s)" TIDY_CONFIG="$T/config.toml" WEBKIT_DISABLE_COMPOSITING_MODE=1 nohup xvfb-run -a target/debug/tidy-desktop >"$S/app-$SCRIPT.log" 2>&1 &)

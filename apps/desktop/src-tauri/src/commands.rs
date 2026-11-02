@@ -797,6 +797,21 @@ pub async fn pick_folder(app: AppHandle, start: Option<String>) -> CmdResult<Opt
     .await
 }
 
+/// (0.11.2) Pick a plan file (`.json`).
+#[tauri::command]
+pub async fn pick_plan_file(app: AppHandle) -> CmdResult<Option<String>> {
+    blocking(move || {
+        Ok(app
+            .dialog()
+            .file()
+            .add_filter("Tidy 제안 파일", &["json"])
+            .blocking_pick_file()
+            .and_then(|p| p.into_path().ok())
+            .map(|p| s(&p)))
+    })
+    .await
+}
+
 /// Whether a folder looks like a network share (UNC, remote drive, SMB/NFS
 /// mount) — the default "종류" when the user adds a folder.
 #[tauri::command]

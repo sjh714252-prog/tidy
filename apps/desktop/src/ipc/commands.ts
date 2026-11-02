@@ -107,6 +107,12 @@ export const pickFolder = (start?: string | null) =>
     ? invoke<string | null>("pick_folder", { start: start ?? null })
     : // Dev bridge (browser): no native dialog, so ask for the path as text.
       Promise.resolve(window.prompt("폴더 경로를 입력하세요", start ?? "")?.trim() || null);
+/** (0.11.2) A plan file (.json) to open in 정리하기. */
+export const pickPlanFile = () =>
+  inTauri
+    ? invoke<string | null>("pick_plan_file")
+    : Promise.resolve(window.prompt("제안 파일 경로를 입력하세요", "")?.trim() || null);
+export const importPlan = (path: string) => invoke<PlanResult>("import_plan", { path });
 /** UNC path, remote drive or SMB/NFS mount → default kind "network". */
 export const isNetworkPath = (path: string) => invoke<boolean>("is_network_path", { path });
 
