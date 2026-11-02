@@ -8,6 +8,7 @@
 
 pub mod ai;
 pub mod classify;
+pub mod command;
 pub mod config;
 pub mod curate;
 pub mod engine;
