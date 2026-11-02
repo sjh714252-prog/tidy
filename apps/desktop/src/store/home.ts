@@ -3,6 +3,7 @@ import * as ipc from "../ipc/commands";
 import type { CustomerStat, FolderOverview, Overview } from "../ipc/types";
 import { useNav } from "./nav";
 import { useReport } from "./report";
+import { useStatus } from "./status";
 
 /** (M11, SPEC §14.6) 홈 탭: 감시 현황 패널, 정리 현황, 정보 창. */
 interface HomeState {
@@ -58,11 +59,25 @@ export const useHome = create<HomeState>((set) => ({
  * highlighted when it can be used, never started on its own (it costs).
  */
 export async function organizeNow(f: FolderOverview, canCurate: boolean) {
+  const ai = useStatus.getState().status?.aiState;
+  const aiOn = ai === "ready" || ai === "starting";
   useNav.getState().setTab("report");
   const r = useReport.getState();
   await r.setPath(f.path);
-  useReport.setState({ suggestCurate: canCurate, recursive: f.recursive });
+  useReport.setState({
+    suggestCurate: canCurate || aiOn,
+    recursive: f.recursive,
+    leftover: f.backlog ? { files: f.backlog.noRule, folders: f.backlog.newFolders } : null,
+  });
   await useReport.getState().makePlan("rules", f.recursive);
+  // (0.11.1) No rule moves anything here (e.g. only a work-context
+  // dictionary, no rules): the rules preview would be an empty dead end, so
+  // go straight on to the work-context analysis (cost notice + confirm
+  // first; still nothing moves until the preview is applied).
+  const after = useReport.getState();
+  if (aiOn && after.plan?.source === "rules" && after.plan.moves.length === 0 && !after.error) {
+    await after.curate();
+  }
 }
 
 /**

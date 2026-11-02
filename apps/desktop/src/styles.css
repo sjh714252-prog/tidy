@@ -515,3 +515,6 @@ textarea.compose { width: 100%; min-height: 220px; font-family: var(--mono); fon
 .list-row.nas-batch-row { grid-template-columns: 130px minmax(0, auto) minmax(0, 1fr) auto; }
 .list-row .cell { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
 .list-row .cell.right { flex-direction: row; justify-content: flex-end; align-items: center; gap: 6px; }
+
+/* (0.11.1) The apply button stays in view under a long preview. */
+.apply-bar { position: sticky; bottom: 0; z-index: 2; background: var(--surface); border-top: 1px solid var(--line); padding: 10px 0; margin-top: 4px; }

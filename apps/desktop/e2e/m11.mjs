@@ -215,7 +215,7 @@ const save = () => saveSettings(main, 3000);
   const counts = await card.locator("[data-testid=backlog-count]").allInnerTexts();
   const total = counts.reduce((a, t) => a + Number(t.replace(/[^\d]/g, "")), 0);
   ok("C", "아직 정리 안 된 기존 파일: 폴더 카드 3장, 합계 35개", counts.length === 3 && total === 35, counts.join(" | ").replace(/\n/g, " "));
-  ok("C", "안내: 새 파일은 자동으로 정리", (await card.innerText()).includes("새 파일은 자동으로 정리됩니다"));
+  ok("C", "안내: 기존 파일은 [지금 정리] → 미리보기 → [적용], 새 파일은 감시 중 정리", (await card.innerText()).includes("[적용]을 눌러야 옮겨집니다") && (await card.innerText()).includes("새 파일은 감시 중 정리"));
   const deskRow = card.locator(`[data-testid=backlog-folder][data-path="${DESK}"]`);
   const deskTitle = (await deskRow.locator("[data-testid=backlog-count]").getAttribute("title")) ?? "";
   ok("C", "폴더별 수: 바탕화면 4개 (규칙에 맞음 2 · 규칙 없음 2)", (await deskRow.innerText()).includes("바탕화면") && (await deskRow.locator("[data-testid=backlog-count]").innerText()).startsWith("4") && deskTitle.includes("규칙에 맞음 2"), deskTitle);
