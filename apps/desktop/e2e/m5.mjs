@@ -14,7 +14,7 @@ const ok = (step, what, pass, note = "") => {
   console.log(`${pass ? "PASS" : "FAIL"} [${step}] ${what} ${note}`);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-import { addWatchFolder, gotoSettings, openToml, saveSettings, tab } from "./lib.mjs";
+import { addWatchFolder, gotoSettings, openToml, saveSettings, tab, moreWays } from "./lib.mjs";
 const bridge = async (cmd, args = {}) =>
   (await (await fetch(`http://127.0.0.1:1421/invoke/${cmd}`, { method: "POST", body: JSON.stringify(args) })).json()).value;
 
@@ -82,6 +82,7 @@ await sleep(800);
 
 // C. rules restructure preview → nothing moves until apply
 {
+  await moreWays(main);
   await main.getByRole("button", { name: "규칙으로 정리 미리보기" }).click();
   await sleep(5000);
   const panel = main.locator(".restructure");
@@ -98,7 +99,7 @@ await sleep(800);
   await rows.nth(0).getByRole("checkbox", { name: "선택" }).check();
   await rows.nth(1).getByRole("checkbox", { name: "선택" }).check();
   dialogs = [];
-  await panel.getByRole("button", { name: /선택한 2개 적용/ }).click();
+  await panel.getByRole("button", { name: /선택한 2개 옮기기/ }).click();
   await sleep(4000);
   ok("C", "적용 전 확인 다이얼로그", dialogs.some((d) => d.includes("옮깁니다")), dialogs[0] ?? "");
   const notice = await panel.locator(".notice", { hasText: "옮겼습니다" }).innerText().catch(() => "");

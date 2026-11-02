@@ -297,6 +297,14 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
             arg(&args, "selected")?,
         )
         .await?),
+        "settle_context_items" => ok(context_cmds::settle_context_items(
+            app,
+            arg(&args, "id")?,
+            arg(&args, "how")?,
+            arg(&args, "moveIds")?,
+            arg(&args, "selected")?,
+        )
+        .await?),
         "customer_overview" => ok(context_cmds::customer_overview(app).await?),
         "customer_names" => ok(context_cmds::customer_names(app).await?),
         "edit_context_move" => ok(context_cmds::edit_context_move(

@@ -69,15 +69,9 @@ export async function organizeNow(f: FolderOverview, canCurate: boolean) {
     recursive: f.recursive,
     leftover: f.backlog ? { files: f.backlog.noRule, folders: f.backlog.newFolders } : null,
   });
-  await useReport.getState().makePlan("rules", f.recursive);
-  // (0.11.1) No rule moves anything here (e.g. only a work-context
-  // dictionary, no rules): the rules preview would be an empty dead end, so
-  // go straight on to the work-context analysis (cost notice + confirm
-  // first; still nothing moves until the preview is applied).
-  const after = useReport.getState();
-  if (aiOn && after.plan?.source === "rules" && after.plan.moves.length === 0 && !after.error) {
-    await after.curate();
-  }
+  // (0.11.1) No rule moves anything (e.g. only a work-context dictionary):
+  // straight on to the work-context analysis — same as the main button.
+  await useReport.getState().start(f.recursive);
 }
 
 /**

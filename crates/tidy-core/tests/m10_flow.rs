@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use tidy_core::ai::MockProvider;
 use tidy_core::classify::{AiClassifier, RuleSet};
 use tidy_core::config::DuplicatePolicy;
-use tidy_core::curate::{ContextDict, ContextSuggestion, Curator, MoveEdit};
+use tidy_core::curate::{ContextDict, ContextSuggestion, Curator, MoveEdit, Settle};
 use tidy_core::mover::Mover;
 use tidy_core::report::restructure::{self, Plan};
 use tidy_core::store::Store;
@@ -584,4 +584,72 @@ fn timed_out_batch_is_split_and_retried() {
         .expect("timeout is retried in halves, not an error");
     assert!(provider.prompts().len() > 2);
     assert_eq!(store.curation_count().unwrap(), answers().len() as u64);
+}
+
+/// (0.11.3) 미분류 items are not a dead end: one click takes the AI's own
+/// unsure answer, or puts them under 기타/미분류/{종류}; then apply + undo.
+#[test]
+fn unclassified_items_settle_with_one_click() {
+    let (_tmp, desk) = setup();
+    let cfg = Config::default();
+    let ai = AiClassifier::with_provider(mock(), &cfg, &RuleSet::default()).unwrap();
+    let cur = Curator::new(dict(), cfg.curate.clone(), true).unwrap();
+    let mover = Mover::new(Store::open_in_memory().unwrap(), DuplicatePolicy::Rename);
+    let store = mover.store();
+    let mut plan = cur
+        .plan(&ai, store, &desk, &desk, &nofilter(), &[], &[])
+        .unwrap();
+    let memo = plan
+        .moves
+        .iter()
+        .find(|m| m.from.ends_with("메모.txt"))
+        .unwrap()
+        .id;
+    assert_eq!(
+        to_of(&plan, "메모.txt"),
+        desk.join("메모.txt"),
+        "미분류 stays"
+    );
+
+    // The AI's guess (topic 메모/기타, confidence 0.3).
+    let changed = cur.settle_unclassified(&mut plan, None, Settle::Guess, Some(store));
+    assert_eq!(changed, vec![memo]);
+    assert_eq!(
+        rel(&to_of(&plan, "메모.txt"), &desk),
+        "기타/메모/기타/메모.txt"
+    );
+    let note = plan
+        .moves
+        .iter()
+        .find(|m| m.id == memo)
+        .unwrap()
+        .context
+        .clone()
+        .unwrap();
+    assert!(!note.unclassified && note.settled == "guess" && !note.edited);
+    assert!(plan.summary.contains("미분류 0개"), "{}", plan.summary);
+    // Nothing left to settle.
+    assert!(cur
+        .settle_unclassified(&mut plan, None, Settle::ByKind, Some(store))
+        .is_empty());
+
+    // By kind instead (a fresh plan from the cache: still 미분류 there).
+    let mut plan = cur
+        .plan(&ai, store, &desk, &desk, &nofilter(), &[], &[])
+        .unwrap();
+    let changed = cur.settle_unclassified(&mut plan, Some(&[memo]), Settle::ByKind, Some(store));
+    assert_eq!(changed, vec![memo]);
+    assert_eq!(
+        rel(&to_of(&plan, "메모.txt"), &desk),
+        "기타/미분류/기타 자료/메모.txt"
+    );
+
+    // Apply only that item → moved; undo → back.
+    let plan = restructure::save(store, plan).unwrap();
+    let rep = restructure::apply(&mover, &plan, Some(&[memo]), &[], None).unwrap();
+    assert_eq!(rep.moved.len(), 1, "{:?} {:?}", rep.skipped, rep.errors);
+    assert!(desk.join("기타/미분류/기타 자료/메모.txt").is_file());
+    assert!(!desk.join("메모.txt").exists());
+    mover.undo_batch(&rep.batch_id).unwrap();
+    assert!(desk.join("메모.txt").is_file());
 }

@@ -23,7 +23,7 @@ import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { addWatchFolder, gotoSettings, openWatchEdit, saveSettings } from "./lib.mjs";
+import { addWatchFolder, gotoSettings, openWatchEdit, saveSettings, moreWays } from "./lib.mjs";
 
 const T = process.env.T;
 const S = process.env.S;
@@ -201,7 +201,7 @@ const fileRows = () => panel.locator("[data-testid=context-row][data-kind=file]"
 const DEST = path.join(ORG, "가온누리원", "20261019_로그분석", "개발", "가온누리원 로그");
 {
   dialogs.length = 0;
-  await panel.getByRole("button", { name: /선택한 \d+개 적용/ }).click();
+  await panel.getByRole("button", { name: /선택한 \d+개 옮기기/ }).click();
   const moved = await waitFor(async () => (await panel.locator(".notice", { hasText: "옮겼습니다" }).count()) === 1, 30000);
   const inner = walk(DEST);
   ok("E", "적용 → …/개발/가온누리원 로그/tools/go/*.go 30개 + README", moved && inner.filter((p) => /^tools\/go\/f\d\d\.go$/.test(p)).length === 30 && inner.includes("README.md"), `${inner.length} files`);
@@ -273,6 +273,7 @@ const DEST = path.join(ORG, "가온누리원", "20261019_로그분석", "개발"
   await main.locator("[data-testid=report-folder]").selectOption(DESK);
   await sleep(500);
   dialogs.length = 0;
+  await moreWays(main);
   await panel.locator("[data-testid=curate-plan]").click();
   await waitFor(async () => (await folderRow().count()) === 1, 60000);
   ok("H", "다시 분석: 캐시로 AI 안 부름 (비용 없음)", dialogs.some((d) => d.includes("비용 없음")), dialogs[0]?.replace(/\n/g, " ").slice(0, 100));

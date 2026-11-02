@@ -129,7 +129,7 @@ const panel = main.locator(".restructure");
   const planned = await waitFor(async () => (await panel.locator("[data-testid=context-plan]").count()) === 1, 60000);
   ok("D", "업무 맥락 미리보기", planned);
   const notice = await panel.locator("[data-testid=no-move-notice]").innerText();
-  ok("D", "미리보기 안내: '미리보기입니다 … [선택한 N개 적용]을 눌러야'", notice.includes("미리보기입니다") && notice.includes("적용을 누르기 전에는 아무것도 옮기지 않습니다"), notice);
+  ok("D", "미리보기 안내: '미리보기입니다 … [선택한 N개 적용]을 눌러야'", notice.includes("미리보기입니다") && notice.includes("눌러야"), notice);
   ok("D", "'적용하면 (미리보기)' 트리 제목", (await panel.locator("h4", { hasText: "적용하면 (미리보기)" }).count()) === 1);
   // The apply bar is on screen without scrolling to the end of a long table.
   await panel.locator("[data-testid=context-plan]").scrollIntoViewIfNeeded();
@@ -150,7 +150,7 @@ const panel = main.locator(".restructure");
 
 // E. apply → the tree appears in 정리, the desktop is empty, the reminder is gone
 {
-  await panel.getByRole("button", { name: /선택한 \d+개 적용/ }).click();
+  await panel.getByRole("button", { name: /선택한 \d+개 옮기기/ }).click();
   const moved = await waitFor(async () => (await panel.locator(".notice", { hasText: "옮겼습니다" }).count()) === 1, 30000);
   const org = walk(ORG);
   ok("E", "적용 → 정리/가람정보/…, 정리/기타/… 에 16개", moved && org.length === 16 && org.some((p) => p.startsWith("가람정보/")), org.slice(0, 3).join(", "));

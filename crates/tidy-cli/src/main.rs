@@ -277,6 +277,16 @@ enum CurateCmd {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Place the 미분류 items of a saved plan (nothing moves): the AI's own
+    /// unsure answer, or with --by-kind 기타/미분류/{종류}.
+    Settle {
+        plan: i64,
+        #[arg(long)]
+        by_kind: bool,
+        /// Comma-separated item numbers (default: every 미분류 item).
+        #[arg(long, value_delimiter = ',', value_name = "N,..")]
+        only: Vec<u32>,
+    },
     /// Apply a saved work-context plan as one undoable batch.
     Apply {
         plan: i64,
@@ -2818,6 +2828,34 @@ fn cmd_curate(config: Option<PathBuf>, cmd: CurateCmd) -> Result<()> {
     let cfg = load_config(config)?;
     let store = Store::open(&cfg.store.db_path())?;
     match cmd {
+        CurateCmd::Settle {
+            plan,
+            by_kind,
+            only,
+        } => {
+            let mut plan = restructure::load(&store, plan)?;
+            if plan.source != restructure::PlanSource::Context || plan.applied_batch.is_some() {
+                bail!("plan #{} is not an unapplied work-context plan", plan.id);
+            }
+            let cur = Curator::from_config(&cfg)?;
+            let how = if by_kind {
+                tidy_core::curate::Settle::ByKind
+            } else {
+                tidy_core::curate::Settle::Guess
+            };
+            let only = (!only.is_empty()).then_some(only.as_slice());
+            let changed = cur.settle_unclassified(&mut plan, only, how, Some(&store));
+            store.update_plan_json(plan.id, &serde_json::to_string(&plan)?)?;
+            for m in plan.moves.iter().filter(|m| changed.contains(&m.id)) {
+                println!("[{}] {} -> {}", m.id, m.from.display(), m.to.display());
+            }
+            println!(
+                "\n미분류 {}개에 옮길 곳을 정했습니다 (아직 아무것도 옮기지 않음). 적용: tidy curate apply {}",
+                changed.len(),
+                plan.id
+            );
+            Ok(())
+        }
         CurateCmd::Apply { plan, only } => {
             let plan = restructure::load(&store, plan)?;
             if plan.source != restructure::PlanSource::Context {

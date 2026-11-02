@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import * as ipc from "../ipc/commands";
+import { useStatus } from "./status";
 import type { ApplyResult, ContextSuggestion, CurateEstimate, MoveEdit, Plan, Preview, Report } from "../ipc/types";
 
 interface ReportState {
@@ -43,7 +44,14 @@ interface ReportState {
   build: () => Promise<void>;
   makePlan: (kind: "rules" | "ai" | "context", recursive?: boolean) => Promise<void>;
   /** "업무 맥락으로 정리": "모으기" guard → cost notice → confirm → plan. */
-  curate: () => Promise<void>;
+  curate: (skipGuard?: boolean) => Promise<void>;
+  /** (0.11.3) The one main button: a rules preview first; when no rule
+   * moves anything and the AI is on, straight on to the work context
+   * (cost notice + confirm first). Nothing moves. */
+  start: (recursive?: boolean) => Promise<void>;
+  /** (0.11.3) Place 미분류 work-context items in one click (nothing moves). */
+  settle: (how: "guess" | "by_kind", ids?: number[]) => Promise<void>;
+  settling: boolean;
   /** (M12) "파일별로 나누기": re-analyze one folder item's files. */
   splitFolder: (moveId: number) => Promise<void>;
   /** (M10) Change customer / issue / kind of one work-context item. */
@@ -94,6 +102,7 @@ export const useReport = create<ReportState>((set, get) => ({
   target: null,
   suggestCurate: false,
   leftover: null,
+  settling: false,
 
   loadRoots: async () => {
     try {
@@ -147,9 +156,9 @@ export const useReport = create<ReportState>((set, get) => ({
       set({ planning: null });
     }
   },
-  curate: async () => {
+  curate: async (skipGuard = false) => {
     const { path, target } = get();
-    if (!path || !guardTarget(target)) return;
+    if (!path || (!skipGuard && !guardTarget(target))) return;
     try {
       const est = await ipc.curateEstimate(path);
       if (!est.files) {
@@ -162,6 +171,34 @@ export const useReport = create<ReportState>((set, get) => ({
       return;
     }
     await get().makePlan("context");
+  },
+  start: async (recursive) => {
+    const st = get();
+    if (!st.path || !guardTarget(st.target)) return;
+    await get().makePlan("rules", recursive ?? st.recursive);
+    const after = get();
+    const ai = useStatus.getState().status?.aiState;
+    const aiOn = ai === "ready" || ai === "starting";
+    if (aiOn && after.plan?.source === "rules" && after.plan.moves.length === 0 && !after.error) {
+      // target already confirmed above: skip the second guard.
+      await get().curate(true);
+    }
+  },
+  settle: async (how, ids) => {
+    const { plan, selected } = get();
+    if (!plan || plan.applied_batch) return;
+    set({ settling: true, error: null });
+    try {
+      const r = await ipc.settleContextItems(plan.id, how, ids ?? null, [...selected]);
+      const sel = new Set([...selected].filter((id) => r.plan.moves.some((x) => x.id === id && x.from !== x.to)));
+      const before = new Map(plan.moves.map((m) => [m.id, m.from !== m.to]));
+      for (const m of r.plan.moves) if (m.from !== m.to && !before.get(m.id)) sel.add(m.id);
+      set({ plan: r.plan, preview: r.preview, selected: sel });
+    } catch (e) {
+      set({ error: String(e) });
+    } finally {
+      set({ settling: false });
+    }
   },
   splitFolder: async (moveId) => {
     const { plan, selected, suggestions } = get();

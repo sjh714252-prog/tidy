@@ -236,7 +236,11 @@ function Row({
       </td>
       <td className="small">
         {c.unclassified ? (
-          <span className="tag warn">미분류</span>
+          <span className="tag warn" title="AI 확신이 낮아 그대로 둡니다">미분류 · 그대로 둠</span>
+        ) : c.settled === "guess" ? (
+          <span className="tag" title="확신은 낮지만 AI가 고른 곳">AI 추측 {pct}%</span>
+        ) : c.settled === "kind" ? (
+          <span className="tag">종류별로 모음</span>
         ) : c.edited ? (
           <span className="tag">직접 고침</span>
         ) : (

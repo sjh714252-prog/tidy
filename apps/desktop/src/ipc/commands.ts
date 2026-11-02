@@ -158,6 +158,9 @@ export const planContext = (path: string, protect: string[]) =>
 /** (M12) "이 폴더는 파일별로 나눠서": re-analyze a folder item's files. */
 export const splitContextFolder = (id: number, moveId: number, selected: number[]) =>
   invoke<ContextEdit>("split_context_folder", { id, moveId, selected });
+/** (0.11.3) Place 미분류 items: the AI's guess or 기타/미분류/{종류} (nothing moves). */
+export const settleContextItems = (id: number, how: "guess" | "by_kind", moveIds: number[] | null, selected: number[]) =>
+  invoke<ContextEdit>("settle_context_items", { id, how, moveIds, selected });
 export const customerOverview = () => invoke<CustomerStat[]>("customer_overview");
 export const customerNames = () => invoke<string[]>("customer_names");
 export const editContextMove = (id: number, moveId: number, edit: MoveEdit, selected: number[]) =>

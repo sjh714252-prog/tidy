@@ -23,7 +23,7 @@ import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { addWatchFolder, gotoSettings, openWatchEdit, saveSettings, statusText, tab } from "./lib.mjs";
+import { addWatchFolder, gotoSettings, openWatchEdit, saveSettings, statusText, tab, moreWays } from "./lib.mjs";
 
 const T = process.env.T;
 const S = process.env.S;
@@ -172,6 +172,7 @@ let planId = null;
   const btn = panel.locator("[data-testid=curate-plan]");
   ok("D", "업무 맥락으로 정리 버튼 활성", await btn.isEnabled());
   dialogs.length = 0;
+  await moreWays(main);
   await btn.click();
   const shown = await waitFor(async () => (await panel.locator("[data-testid=context-plan]").count()) === 1, 30000);
   ok("D", "분석 전 비용 안내 (파일 수·토큰)", dialogs.length > 0 && /파일 11개/.test(dialogs[0]) && /토큰/.test(dialogs[0]), dialogs[0]?.replace(/\n/g, " ") ?? "(없음)");
@@ -228,7 +229,7 @@ const DEST = {
 {
   const panel = main.locator(".restructure");
   dialogs.length = 0;
-  await panel.getByRole("button", { name: /선택한 \d+개 적용/ }).click();
+  await panel.getByRole("button", { name: /선택한 \d+개 옮기기/ }).click();
   const done = await waitFor(async () => (await panel.locator(".notice", { hasText: "옮겼습니다" }).count()) === 1, 20000);
   ok("F", "적용 전 확인 대화상자", dialogs.some((d) => d.includes("되돌릴 수 있습니다")));
   const wrong = Object.entries(DEST).filter(([n, p]) => !fs.existsSync(at(...p, n)));

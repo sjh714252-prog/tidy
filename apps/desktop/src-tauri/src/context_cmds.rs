@@ -287,6 +287,43 @@ pub async fn edit_context_move(
     .await
 }
 
+/// (0.11.3) "미분류 한 번에 정하기": the AI's guess or 기타/미분류/{종류}
+/// for the 미분류 items (all, or `move_ids`). Nothing moves; the newly
+/// placed items come in ticked.
+#[tauri::command]
+pub async fn settle_context_items(
+    app: AppHandle,
+    id: i64,
+    how: tidy_core::curate::Settle,
+    move_ids: Option<Vec<u32>>,
+    selected: Vec<u32>,
+) -> CmdResult<EditDto> {
+    blocking(move || {
+        let cfg = app.state::<AppState>().config();
+        let cur = Curator::from_config(&cfg).map_err(err)?;
+        let store = Store::open(&cfg.store.db_path()).map_err(err)?;
+        let mut plan = restructure::load(&store, id).map_err(err)?;
+        if plan.applied_batch.is_some() {
+            return Err("이미 적용한 제안은 고칠 수 없습니다".into());
+        }
+        let changed = cur.settle_unclassified(&mut plan, move_ids.as_deref(), how, Some(&store));
+        let json = serde_json::to_string(&plan).map_err(err)?;
+        store.update_plan_json(plan.id, &json).map_err(err)?;
+        let mut ids = selected;
+        ids.extend(changed);
+        ids.sort_unstable();
+        ids.dedup();
+        ids.retain(|i| plan.moves.iter().any(|m| m.id == *i && m.from != m.to));
+        let preview = restructure::preview(&plan, Some(&ids)).map_err(err)?;
+        Ok(EditDto {
+            plan,
+            preview,
+            suggestions: Vec::new(),
+        })
+    })
+    .await
+}
+
 /// (M12) "파일별로 나누기": analyse one folder item's files separately.
 #[tauri::command]
 pub async fn split_context_folder(
