@@ -84,3 +84,9 @@ export const moreItem = async (scope, label, menu = "다른 선택") => {
   const page = typeof scope.page === "function" ? scope.page() : scope;
   await page.getByRole("menuitem", { name: label, exact: true }).click();
 };
+
+/** (0.11.3) Open 정리하기 › "다른 방법으로 정리하기" (folded by default). */
+export async function moreWays(page) {
+  const d = page.locator("[data-testid=more-ways]");
+  if (!(await d.evaluate((e) => e.open))) await d.locator("summary").first().click();
+}

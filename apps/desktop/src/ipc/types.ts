@@ -635,6 +635,8 @@ export interface ContextNote {
   ai_issue: string;
   unclassified: boolean;
   edited: boolean;
+  /** (0.11.3) Placed with one click: "guess" (AI's unsure answer) / "kind" (기타/미분류/종류). */
+  settled?: "guess" | "kind" | "";
   key: string;
   /** (M12) A folder item's inner tree (a few levels). */
   tree?: string | null;

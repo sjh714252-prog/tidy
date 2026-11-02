@@ -518,3 +518,21 @@ textarea.compose { width: 100%; min-height: 220px; font-family: var(--mono); fon
 
 /* (0.11.1) The apply button stays in view under a long preview. */
 .apply-bar { position: sticky; bottom: 0; z-index: 2; background: var(--surface); border-top: 1px solid var(--line); padding: 10px 0; margin-top: 4px; }
+
+/* 0.11.3 정리하기: one main step at a time */
+.steps { display: flex; gap: 6px; list-style: none; margin: 0; padding: 0; flex-wrap: wrap; }
+.steps li { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 13px; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); }
+.steps li .num { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: 11px; font-weight: 700; background: var(--line); color: var(--fg, inherit); }
+.steps li.now { color: inherit; font-weight: 600; border-color: var(--accent); }
+.steps li.now .num { background: var(--accent); color: var(--accent-fg); }
+.steps li.done .num { background: var(--ok, var(--accent)); color: var(--accent-fg); }
+.restructure .start { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 6px 0; }
+button.big { padding: 10px 22px; font-size: 15px; }
+.plan-headline { margin: 4px 0; font-size: 15px; }
+.notice.unsure .settle, .apply-bar .settle { display: inline-flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
+.apply-bar .settle { margin: 0; }
+.more-ways { border-top: 1px solid var(--line); padding-top: 8px; }
+.more-ways > summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+.more-ways[open] > summary { margin-bottom: 8px; }
+.more-ways .row { margin-bottom: 6px; }
+.diff-box > summary { cursor: pointer; }

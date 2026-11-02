@@ -116,6 +116,10 @@ pub struct ContextNote {
     pub unclassified: bool,
     /// Changed by the user in the preview.
     pub edited: bool,
+    /// (0.11.3) A 미분류 item placed with one click: "guess" (the AI's own
+    /// unsure answer) or "kind" (기타/미분류/{종류}). Empty otherwise.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub settled: String,
     /// `curation.key` of the file.
     pub key: String,
     /// (M12) A folder item: its inner tree (a few levels) for the preview.

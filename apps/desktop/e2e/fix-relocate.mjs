@@ -9,7 +9,7 @@ import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { sleep, tab as tabOf, waitFor } from "./lib.mjs";
+import { sleep, tab as tabOf, waitFor, moreWays } from "./lib.mjs";
 
 const T = process.env.T;
 const S = process.env.S;
@@ -65,7 +65,7 @@ const panel = main.locator(".restructure");
 
 // C. apply → files under 정리/문서/2026-10; a new pdf follows the organize location
 {
-  await panel.getByRole("button", { name: /선택한 \d+개 적용/ }).click();
+  await panel.getByRole("button", { name: /선택한 \d+개 옮기기/ }).click();
   const moved = await waitFor(async () => (await panel.locator(".notice", { hasText: "옮겼습니다" }).count()) === 1, 30000);
   const want = ["견적서.pdf", "회의록.docx"].map((n) => path.join(ORG, "문서", "2026-10", n));
   ok("C", "적용 → 정리/문서/2026-10/견적서.pdf·회의록.docx", moved && want.every((p) => fs.existsSync(p)), want.filter((p) => !fs.existsSync(p)).join(","));
@@ -119,13 +119,14 @@ const panel = main.locator(".restructure");
   fs.writeFileSync(file, JSON.stringify(plan));
   await tab("정리하기").click();
   process.env.PROMPT_ANSWER = file;
+  await moreWays(main);
   await panel.locator("[data-testid=import-plan]").click();
   const open = await waitFor(async () => (await panel.locator(".plan").count()) === 1 && (await panel.locator(".plan").innerText()).includes("제안 파일"), 15000);
   const txt = open ? await panel.innerText() : "";
   ok("E", "제안 파일 열기 → 미리보기 5개 항목(폴더째) + 거부 1개 (root 밖)", txt.includes("5개 항목") && txt.includes("받아들이지 않은 AI 제안 1개"), txt.replace(/\n/g, " | ").slice(0, 300));
   ok("E", "미리보기만으로 무이동", fs.existsSync(path.join(dev, "소스 코드", "main.go")));
   await main.screenshot({ path: `${SHOT}/fix-relocate-E-plan.png`, fullPage: true });
-  await panel.getByRole("button", { name: /선택한 \d+개 적용/ }).click();
+  await panel.getByRole("button", { name: /선택한 \d+개 옮기기/ }).click();
   const moved = await waitFor(async () => (await panel.locator(".notice", { hasText: "옮겼습니다" }).count()) === 1, 30000);
   const src = fs.readdirSync(path.join(BASE, "소스 코드")).sort();
   ok("E", "적용 → 소스 코드에 a.go·main.go·main (1).go (겹친 이름은 번호)", moved && src.length === 3 && src.includes("a.go") && src.includes("main.go"), src.join(","));

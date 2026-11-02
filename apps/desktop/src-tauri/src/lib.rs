@@ -186,6 +186,7 @@ pub fn run() {
             context_cmds::extract_context,
             context_cmds::context_groups,
             context_cmds::split_context_folder,
+            context_cmds::settle_context_items,
             context_cmds::customer_overview,
             context_cmds::customer_names,
             report_cmds::report_roots,

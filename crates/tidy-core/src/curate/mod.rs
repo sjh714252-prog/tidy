@@ -1048,6 +1048,7 @@ impl Curator {
         }
         n.unclassified = false;
         n.edited = true;
+        n.settled.clear();
         let corrected = Curation {
             entity: n.entity.clone(),
             issue: n.issue.clone(),
@@ -1069,6 +1070,59 @@ impl Curator {
         }
         self.relayout(plan, Some(store));
         Ok(suggestions)
+    }
+
+    /// (0.11.3, SPEC §14.17) Place the 미분류 items (all, or `only`) with
+    /// one click instead of leaving them where they are: [`Settle::Guess`]
+    /// takes the AI's own unsure answer (items without one go by kind),
+    /// [`Settle::ByKind`] puts them under 기타/미분류/{종류}. Nothing moves;
+    /// returns the items that now have a destination.
+    pub fn settle_unclassified(
+        &self,
+        plan: &mut Plan,
+        only: Option<&[u32]>,
+        how: Settle,
+        store: Option<&Store>,
+    ) -> Vec<u32> {
+        let mut changed = Vec::new();
+        for m in plan.moves.iter_mut() {
+            if only.is_some_and(|o| !o.contains(&m.id)) {
+                continue;
+            }
+            let Some(n) = m.context.as_mut() else {
+                continue;
+            };
+            if !n.unclassified {
+                continue;
+            }
+            if n.doc_kind.trim().is_empty() {
+                n.doc_kind = if m.is_dir {
+                    "자료".to_string()
+                } else {
+                    self.dict
+                        .doc_kind_for_ext(&crate::paths::ext_lower(&m.from))
+                        .unwrap_or("기타 자료")
+                        .to_string()
+                };
+            }
+            let has_topic = n.topic.as_deref().is_some_and(|t| !t.trim().is_empty());
+            let guess = how == Settle::Guess && (n.entity.is_some() || has_topic);
+            if guess {
+                if n.entity.is_some() && n.issue.trim().is_empty() {
+                    n.issue = "기타 이슈".into();
+                }
+                n.settled = "guess".into();
+            } else {
+                n.entity = None;
+                n.topic = Some(format!("미분류/{}", n.doc_kind.trim()));
+                n.settled = "kind".into();
+            }
+            n.unclassified = false;
+            changed.push(m.id);
+        }
+        self.relayout(plan, store);
+        changed.retain(|id| plan.moves.iter().any(|m| m.id == *id && m.from != m.to));
+        changed
     }
 
     /// Where a new file in a watch folder goes (`None`: AI had no answer).
@@ -1146,6 +1200,16 @@ impl Curator {
     }
 }
 
+/// (0.11.3) How [`Curator::settle_unclassified`] places 미분류 items.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Settle {
+    /// The AI's own (unsure) answer; items without one go by kind.
+    Guess,
+    /// 기타/미분류/{종류}: no customer, grouped by kind of material.
+    ByKind,
+}
+
 /// A user's change to one preview item.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -1173,6 +1237,7 @@ fn note_for(i: &CurateInput, c: &Curation, unclassified: bool) -> ContextNote {
         ai_issue: c.issue.clone(),
         unclassified,
         edited: c.source == CurationSource::User,
+        settled: String::new(),
         key: i.key.clone(),
         tree: i.unit.as_ref().map(|u| inner_tree(&u.path)),
     }
