@@ -532,7 +532,12 @@ impl Engine {
                 "새 주제 '{}' 폴더를 만들까요?",
                 c.topic.as_deref().unwrap_or("미분류")
             ),
-            _ => format!("확신도 {:.0}%", c.confidence * 100.0),
+            // (0.12.0) The issue folder exists but a level below it (kind)
+            // does not, or the AI is unsure: say it is an existing folder.
+            _ => format!(
+                "이미 있는 폴더에 넣을까요? (확신도 {:.0}%)",
+                c.confidence * 100.0
+            ),
         };
         let reason = format!("{question} — {}", c.reason);
         store.upsert_pending_entry(&NewPending {

@@ -170,7 +170,7 @@ export function WizardWindow() {
             </p>
             <p className="notice small" data-testid="wizard-curate-note">
               고객사·이슈별로 묶는 <b>업무 맥락 정리</b>를 쓰려면 AI가 필요합니다. 여기서 켜 두면 나중에 설정 → 업무
-              맥락에서 "바탕화면에서 뽑기"로 고객사 사전을 만들 수 있습니다.
+              맥락에서 "감시 폴더에서 뽑기"로 고객사 사전을 만들고, 흩어진 파일 전체를 훑어 폴더 구성안을 볼 수 있습니다.
             </p>
             <AiSettingsSection />
           </div>

@@ -338,6 +338,7 @@ pub fn run(
                 rejected: Vec::new(),
                 applied_batch: None,
                 anchor: None,
+                sources: Vec::new(),
             };
             Some(restructure::save(store, plan)?)
         }

@@ -215,6 +215,7 @@ pub fn import_plan(text: &str) -> Result<Plan, PlanError> {
         rejected,
         applied_batch: None,
         anchor: None,
+        sources: Vec::new(),
     })
 }
 

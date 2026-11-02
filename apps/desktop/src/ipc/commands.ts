@@ -155,6 +155,10 @@ export const curateEstimate = (path: string) => invoke<CurateEstimate>("curate_e
 /** AI analysis → saved plan + preview. Nothing moves. */
 export const planContext = (path: string, protect: string[]) =>
   invoke<PlanResult>("plan_context", { path, protect });
+/** (0.12.0) "모든 감시 폴더 훑기": cost of one plan over every watch folder. */
+export const curateEstimateAll = () => invoke<CurateEstimate>("curate_estimate_all");
+/** (0.12.0) One work-context plan over every watch folder (existing folders reused). Nothing moves. */
+export const planContextAll = (protect: string[]) => invoke<PlanResult>("plan_context_all", { protect });
 /** (M12) "이 폴더는 파일별로 나눠서": re-analyze a folder item's files. */
 export const splitContextFolder = (id: number, moveId: number, selected: number[]) =>
   invoke<ContextEdit>("split_context_folder", { id, moveId, selected });

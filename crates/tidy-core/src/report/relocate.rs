@@ -259,6 +259,7 @@ pub fn plan_relocations(
             rejected: Vec::new(),
             applied_batch: None,
             anchor: None,
+            sources: Vec::new(),
         };
         plans.push(save(store, plan)?);
     }

@@ -640,6 +640,12 @@ export interface ContextNote {
   key: string;
   /** (M12) A folder item's inner tree (a few levels). */
   tree?: string | null;
+  /** (0.12.0) Organize root of this item (plans over several watch folders). */
+  anchor?: string | null;
+  /** (0.12.0) Goes into a folder that is already there, or a new one. */
+  folder_state?: "existing" | "new" | "";
+  /** (0.12.0) First folder made for it, relative to its organize root. */
+  new_dir?: string | null;
 }
 export interface Plan {
   id: number;
@@ -651,6 +657,10 @@ export interface Plan {
   moves: PlannedMove[];
   rejected: { from: string; to: string; reason: string }[];
   applied_batch: string | null;
+  /** (M10) Organize root layouts use. */
+  anchor?: string | null;
+  /** (0.12.0) "모든 감시 폴더" plan: the folders it gathered from (root = organize root). */
+  sources?: string[];
 }
 export interface Preview {
   before: string;
@@ -660,6 +670,18 @@ export interface Preview {
   files_moved: number;
   /** Folders left empty (kept — nothing is deleted). */
   emptied: string[];
+  /** (0.12.0) Work-context plans: the folder layout of the selected items. */
+  structure?: StructDir[];
+}
+/** (0.12.0) One folder of a work-context plan's proposed layout. */
+export interface StructDir {
+  anchor: string;
+  /** Relative to anchor, "/"-separated. */
+  path: string;
+  depth: number;
+  exists: boolean;
+  items: number;
+  files: number;
 }
 export interface PlanResult { plan: Plan; preview: Preview }
 export interface DupSkip { path: string; existing: string; message: string }
@@ -766,6 +788,10 @@ export interface CurateSettings {
   contextPath: string;
   contextExists: boolean;
   analysed: number;
+  /** (0.12.0) Where files come from: the watch folders. */
+  sources?: { path: string; alias: string | null; inPlace: boolean }[];
+  /** (0.12.0) Where folders are made, with what is already there (reused). */
+  targets?: { path: string; folders: number; names: string[] }[];
 }
 
 /** (M10) "파일 N개, 예상 토큰/비용". */
@@ -811,6 +837,8 @@ export interface ContextCandidates {
   issue_types: { name: string; known: boolean }[];
   doc_kinds: { name: string; ext: string[]; known: boolean }[];
   files: number;
+  /** (0.12.0) Watch folders the files came from. */
+  folders?: string[];
 }
 
 /** (M17, SPEC §14.14) A natural-language command, interpreted. Nothing moved. */
