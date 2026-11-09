@@ -360,6 +360,7 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         )
         .await?),
         "list_plans" => ok(report_cmds::list_plans(app).await?),
+        "discard_plan" => ok(report_cmds::discard_plan(app, arg(&args, "id")?).await?),
         "open_plan" => ok(report_cmds::open_plan(app, arg(&args, "id")?).await?),
         "list_batches" => ok(report_cmds::list_batches(app, arg(&args, "limit")?).await?),
         "batch_moves" => ok(report_cmds::batch_moves(app, arg(&args, "batchId")?).await?),

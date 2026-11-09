@@ -72,6 +72,16 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// (0.12.4) Forget a plan that was never applied ("버리기"). An applied
+    /// plan stays: its batch is the undo record. Nothing on disk changes.
+    pub fn discard_plan(&self, id: i64) -> Result<bool, StoreError> {
+        let n = self.conn().execute(
+            "DELETE FROM restructure_plans WHERE id = ?1 AND applied_batch IS NULL",
+            [id],
+        )?;
+        Ok(n > 0)
+    }
+
     pub fn mark_plan_applied(&self, id: i64, batch_id: &str) -> Result<(), StoreError> {
         self.conn().execute(
             "UPDATE restructure_plans SET applied_batch = ?1, applied_at = ?2 WHERE id = ?3",

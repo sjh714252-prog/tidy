@@ -4,7 +4,8 @@
 //! the home tab as "적용하지 않은 미리보기"; nothing moves until applied).
 
 use tauri::{AppHandle, Manager};
-use tidy_core::report::relocate::{migrate_rules_text, plan_relocations};
+use tidy_core::report::relocate::{is_bad_relocation, migrate_rules_text, plan_relocations};
+use tidy_core::report::restructure::PlanSource;
 use tidy_core::store::Store;
 
 use crate::state::AppState;
@@ -59,6 +60,20 @@ pub fn run(app: &AppHandle) {
         let Ok(store) = Store::open(&cfg.store.db_path()) else {
             return;
         };
+        // (0.12.4) Relocation previews made for a development project
+        // (`Documents\tidy` = a git clone, same as `Documents\Tidy` on
+        // Windows: crates/, apps/, .git/ …) are dropped, never applied.
+        if let Ok(old) = store.recent_plans(200) {
+            for p in old.iter().filter(|p| {
+                p.source == PlanSource::Relocate.as_str()
+                    && p.applied_batch.is_none()
+                    && is_bad_relocation(&p.root)
+            }) {
+                if store.discard_plan(p.id).unwrap_or(false) {
+                    tracing::info!(id = p.id, root = %p.root.display(), "dropped relocation preview of a development project");
+                }
+            }
+        }
         match plan_relocations(&cfg, &store, &text) {
             Ok(plans) => {
                 for p in &plans {

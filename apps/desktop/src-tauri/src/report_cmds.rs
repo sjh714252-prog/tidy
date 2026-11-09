@@ -380,6 +380,17 @@ pub struct PlanListItem {
     pub moves: usize,
 }
 
+/// (0.12.4) "버리기": forget an unapplied preview (nothing on disk moves).
+#[tauri::command]
+pub async fn discard_plan(app: AppHandle, id: i64) -> CmdResult<bool> {
+    blocking(move || {
+        let cfg = app.state::<AppState>().config();
+        let store = Store::open(&cfg.store.db_path()).map_err(err)?;
+        store.discard_plan(id).map_err(err)
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn open_plan(app: AppHandle, id: i64) -> CmdResult<PlanDto> {
     blocking(move || {

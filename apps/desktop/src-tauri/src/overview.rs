@@ -270,7 +270,7 @@ fn spawn_count(
                 let (new_folders, settling) = match &cur {
                     Some(cur) => {
                         let skip_dirs = tidy_core::curate::skip_dirs(&cfg, &rules, w.anchor());
-                        let (units, unsettled) = cur.folder_units(
+                        let s = cur.scan_folders(
                             &w.path,
                             w.anchor(),
                             &filter,
@@ -279,7 +279,10 @@ fn spawn_count(
                             store.as_ref(),
                             now,
                         );
-                        (units.len(), unsettled.len())
+                        // (0.12.4) Folders left by earlier organizing count
+                        // too: otherwise the card read "0개 · 정리됨" with a
+                        // desktop full of them and no button.
+                        (s.units.len() + s.leftovers.len(), s.unsettled.len())
                     }
                     None => (0, 0),
                 };

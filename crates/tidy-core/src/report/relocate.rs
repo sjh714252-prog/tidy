@@ -130,6 +130,38 @@ pub fn migrate_rules_text(text: &str) -> Result<Option<(String, Vec<LegacyFix>)>
     Ok(Some((apply_cards(text, &cards)?, fixes)))
 }
 
+/// (0.12.4) A folder that is a development project: a git checkout or a
+/// build manifest at its top. On Windows
+/// `~/Documents/tidy` (a clone of this repository) *is* `~/Documents/Tidy`,
+/// so without this its `crates/`, `apps/`, `.git/` looked like Tidy's own
+/// old folders. Such folders are never relocated wholesale.
+pub fn is_dev_project(dir: &Path) -> bool {
+    const MARKERS: &[&str] = &[
+        ".git",
+        ".hg",
+        ".svn",
+        "Cargo.toml",
+        "package.json",
+        "go.mod",
+        "pyproject.toml",
+        "pom.xml",
+        "build.gradle",
+        "CMakeLists.txt",
+    ];
+    MARKERS.iter().any(|m| dir.join(m).exists())
+}
+
+fn hidden(p: &Path) -> bool {
+    p.file_name()
+        .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+}
+
+/// (0.12.4) A saved relocation plan that should never have been made:
+/// its folder is hidden or part of a development project.
+pub fn is_bad_relocation(root: &Path) -> bool {
+    hidden(root) || is_dev_project(root) || root.parent().is_some_and(is_dev_project)
+}
+
 /// Every legacy folder (absolute) with its new relative base, existing or not.
 fn legacy_folders() -> Vec<(PathBuf, String)> {
     let Some(home) = home() else {
@@ -139,9 +171,13 @@ fn legacy_folders() -> Vec<(PathBuf, String)> {
         .iter()
         .map(|(o, n)| (home.join(o), (*n).to_string()))
         .collect();
-    if let Ok(rd) = std::fs::read_dir(home.join(TIDY_HOME)) {
+    let tidy_home = home.join(TIDY_HOME);
+    if is_dev_project(&tidy_home) {
+        return out;
+    }
+    if let Ok(rd) = std::fs::read_dir(&tidy_home) {
         for e in rd.flatten() {
-            if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            if e.file_type().map(|t| t.is_dir()).unwrap_or(false) && !hidden(&e.path()) {
                 let name = e.file_name().to_string_lossy().into_owned();
                 out.push((e.path(), name));
             }
@@ -191,6 +227,7 @@ pub fn plan_relocations(
     let mut plans = Vec::new();
     for (old, new_base) in legacy_folders() {
         if !old.is_dir()
+            || is_bad_relocation(&old)
             || still_used.iter().any(|u| same(u, &old))
             || open.iter().any(|r| same(r, &old))
         {
@@ -202,6 +239,10 @@ pub fn plan_relocations(
             .min_depth(1)
             .sort_by_file_name()
             .into_iter()
+            // Never into hidden folders (.git) or a project inside.
+            .filter_entry(|e| {
+                !hidden(e.path()) && !(e.file_type().is_dir() && is_dev_project(e.path()))
+            })
             .filter_map(Result::ok)
         {
             let path = e.path();
@@ -336,5 +377,25 @@ dest = "~/Documents/Tidy/문서/{yyyy}-{mm}"
         assert!(out.contains(r#"dest = "D:/로그""#));
         assert!(out.contains("^스크린샷"));
         assert!(migrate_rules_text(&out).unwrap().is_none());
+    }
+
+    #[test]
+    fn dev_projects_are_never_relocated() {
+        let t = tempfile::tempdir().unwrap();
+        // ~/Documents/tidy = a clone of this repository (same as "Tidy" on Windows).
+        let repo = t.path().join("tidy");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("apps")).unwrap();
+        std::fs::create_dir_all(repo.join(".github")).unwrap();
+        assert!(is_dev_project(&repo));
+        assert!(is_bad_relocation(&repo.join("apps")));
+        assert!(is_bad_relocation(&repo.join(".github")));
+        assert!(is_bad_relocation(&repo.join(".git")));
+        // Tidy's real old folder (no repository) is fine.
+        let old = t.path().join("Tidy2").join("문서");
+        std::fs::create_dir_all(&old).unwrap();
+        assert!(!is_bad_relocation(&old));
+        std::fs::write(old.join("Cargo.toml"), "").unwrap();
+        assert!(is_bad_relocation(&old));
     }
 }
