@@ -143,6 +143,7 @@ const panel = main.locator(".restructure");
   const t = shown ? await un.innerText() : "";
   ok("D", "홈: '적용하지 않은 미리보기 · 바탕 화면 · 업무 맥락 16개'", t.includes("적용하지 않은 미리보기") && t.includes("업무 맥락 16개"), t.replace(/\n/g, " | "));
   await main.screenshot({ path: `${SHOT}/fix-D-home-unapplied.png` });
+  ok("D", "홈: 미리보기 [버리기] 버튼 (0.12.4)", (await un.locator("[data-testid=discard-plan]").count()) === 1);
   await un.getByRole("button", { name: "이어서 보기" }).click();
   const back = await waitFor(async () => (await panel.locator("[data-testid=context-plan]").count()) === 1, 10000);
   ok("D", "이어서 보기 → 같은 미리보기", back);

@@ -98,11 +98,11 @@ function FolderCard({ f, o }: { f: FolderOverview; o: Overview }) {
                   title={curateTitle}
                   onClick={() => void organizeFolders(f)}
                 >
-                  새 폴더 {folders}
+                  정리할 폴더 {folders}
                 </button>
               </small>
             ) : (
-              <small data-testid="new-folders"> · 새 폴더 {folders}</small>
+              <small data-testid="new-folders"> · 정리할 폴더 {folders}</small>
             ))}
         </div>
       )}
@@ -359,6 +359,14 @@ function UnappliedPlans() {
           </span>
           <button className="sm primary" onClick={() => void reopen(p)}>
             이어서 보기
+          </button>
+          <button
+            className="sm"
+            data-testid="discard-plan"
+            title="이 미리보기를 지웁니다. 파일은 아무것도 옮기지 않습니다."
+            onClick={() => void ipc.discardPlan(p.id).then(() => setTick((t) => t + 1))}
+          >
+            버리기
           </button>
         </div>
       ))}

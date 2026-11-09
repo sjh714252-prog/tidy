@@ -182,6 +182,8 @@ export const applyPlan = (id: number, ids: number[], protect: string[]) =>
   invoke<ApplyResult>("apply_plan", { id, ids, protect });
 export const listPlans = () => invoke<StoredPlan[]>("list_plans");
 export const openPlan = (id: number) => invoke<PlanResult>("open_plan", { id });
+/** (0.12.4) Forget an unapplied preview; nothing moves. */
+export const discardPlan = (id: number) => invoke<boolean>("discard_plan", { id });
 
 export const listBatches = (limit = 100) => invoke<BatchSummary[]>("list_batches", { limit });
 export const batchMoves = (batchId: string) => invoke<MoveLogEntry[]>("batch_moves", { batchId });

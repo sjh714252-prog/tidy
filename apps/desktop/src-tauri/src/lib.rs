@@ -202,6 +202,7 @@ pub fn run() {
             report_cmds::apply_plan,
             report_cmds::list_plans,
             report_cmds::open_plan,
+            report_cmds::discard_plan,
             report_cmds::list_batches,
             report_cmds::batch_moves,
             report_cmds::undo_batch,

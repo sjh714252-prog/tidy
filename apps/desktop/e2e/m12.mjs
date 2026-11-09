@@ -163,7 +163,7 @@ const fileRows = () => panel.locator("[data-testid=context-row][data-kind=file]"
   await tab("홈").click();
   const nf = main.locator("[data-testid=new-folders]");
   const shown = await waitFor(async () => (await nf.count()) === 1, 30000);
-  ok("C", "홈: 바탕화면 카드에 '새 폴더 1'", shown && (await nf.innerText()).includes("새 폴더 1"), (await main.locator("[data-testid=organize-card]").innerText().catch(() => "")).replace(/\n/g, " | "));
+  ok("C", "홈: 바탕화면 카드에 '정리할 폴더 1'", shown && (await nf.innerText()).includes("정리할 폴더 1"), (await main.locator("[data-testid=organize-card]").innerText().catch(() => "")).replace(/\n/g, " | "));
   await main.screenshot({ path: `${SHOT}/m12-C-home.png` });
   dialogs.length = 0;
   await nf.click();
