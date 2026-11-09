@@ -1445,8 +1445,19 @@ fn print_embed_report(sem: &SemanticSearch, r: &EmbedReport) {
 fn cmd_embed(config: Option<PathBuf>, args: EmbedArgs) -> Result<()> {
     let cfg = load_config(config)?;
     let store = open_store(&cfg)?;
-    let sem = SemanticSearch::from_config(&cfg)
-        .context("semantic search is not configured ([ai] enabled + profile `embed` model)")?;
+    let sem = match SemanticSearch::from_config(&cfg) {
+        Ok(s) => s,
+        // `--status` reports the off state like `ocr`/`vision --status` do.
+        Err(e) if args.status => {
+            println!("embed: off — {e} (search uses words only)");
+            return Ok(());
+        }
+        Err(e) => {
+            return Err(anyhow::Error::new(e).context(
+                "semantic search is not configured ([ai] enabled + profile `embed` model)",
+            ))
+        }
+    };
     if args.status {
         let st = store.vector_stats(sem.model_key())?;
         println!(
