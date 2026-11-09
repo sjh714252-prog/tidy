@@ -325,3 +325,98 @@ fn watching_never_scatters_a_sub_folder() {
     assert!(matches!(a, Action::Moved { .. }), "{a:?}");
     assert!(prompts.lock().unwrap()[0].contains("파일: 가온누리원 회의록.txt | 폴더: ."));
 }
+
+/// 0.12.3: the desktop once organized in place (Tidy moved files into
+/// `가온누리원/…` on the desktop), now set to collect into `정리`. Those
+/// leftover folders are no longer "results": their files go to the
+/// organize location one by one (path = customer hint), the emptied
+/// folders go, and the preview says what stays.
+#[test]
+fn leftover_in_place_results_move_to_the_organize_location() {
+    let d = desk();
+    let cfg = cfg_settle(0);
+    let cur = curator(&cfg);
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let ai = AiClassifier::with_provider(mock(prompts.clone()), &cfg, &RuleSet::default()).unwrap();
+    let org = d.desk.parent().unwrap().join("정리");
+    fs::create_dir_all(&org).unwrap();
+    let mover = Mover::new(Store::open_in_memory().unwrap(), DuplicatePolicy::Rename);
+    // Earlier in-place organizing put a file into 바탕 화면/가온누리원/20260527_장애.
+    let old = d.desk.join("old.txt");
+    fs::write(&old, "가온누리원 장애 보고").unwrap();
+    let left = d.desk.join("가온누리원").join("20260527_장애");
+    mover
+        .move_file(&tidy_core::mover::MoveRequest {
+            src: old,
+            dest_dir: left.clone(),
+            batch_id: new_batch_id(),
+            decided_by: tidy_core::store::DecidedBy::Restructure,
+            rule_name: Some("업무 맥락".into()),
+            ai_confidence: Some(0.9),
+            new_name: None,
+            encrypt: false,
+            on_duplicate: None,
+        })
+        .unwrap();
+    fs::write(left.join("메모.txt"), "직접 넣은 파일").unwrap();
+    fs::write(d.desk.join("Edge.lnk"), "lnk").unwrap();
+    let filter = IgnoreFilter::new(&["*.lnk".to_string()]).unwrap();
+
+    let plan = cur
+        .plan(&ai, mover.store(), &d.desk, &org, &filter, &[], &[])
+        .unwrap();
+    let froms: Vec<String> = plan.moves.iter().map(|m| rel(&m.from, &d.desk)).collect();
+    assert!(
+        froms.contains(&"가온누리원/20260527_장애/old.txt".to_string()),
+        "{froms:?}"
+    );
+    assert!(
+        froms.contains(&"가온누리원/20260527_장애/메모.txt".to_string()),
+        "{froms:?}"
+    );
+    assert!(
+        plan.summary
+            .contains("예전에 이 폴더 안에서 정리했던 폴더 1개(가온누리원)"),
+        "{}",
+        plan.summary
+    );
+    assert!(
+        plan.summary.contains("이 미리보기에 없는 1개(Edge.lnk)"),
+        "{}",
+        plan.summary
+    );
+    let sent = prompts.lock().unwrap().join("\n");
+    assert!(
+        sent.contains("파일: 메모.txt | 폴더: 가온누리원/20260527_장애"),
+        "{sent}"
+    );
+
+    // In place (results on the desktop itself) it still stays put.
+    let inplace = cur
+        .plan(&ai, mover.store(), &d.desk, &d.desk, &filter, &[], &[])
+        .unwrap();
+    assert!(inplace
+        .moves
+        .iter()
+        .all(|m| !m.from.starts_with(d.desk.join("가온누리원"))));
+
+    let plan = restructure::save(mover.store(), plan).unwrap();
+    let r = restructure::apply(&mover, &plan, None, &[], None).unwrap();
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert!(walk_has(&org, "메모.txt"), "moved into 정리");
+    assert!(
+        !d.desk.join("가온누리원").exists(),
+        "emptied leftover folder removed"
+    );
+    assert!(d.desk.join("Edge.lnk").is_file());
+    let u = mover.undo_batch(&r.batch_id).unwrap();
+    assert!(u.conflicts.is_empty(), "{:?}", u.conflicts);
+    assert!(left.join("메모.txt").is_file());
+}
+
+fn walk_has(dir: &Path, name: &str) -> bool {
+    walkdir::WalkDir::new(dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .any(|e| e.file_name().to_string_lossy() == name)
+}
