@@ -361,6 +361,13 @@ impl Mover {
         }
 
         let hash = hash_file(src)?;
+        // Folders this move creates are remembered (once it succeeds) so undo
+        // can tidy them away again instead of leaving empty `문서/2026-11`.
+        let created: Vec<PathBuf> = dest_dir
+            .ancestors()
+            .take_while(|a| !a.as_os_str().is_empty() && !a.exists())
+            .map(Path::to_path_buf)
+            .collect();
         fs::create_dir_all(&dest_dir).map_err(MoverError::io("create dir", &dest_dir))?;
 
         let mut dst = dest_dir.join(&name);
@@ -407,6 +414,9 @@ impl Mover {
             return Err(e);
         }
         self.store.complete_move(log_id)?;
+        for d in &created {
+            self.store.record_created_dir(&req.batch_id, d)?;
+        }
         tracing::info!(src = %src.display(), dst = %dst.display(), "moved");
         Ok(MoveOutcome::Moved {
             log_id,
@@ -718,8 +728,36 @@ mod tests {
         let r = m.undo_last().unwrap().unwrap();
         assert_eq!(r.restored.len(), 1);
         assert_eq!(fs::read(&src).unwrap().len(), 2_000_000);
-        assert_eq!(fs::read_dir(&nas).unwrap().count(), 0);
+        // The folders the move created are gone again.
+        assert!(!nas.exists());
+        assert!(!dir.path().join("NAS 공유").exists());
         assert_eq!(m.store().placed_hash(&dst).unwrap(), None);
+    }
+
+    /// Undo removes only the folders the move created, and only when empty.
+    #[test]
+    fn undo_removes_only_folders_the_move_created() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("정리");
+        fs::create_dir_all(&root).unwrap();
+        let a = dir.path().join("a.txt");
+        let b = dir.path().join("b.txt");
+        fs::write(&a, "a").unwrap();
+        fs::write(&b, "b").unwrap();
+        let m = mover();
+        let dest = root.join("문서").join("2026-11");
+        let mut r = req(&a, &dest);
+        m.move_file(&r).unwrap();
+        r.src = b.clone();
+        m.move_file(&r).unwrap();
+        // A file the user put there meanwhile keeps its folder.
+        let mine = root.join("문서").join("내 메모.txt");
+        fs::write(&mine, "x").unwrap();
+        m.undo_last().unwrap().unwrap();
+        assert!(a.exists() && b.exists());
+        assert!(!dest.exists());
+        assert!(mine.exists());
+        assert!(root.is_dir());
     }
 
     /// (M14) duplicate_policy × (same name same content / same name other

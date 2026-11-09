@@ -209,7 +209,7 @@ const sec = main.locator("[data-testid=security-section]");
 {
   await tab(main, "정리하기").click();
   await sleep(800);
-  await main.getByRole("combobox", { name: "정리할 폴더" }).selectOption({ index: 0 });
+  await main.getByRole("combobox", { name: "정리할 폴더" }).selectOption(DESK);
   await main.getByRole("button", { name: "리포트 만들기" }).click();
   const shown = await waitFor(async () => (await main.locator("[data-testid=report-pii]").count()) > 0, 15000);
   const txt = shown ? await main.locator("[data-testid=report-pii]").innerText() : "";

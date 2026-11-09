@@ -243,7 +243,8 @@ const DEST = {
   await waitFor(() => dialogs.some((d) => /되돌림/.test(d)), 15000);
   const back = Object.keys(FILES).filter((n) => !fs.existsSync(at(n)));
   ok("F", "되돌리기 → 모두 원래 자리", back.length === 0, back.join(", "));
-  ok("F", "빈 폴더는 지우지 않고 남김 (삭제 금지)", fs.existsSync(at("가람정보", "20261014_과금이슈", "로그")));
+  // 0.12.2: folders the batch created are tidied away again once empty.
+  ok("F", "적용 때 만든 빈 폴더는 되돌리기 때 치움", !fs.existsSync(at("가람정보")));
 }
 
 // G. watching: known folder → auto; new issue → popup
@@ -254,6 +255,9 @@ const DEST = {
   await main.locator("[data-testid=curate-enabled]").check();
   await save();
   ok("G", "config: [curate] enabled = true", /\[curate\][\s\S]*enabled = true/.test(fs.readFileSync(CFG, "utf8")));
+  await sleep(1500);
+  // The customer/issue folder the user already has (undo above removed ours).
+  fs.mkdirSync(at("가람정보", "20261014_과금이슈", "로그"), { recursive: true });
   await sleep(1500);
   fs.writeFileSync(at("GARA_과금_20261018_추가.log"), "과금 재처리 로그 2026-10-18");
   const auto = await waitFor(() => fs.existsSync(at("가람정보", "20261014_과금이슈", "로그", "GARA_과금_20261018_추가.log")), 20000);

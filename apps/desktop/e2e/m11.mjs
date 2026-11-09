@@ -255,7 +255,7 @@ const save = () => saveSettings(main, 3000);
   const warned = await waitFor(async () => (await main.locator("[data-testid=organize-root-warning]").count()) === 1, 5000);
   ok("D", "정리 위치 폴더 선택 → 경고", warned, await main.locator("[data-testid=organize-root-warning]").innerText().catch(() => ""));
   const opts = await main.locator("[data-testid=report-folder] option").allInnerTexts();
-  ok("D", "폴더 목록: 감시 폴더 3개 + 고른 다른 폴더", opts.length === 4 && opts.some((o) => o.includes("다른 폴더")), opts.join(" | "));
+  ok("D", "폴더 목록: 모든 감시 폴더 + 감시 폴더 3개 + 고른 다른 폴더", opts.length === 5 && opts.some((o) => o.includes("다른 폴더")), opts.join(" | "));
   dialogs.length = 0;
   await moreWays(main);
   await main.locator(".restructure").getByRole("button", { name: "규칙으로 정리 미리보기" }).click();
@@ -352,7 +352,8 @@ const save = () => saveSettings(main, 3000);
   ok("G", `느린 AI로 30개 분석 성공 (${secs}초)`, done && secs >= 20, JSON.stringify(stats));
   const rows = await panel.locator("[data-testid=context-row]").count();
   ok("G", "미리보기 30줄", rows === 30, `rows=${rows}`);
-  const after = await panel.locator(".diff pre.tree").nth(1).innerText().catch(() => "");
+  // The before/after trees are folded for context plans (0.11.3): read the text.
+  const after = (await panel.locator(".diff pre.tree").nth(1).textContent().catch(() => "")) ?? "";
   ok("G", "트리: 가람정보 / 하늘통신 / 기타", after.includes("가람정보") && after.includes("하늘통신") && after.includes("기타"));
   ok("G", "근거가 긴 답도 표시 (300자)", ((await panel.locator("[data-testid=context-row] .reason").first().innerText()).length >= 200));
   ok("G", "분석만으로 무이동", WORK_FILES.every((n) => fs.existsSync(path.join(WORK, n))));

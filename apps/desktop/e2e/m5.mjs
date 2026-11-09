@@ -138,6 +138,7 @@ await sleep(800);
 {
   await tab(main, "정리하기").click();
   await sleep(500);
+  await moreWays(main);
   const aiBtn = main.locator(".restructure").getByRole("button", { name: "AI 정리 제안" });
   ok("E", "AI 꺼짐 → 'AI 정리 제안' 비활성", await aiBtn.isDisabled());
 }

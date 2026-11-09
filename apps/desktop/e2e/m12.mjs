@@ -190,7 +190,8 @@ const fileRows = () => panel.locator("[data-testid=context-row][data-kind=file]"
   const edited = await waitFor(async () => (await dest()) === want("20261019"), 10000);
   ok("D", "폴더 날짜 고치기 → 20261019_로그분석", edited, await dest());
   // Collected into 정리 (outside the desktop): the preview counts them.
-  const out = await panel.locator(".plan .warn", { hasText: "밖으로 나가는 파일" }).innerText().catch(() => "");
+  // (0.11.3) it sits in the folded before/after box: read the text.
+  const out = (await panel.locator(".plan .warn", { hasText: "밖으로 나가는 파일" }).textContent().catch(() => "")) ?? "";
   ok("D", "미리보기: 정리 위치로 나가는 파일 34개 (폴더 31 + 3)", out.includes("34개"), out);
   ok("D", "업무 맥락 정리에는 하위 폴더 포함이 쓰이지 않음 (툴팁)", ((await panel.locator("label", { hasText: "하위 폴더 포함" }).getAttribute("title")) ?? "").includes("업무 맥락 정리는 하위 폴더를 통째로"));
   ok("D", "미리보기만으로 무이동", GO_FILES.every((n) => fs.existsSync(path.join(GO, n))));
