@@ -988,6 +988,24 @@ pub fn apply(
             }
         }
     }
+    if plan.source == PlanSource::Context {
+        // (0.12.3) Files taken out of a folder left by earlier organizing
+        // ("KGM/20260527_장애/…"): drop the folders that are now empty, up
+        // to (never including) the folder being organized.
+        let roots: Vec<&Path> = if plan.sources.is_empty() {
+            vec![plan.root.as_path()]
+        } else {
+            plan.sources.iter().map(PathBuf::as_path).collect()
+        };
+        for m in selected(plan, ids).filter(|m| !m.is_dir) {
+            let Some(parent) = m.from.parent() else {
+                continue;
+            };
+            if let Some(stop) = roots.iter().find(|r| parent.starts_with(r)) {
+                mover.prune_empty_parents(parent, stop);
+            }
+        }
+    }
     if plan.id > 0 && !report.moved.is_empty() {
         store.mark_plan_applied(plan.id, &batch_id)?;
     }

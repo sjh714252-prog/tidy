@@ -279,6 +279,15 @@ pub fn all_sources(cfg: &Config, rules: &crate::classify::RuleSet) -> Vec<Source
     out
 }
 
+/// "a, b, c 외 N개".
+fn names_short(names: &[String], n: usize) -> String {
+    let mut s = names.iter().take(n).cloned().collect::<Vec<_>>().join(", ");
+    if names.len() > n {
+        s.push_str(&format!(" 외 {}개", names.len() - n));
+    }
+    s
+}
+
 fn same_path(a: &Path, b: &Path) -> bool {
     a == b || matches!((dunce::canonicalize(a), dunce::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
 }
@@ -315,6 +324,18 @@ pub struct Items {
     pub inputs: Vec<CurateInput>,
     /// Sub-folders still changing (copy / unpack in progress): left out.
     pub unsettled: Vec<PathBuf>,
+    /// (0.12.3) Folders left by earlier organizing; their files are in
+    /// `inputs`.
+    pub leftovers: Vec<PathBuf>,
+}
+
+/// (0.12.3) The sub-folders of one folder, sorted out (see
+/// [`Curator::scan_folders`]).
+#[derive(Debug, Default)]
+pub struct FolderScan {
+    pub units: Vec<FolderUnit>,
+    pub unsettled: Vec<PathBuf>,
+    pub leftovers: Vec<PathBuf>,
 }
 
 impl Items {
@@ -551,15 +572,37 @@ impl Curator {
         store: Option<&Store>,
         now: std::time::SystemTime,
     ) -> (Vec<FolderUnit>, Vec<PathBuf>) {
-        let names = if same_path(root, anchor) {
+        let s = self.scan_folders(root, anchor, filter, protected, skip, store, now);
+        (s.units, s.unsettled)
+    }
+
+    /// [`Curator::folder_units`] with the folders left behind by earlier
+    /// organizing (0.12.3): when results now go to another place (모으기),
+    /// a sub-folder Tidy once moved files into — 예전에 이 폴더 안에서 정리한
+    /// `KGM/`, `20260527_…/`, `문서/` — is not a result any more, just
+    /// clutter that stayed. It comes back in `leftovers` (its files are
+    /// organized one by one, with the folder path as context) instead of
+    /// being skipped silently.
+    #[allow(clippy::too_many_arguments)]
+    pub fn scan_folders(
+        &self,
+        root: &Path,
+        anchor: &Path,
+        filter: &IgnoreFilter,
+        protected: &[PathBuf],
+        skip: &[PathBuf],
+        store: Option<&Store>,
+        now: std::time::SystemTime,
+    ) -> FolderScan {
+        let in_place = same_path(root, anchor);
+        let names = if in_place {
             self.output_names(store)
         } else {
             Vec::new()
         };
-        let mut units = Vec::new();
-        let mut unsettled = Vec::new();
+        let mut out = FolderScan::default();
         let Ok(rd) = std::fs::read_dir(root) else {
-            return (units, unsettled);
+            return out;
         };
         let mut dirs: Vec<PathBuf> = rd
             .filter_map(Result::ok)
@@ -581,8 +624,13 @@ impl Curator {
                     .chain(skip)
                     .any(|p| d.starts_with(p) || p.starts_with(&d))
                 || names.iter().any(|n| n == &name)
-                || store.is_some_and(|s| s.has_moves_into(&d).unwrap_or(false))
             {
+                continue;
+            }
+            if store.is_some_and(|s| s.has_moves_into(&d).unwrap_or(false)) {
+                if !in_place {
+                    out.leftovers.push(d);
+                }
                 continue;
             }
             let doc = if self.send_content { 300 } else { 0 };
@@ -593,12 +641,12 @@ impl Curator {
                 continue;
             }
             if !u.is_settled(self.settle(), now) {
-                unsettled.push(d);
+                out.unsettled.push(d);
                 continue;
             }
-            units.push(u);
+            out.units.push(u);
         }
-        (units, unsettled)
+        out
     }
 
     /// (M12) Everything a work-context run looks at in `root`: files
@@ -618,7 +666,7 @@ impl Curator {
             .filter(|p| !store.get_file(p).ok().flatten().is_some_and(|f| f.vault))
             .filter_map(|p| self.input_in(p, root, Some(store)).ok())
             .collect();
-        let (units, unsettled) = self.folder_units(
+        let scan = self.scan_folders(
             root,
             anchor,
             filter,
@@ -627,8 +675,22 @@ impl Curator {
             Some(store),
             std::time::SystemTime::now(),
         );
-        inputs.extend(units.into_iter().map(CurateInput::from_unit));
-        Items { inputs, unsettled }
+        // (0.12.3) Folders left by earlier organizing in `root`: file by
+        // file, each with its path ("KGM/20260527_장애") as the hint.
+        for d in &scan.leftovers {
+            inputs.extend(
+                Self::files_in(d, true, filter, protected)
+                    .iter()
+                    .filter(|p| !store.get_file(p).ok().flatten().is_some_and(|f| f.vault))
+                    .filter_map(|p| self.input_in(p, root, Some(store)).ok()),
+            );
+        }
+        inputs.extend(scan.units.into_iter().map(CurateInput::from_unit));
+        Items {
+            inputs,
+            unsettled: scan.unsettled,
+            leftovers: scan.leftovers,
+        }
     }
 
     /// Files directly in `root` (and below with `recursive`), skipping
@@ -928,9 +990,16 @@ impl Curator {
         let mut inputs: Vec<CurateInput> = Vec::new();
         let mut input_anchor: Vec<PathBuf> = Vec::new();
         let mut unsettled = 0;
+        let mut leftovers: Vec<String> = Vec::new();
         for src in sources {
             let items = self.items_in(&src.root, &src.anchor, filter, protected, &src.skip, store);
             unsettled += items.unsettled.len();
+            leftovers.extend(
+                items
+                    .leftovers
+                    .iter()
+                    .filter_map(|d| d.file_name().map(|n| n.to_string_lossy().into_owned())),
+            );
             for i in items.inputs {
                 if inputs.iter().any(|x| x.path == i.path) {
                     continue;
@@ -938,6 +1007,28 @@ impl Curator {
                 inputs.push(i);
                 input_anchor.push(src.anchor.clone());
             }
+        }
+        // (0.12.3) What stays in the folders, so the preview never reads
+        // as "the whole desktop is done" when it is not.
+        let mut kept: Vec<String> = Vec::new();
+        for src in sources {
+            let Ok(rd) = std::fs::read_dir(&src.root) else {
+                continue;
+            };
+            let mut here: Vec<String> = rd
+                .filter_map(Result::ok)
+                .filter(|e| {
+                    let p = e.path();
+                    let n = e.file_name().to_string_lossy().into_owned();
+                    !n.starts_with('.')
+                        && !n.contains(TMP_MARKER)
+                        && !n.eq_ignore_ascii_case("desktop.ini")
+                        && !inputs.iter().any(|i| i.path.starts_with(&p))
+                })
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect();
+            here.sort();
+            kept.extend(here);
         }
         let judged = self.analyze(ai, store, &inputs)?;
         let mut moves = Vec::new();
@@ -981,6 +1072,20 @@ impl Curator {
             },
         };
         self.relayout(&mut plan, Some(store));
+        if !leftovers.is_empty() {
+            plan.summary.push_str(&format!(
+                " 예전에 이 폴더 안에서 정리했던 폴더 {}개({})도 파일별로 정리 위치로 옮깁니다.",
+                leftovers.len(),
+                names_short(&leftovers, 5)
+            ));
+        }
+        if !kept.is_empty() {
+            plan.summary.push_str(&format!(
+                " 이 미리보기에 없는 {}개({})는 그대로 둡니다 — 바로가기·숨김·제외 폴더·정리 결과 폴더 등.",
+                kept.len(),
+                names_short(&kept, 5)
+            ));
+        }
         if unsettled > 0 {
             plan.summary.push_str(&format!(
                 " 아직 바뀌는 중인 폴더 {unsettled}개(복사·압축 해제 중)는 뺐습니다."

@@ -369,7 +369,18 @@ fieldset:disabled { opacity: 0.55; }
 pre.tree { font-family: var(--mono); font-size: 12px; background: var(--surface-2); border: 1px solid var(--line); padding: 8px; border-radius: var(--radius-sm); overflow: auto; max-height: 420px; margin: 0; }
 textarea.protect { width: 100%; min-height: 60px; font-size: 12px; }
 .diff { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.context-plan select, .context-plan input:not([type=checkbox]) { max-width: 150px; font-size: 12px; height: 26px; }
+.context-plan { table-layout: fixed; }
+.context-plan col.c-check { width: 30px; }
+.context-plan col.c-id { width: 34px; }
+.context-plan col.c-entity { width: 112px; }
+.context-plan col.c-issue { width: 120px; }
+.context-plan col.c-date { width: 76px; }
+.context-plan col.c-kind { width: 84px; }
+.context-plan col.c-ai { width: 150px; }
+.context-plan td { overflow-wrap: anywhere; }
+.context-plan .tag { white-space: normal; max-width: 100%; }
+.context-plan td.path { max-width: none; white-space: normal; word-break: break-all; }
+.context-plan select, .context-plan input:not([type=checkbox]) { width: 100%; max-width: 100%; box-sizing: border-box; font-size: 12px; height: 26px; }
 .context-plan tr.stays td { opacity: 0.7; }
 .folder-item .path { font-weight: 600; }
 .item-tree { margin: 4px 0 0; padding: 6px 8px; background: var(--surface-2); font-size: 12px; max-height: 220px; overflow: auto; white-space: pre; }

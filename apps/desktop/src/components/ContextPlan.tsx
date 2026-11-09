@@ -43,6 +43,19 @@ export function ContextTable({ plan, rel }: { plan: Plan; rel: (p: string) => st
         ))}
       </datalist>
       <table className="grid context-plan" data-testid="context-plan">
+        {/* (0.12.3) Fixed widths so the table never runs past the window:
+            "지금" and "옮길 곳" share what is left and wrap. */}
+        <colgroup>
+          <col className="c-check" />
+          <col className="c-id" />
+          <col className="c-from" />
+          <col className="c-entity" />
+          <col className="c-issue" />
+          <col className="c-date" />
+          <col className="c-kind" />
+          <col className="c-to" />
+          <col className="c-ai" />
+        </colgroup>
         <thead>
           <tr>
             <th>
