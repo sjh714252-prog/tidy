@@ -327,6 +327,8 @@ pub struct Items {
     /// (0.12.3) Folders left by earlier organizing; their files are in
     /// `inputs`.
     pub leftovers: Vec<PathBuf>,
+    /// (0.13.1) Sub-folders left alone, with why.
+    pub kept: Vec<KeptFolder>,
 }
 
 /// (0.12.3) The sub-folders of one folder, sorted out (see
@@ -336,6 +338,16 @@ pub struct FolderScan {
     pub units: Vec<FolderUnit>,
     pub unsettled: Vec<PathBuf>,
     pub leftovers: Vec<PathBuf>,
+    /// (0.13.1) Sub-folders left where they are, each with why — shown
+    /// on the home card so "0개 · 정리됨" never hides a full desktop.
+    pub kept: Vec<KeptFolder>,
+}
+
+/// (0.13.1) A sub-folder a work-context run leaves alone, and why.
+#[derive(Debug, Clone, Serialize)]
+pub struct KeptFolder {
+    pub path: PathBuf,
+    pub reason: String,
 }
 
 impl Items {
@@ -634,40 +646,79 @@ impl Curator {
         let Ok(rd) = std::fs::read_dir(root) else {
             return out;
         };
-        let mut dirs: Vec<PathBuf> = rd
-            .filter_map(Result::ok)
-            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-            .map(|e| e.path())
-            .collect();
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        for e in rd.filter_map(Result::ok) {
+            match e.file_type() {
+                Ok(t) if t.is_dir() => dirs.push(e.path()),
+                // (0.13.1) A link to a folder (junction / symlink): never
+                // followed, but said, not hidden.
+                Ok(t) if t.is_symlink() && e.path().is_dir() => out.kept.push(KeptFolder {
+                    path: e.path(),
+                    reason: "다른 곳을 가리키는 연결(링크) 폴더".into(),
+                }),
+                _ => {}
+            }
+        }
         dirs.sort();
         for d in dirs {
             let name = d
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            if name.starts_with('.')
-                || name.contains(TMP_MARKER)
-                || filter.in_excluded_dir(&d)
-                || filter.is_ignored(&d)
-                || protected
-                    .iter()
-                    .chain(skip)
-                    .any(|p| d.starts_with(p) || p.starts_with(&d))
-                || names.iter().any(|n| n == &name)
+            if name.starts_with('.') || name.contains(TMP_MARKER) {
+                continue;
+            }
+            let mut keep = |d: PathBuf, reason: String| {
+                tracing::debug!(path = %d.display(), %reason, "folder left as it is");
+                out.kept.push(KeptFolder { path: d, reason });
+            };
+            if filter.in_excluded_dir(&d) {
+                keep(d, "감시 폴더 설정의 '제외 폴더'에 들어 있음".into());
+                continue;
+            }
+            if filter.is_ignored(&d) {
+                keep(d, "무시 패턴(설정 › 고급)에 맞음".into());
+                continue;
+            }
+            if let Some(p) = protected
+                .iter()
+                .find(|p| d.starts_with(p) || p.starts_with(&d))
             {
+                keep(d, format!("'건드리지 말 폴더'와 겹침: {}", p.display()));
+                continue;
+            }
+            if let Some(p) = skip.iter().find(|p| d.starts_with(p) || p.starts_with(&d)) {
+                keep(
+                    d,
+                    format!("정리 위치 또는 규칙 목적지와 겹침: {}", p.display()),
+                );
+                continue;
+            }
+            if names.iter().any(|n| n == &name) {
+                keep(d, "제자리 정리의 결과 폴더(고객사·기타 이름)".into());
                 continue;
             }
             if store.is_some_and(|s| s.has_moves_into(&d).unwrap_or(false)) {
-                if !in_place {
+                if in_place {
+                    keep(d, "제자리 정리로 Tidy가 만든 폴더".into());
+                } else {
                     out.leftovers.push(d);
                 }
                 continue;
             }
             let doc = if self.send_content { 300 } else { 0 };
-            let Ok(u) = FolderUnit::scan(&d, root, filter, doc) else {
-                continue;
+            let u = match FolderUnit::scan(&d, root, filter, doc) {
+                Ok(u) => u,
+                Err(e) => {
+                    keep(d, format!("읽을 수 없음: {e}"));
+                    continue;
+                }
             };
             if u.files == 0 {
+                keep(
+                    d,
+                    "정리할 파일이 없음(빈 폴더·바로가기·무시되는 파일만)".into(),
+                );
                 continue;
             }
             if !u.is_settled(self.settle(), now) {
@@ -730,6 +781,7 @@ impl Curator {
             inputs,
             unsettled,
             leftovers: scan.leftovers,
+            kept: scan.kept,
         }
     }
 
@@ -1152,9 +1204,18 @@ impl Curator {
         let mut input_anchor: Vec<PathBuf> = Vec::new();
         let mut unsettled = 0;
         let mut leftovers: Vec<String> = Vec::new();
+        let mut why: Vec<String> = Vec::new();
         for src in sources {
             let items = self.items_in(&src.root, &src.anchor, filter, protected, &src.skip, store);
             unsettled += items.unsettled.len();
+            why.extend(items.kept.iter().map(|k| {
+                let n = k
+                    .path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                format!("{n}: {}", k.reason)
+            }));
             leftovers.extend(
                 items
                     .leftovers
@@ -1245,6 +1306,13 @@ impl Curator {
                 " 이 미리보기에 없는 {}개({})는 그대로 둡니다 — 바로가기·숨김·제외 폴더·정리 결과 폴더 등.",
                 kept.len(),
                 names_short(&kept, 5)
+            ));
+        }
+        if !why.is_empty() {
+            plan.summary.push_str(&format!(
+                " 그대로 둔 폴더 {}개 — {}.",
+                why.len(),
+                names_short(&why, 5)
             ));
         }
         if unsettled > 0 {

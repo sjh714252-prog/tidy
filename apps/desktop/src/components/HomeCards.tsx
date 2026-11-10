@@ -125,9 +125,35 @@ function FolderCard({ f, o }: { f: FolderOverview; o: Overview }) {
         >
           지금 정리
         </button>
-      ) : b ? (
+      ) : b && !b.kept?.length ? (
         <span className="done">✓ 정리됨</span>
       ) : null}
+      {!!b?.kept?.length && <KeptFolders kept={b.kept} />}
+    </div>
+  );
+}
+
+/**
+ * (0.13.1) Sub-folders the count leaves out, each with why — so a card
+ * never reads "0개 · 정리됨" over a desktop full of folders without saying
+ * what it skipped.
+ */
+function KeptFolders({ kept }: { kept: { name: string; path: string; reason: string }[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="small" data-testid="kept-folders">
+      <button className="link small" aria-expanded={open} onClick={() => setOpen(!open)}>
+        그대로 둔 폴더 {kept.length}개 {open ? "▾" : "▸ 왜?"}
+      </button>
+      {open && (
+        <ul className="kept-list">
+          {kept.map((k) => (
+            <li key={k.path} title={k.path}>
+              <b>{k.name}</b> — <span className="muted">{k.reason}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

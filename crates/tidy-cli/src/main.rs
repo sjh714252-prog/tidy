@@ -2983,6 +2983,10 @@ fn cmd_curate(config: Option<PathBuf>, cmd: CurateCmd) -> Result<()> {
                 );
                 items.inputs.extend(it.inputs);
                 items.unsettled.extend(it.unsettled);
+                items.kept.extend(it.kept);
+            }
+            for k in &items.kept {
+                eprintln!("# 그대로 둠: {} — {}", k.path.display(), k.reason);
             }
             if all {
                 println!(

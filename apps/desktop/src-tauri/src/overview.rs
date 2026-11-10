@@ -39,6 +39,15 @@ struct Counts {
     files: Backlog,
     new_folders: usize,
     settling: usize,
+    kept: Vec<KeptDto>,
+}
+
+/// (0.13.1) A sub-folder left where it is, with why ("그대로 둔 폴더").
+#[derive(Debug, Clone, Serialize)]
+pub struct KeptDto {
+    pub name: String,
+    pub path: String,
+    pub reason: String,
 }
 
 static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
@@ -65,6 +74,8 @@ pub struct BacklogDto {
     pub new_folders: usize,
     /// (M12) Sub-folders still changing (copy / unpack): not offered yet.
     pub settling: usize,
+    /// (0.13.1) Sub-folders left as they are, with the reason.
+    pub kept: Vec<KeptDto>,
 }
 
 impl From<&Counts> for BacklogDto {
@@ -77,6 +88,7 @@ impl From<&Counts> for BacklogDto {
             capped: b.capped,
             new_folders: c.new_folders,
             settling: c.settling,
+            kept: c.kept.clone(),
         }
     }
 }
@@ -267,10 +279,10 @@ fn spawn_count(
             let mut counts = HashMap::new();
             for w in watches.iter().filter(|w| w.kind == RootKind::Local) {
                 let files = backlog(w, &rules, &filter, &skip, BACKLOG_CAP);
-                let (new_folders, settling) = match &cur {
+                let (new_folders, settling, kept) = match &cur {
                     Some(cur) => {
                         let skip_dirs = tidy_core::curate::skip_dirs(&cfg, &rules, w.anchor());
-                        let s = cur.scan_folders(
+                        let scan = cur.scan_folders(
                             &w.path,
                             w.anchor(),
                             &filter,
@@ -282,9 +294,25 @@ fn spawn_count(
                         // (0.12.4) Folders left by earlier organizing count
                         // too: otherwise the card read "0개 · 정리됨" with a
                         // desktop full of them and no button.
-                        (s.units.len() + s.leftovers.len(), s.unsettled.len())
+                        for k in &scan.kept {
+                            tracing::info!(path = %k.path.display(), reason = %k.reason, "watch folder: sub-folder left as it is");
+                        }
+                        let kept = scan
+                            .kept
+                            .iter()
+                            .map(|k| KeptDto {
+                                name: k
+                                    .path
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().into_owned())
+                                    .unwrap_or_default(),
+                                path: s(&k.path),
+                                reason: k.reason.clone(),
+                            })
+                            .collect();
+                        (scan.units.len() + scan.leftovers.len(), scan.unsettled.len(), kept)
                     }
-                    None => (0, 0),
+                    None => (0, 0, Vec::new()),
                 };
                 counts.insert(
                     w.path.clone(),
@@ -292,6 +320,7 @@ fn spawn_count(
                         files,
                         new_folders,
                         settling,
+                        kept,
                     },
                 );
             }

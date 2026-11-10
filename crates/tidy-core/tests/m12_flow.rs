@@ -544,3 +544,47 @@ fn ai_never_pulls_a_file_out_of_a_sub_folder_and_old_queue_entries_go() {
     assert_eq!(left, vec![top]);
     assert!(inner.is_file());
 }
+
+/// 0.13.1: every sub-folder a run leaves alone comes back with why
+/// (home card "그대로 둔 폴더 N개"), never silently.
+#[test]
+fn folders_left_alone_say_why() {
+    let d = desk();
+    let cfg = cfg_settle(0);
+    let cur = curator(&cfg);
+    let org = d.desk.parent().unwrap().join("정리");
+    fs::create_dir_all(&org).unwrap();
+    for n in ["제외됨", "보호됨", "빈 폴더"] {
+        fs::create_dir_all(d.desk.join(n)).unwrap();
+    }
+    fs::write(d.desk.join("제외됨").join("a.txt"), "a").unwrap();
+    fs::write(d.desk.join("보호됨").join("b.txt"), "b").unwrap();
+    let filter = IgnoreFilter::new(&[])
+        .unwrap()
+        .with_dirs(vec![d.desk.join("제외됨")]);
+    let store = Store::open_in_memory().unwrap();
+    let scan = cur.scan_folders(
+        &d.desk,
+        &org,
+        &filter,
+        &[d.desk.join("보호됨")],
+        &[],
+        Some(&store),
+        SystemTime::now(),
+    );
+    let why = |n: &str| {
+        scan.kept
+            .iter()
+            .find(|k| k.path.ends_with(n))
+            .map(|k| k.reason.clone())
+            .unwrap_or_default()
+    };
+    assert!(why("제외됨").contains("제외 폴더"), "{:?}", scan.kept);
+    assert!(
+        why("보호됨").contains("건드리지 말 폴더"),
+        "{:?}",
+        scan.kept
+    );
+    assert!(why("빈 폴더").contains("파일이 없음"), "{:?}", scan.kept);
+    assert_eq!(scan.units.len(), 1, "the tool folder is still an item");
+}

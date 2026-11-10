@@ -84,6 +84,8 @@ export interface Backlog {
   newFolders: number;
   /** (M12) Sub-folders still being copied (not offered yet). */
   settling: number;
+  /** (0.13.1) Sub-folders left where they are, with why. */
+  kept: { name: string; path: string; reason: string }[];
 }
 export interface FolderOverview {
   path: string;
