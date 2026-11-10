@@ -569,6 +569,12 @@ impl Engine {
         let Some(ai) = &self.ai else {
             return Ok(Action::NoRule(path.clone()));
         };
+        // (0.12.5) Like work context (M12): a file inside a sub-folder of a
+        // watch folder belongs to that folder (a customer's logs, a source
+        // tree) — the AI never pulls it out on its own. Rules still apply.
+        if self.in_sub_folder(path) {
+            return Ok(Action::NoRule(path.clone()));
+        }
         let store = self.mover.store();
         // Already waiting for the user's answer to an AI suggestion: don't
         // pay for the same question again on every save.
@@ -636,6 +642,33 @@ impl Engine {
             encrypt: false,
             pii: None,
         })
+    }
+
+    /// `path` lies below a sub-folder of its watch folder (not directly in
+    /// it). Files outside every watch folder (`tidy classify`) are not.
+    pub fn in_sub_folder(&self, path: &Path) -> bool {
+        let parent = path.parent().unwrap_or_else(|| Path::new(""));
+        self.anchors
+            .watch_root_for(path)
+            .is_some_and(|r| parent != r)
+    }
+
+    /// (0.12.5) Drop AI suggestions waiting in the queue for files inside
+    /// sub-folders of a watch folder — made by earlier versions that judged
+    /// such files one by one (a customer folder's `tools/go/src/…/x.go` →
+    /// 기타/개발/소스코드). Accepting them would scatter the folder; the
+    /// folder is organized as a whole instead. Files are not touched.
+    /// Returns the paths dropped.
+    pub fn drop_scattering_pending(&self) -> Result<Vec<PathBuf>, EngineError> {
+        let store = self.mover.store();
+        let mut out = Vec::new();
+        for p in store.list_pending()? {
+            if p.source == PendingSource::Ai && self.in_sub_folder(&p.path) {
+                store.remove_pending_id(p.id)?;
+                out.push(p.path);
+            }
+        }
+        Ok(out)
     }
 
     fn move_to(

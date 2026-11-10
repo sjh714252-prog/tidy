@@ -420,3 +420,133 @@ fn walk_has(dir: &Path, name: &str) -> bool {
         .filter_map(Result::ok)
         .any(|e| e.file_name().to_string_lossy() == name)
 }
+
+/// 0.12.5: a customer folder Tidy once put a file into (so a 0.12.3
+/// leftover) still keeps its own source tree together: the file Tidy put
+/// there goes on its own, `tools/` (never touched by Tidy) moves as ONE
+/// folder item under the customer — never `reader.go` alone into
+/// 기타/개발/소스코드.
+#[test]
+fn leftover_customer_folder_keeps_its_source_tree_whole() {
+    let d = desk();
+    let cfg = cfg_settle(0);
+    let cur = curator(&cfg);
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let ai = AiClassifier::with_provider(mock(prompts.clone()), &cfg, &RuleSet::default()).unwrap();
+    let org = d.desk.parent().unwrap().join("정리");
+    fs::create_dir_all(&org).unwrap();
+    let mover = Mover::new(Store::open_in_memory().unwrap(), DuplicatePolicy::Rename);
+    let old = d.desk.join("장애 보고.txt");
+    fs::write(&old, "보고").unwrap();
+    mover
+        .move_file(&tidy_core::mover::MoveRequest {
+            src: old,
+            dest_dir: d.tool.clone(),
+            batch_id: new_batch_id(),
+            decided_by: tidy_core::store::DecidedBy::Ai,
+            rule_name: Some("업무 맥락".into()),
+            ai_confidence: Some(0.9),
+            new_name: None,
+            encrypt: false,
+            on_duplicate: None,
+        })
+        .unwrap();
+
+    let plan = cur
+        .plan(&ai, mover.store(), &d.desk, &org, &nofilter(), &[], &[])
+        .unwrap();
+    let froms: Vec<(String, bool)> = plan
+        .moves
+        .iter()
+        .map(|m| (rel(&m.from, &d.desk), m.is_dir))
+        .collect();
+    assert!(
+        froms.contains(&("가온누리원 로그/tools".to_string(), true)),
+        "{froms:?}"
+    );
+    assert!(
+        froms.contains(&("가온누리원 로그/장애 보고.txt".to_string(), false)),
+        "{froms:?}"
+    );
+    assert!(
+        !froms
+            .iter()
+            .any(|(f, _)| f.starts_with("가온누리원 로그/tools/")),
+        "nothing pulled out of the source tree: {froms:?}"
+    );
+    let tools = plan.moves.iter().find(|m| m.is_dir).unwrap();
+    assert!(
+        rel(&tools.to, &org).starts_with("가온누리원/"),
+        "under the customer: {}",
+        tools.to.display()
+    );
+
+    let plan = restructure::save(mover.store(), plan).unwrap();
+    let r = restructure::apply(&mover, &plan, None, &[], None).unwrap();
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    let moved = walkdir::WalkDir::new(&org)
+        .into_iter()
+        .filter_map(Result::ok)
+        .find(|e| e.file_name() == "run.go")
+        .unwrap();
+    assert!(
+        rel(moved.path(), &org).ends_with("tools/go/cmd/run.go"),
+        "structure kept: {}",
+        moved.path().display()
+    );
+}
+
+/// 0.12.5: the plain AI step (no work context) leaves files in sub-folders
+/// alone too, and old queue entries that would pull such a file out are
+/// dropped (the file stays).
+#[test]
+fn ai_never_pulls_a_file_out_of_a_sub_folder_and_old_queue_entries_go() {
+    let d = desk();
+    let cfg = cfg_settle(0);
+    let watches = vec![WatchRoot {
+        path: d.desk.clone(),
+        recursive: true,
+        ..Default::default()
+    }];
+    let calls = Arc::new(Mutex::new(0usize));
+    let c2 = calls.clone();
+    let provider = Arc::new(MockProvider::responder(move |_s, _u| {
+        *c2.lock().unwrap() += 1;
+        json!({"dest_folder": "기타/개발/소스코드", "confidence": 0.7, "reason": "소스"})
+    }));
+    let mover = Mover::new(Store::open_in_memory().unwrap(), DuplicatePolicy::Rename);
+    let engine = Engine::new(RuleSet::default(), mover, nofilter())
+        .with_anchors(Anchors::from_watches(&watches))
+        .with_ai(AiClassifier::with_provider(provider, &cfg, &RuleSet::default()).unwrap());
+    let inner = d.tool.join("tools").join("go").join("f01.go");
+    let a = engine.handle(&inner, &new_batch_id()).unwrap();
+    assert!(matches!(a, Action::NoRule(_)), "{a:?}");
+    assert_eq!(*calls.lock().unwrap(), 0, "no AI call");
+
+    let store = engine.mover().store();
+    let top = d.desk.join("장보기.txt");
+    for p in [&inner, &top] {
+        store
+            .upsert_pending_entry(&tidy_core::store::NewPending {
+                path: p,
+                suggested_dest: Some(&d.desk.join("기타")),
+                reason: Some("예전 제안"),
+                source: tidy_core::store::PendingSource::Ai,
+                confidence: Some(0.7),
+                suggested_name: None,
+                encrypt: false,
+                pii: None,
+            })
+            .unwrap();
+    }
+    let dropped = engine.drop_scattering_pending().unwrap();
+    assert_eq!(dropped, vec![inner.clone()]);
+    let left: Vec<PathBuf> = store
+        .list_pending()
+        .unwrap()
+        .into_iter()
+        .map(|p| p.path)
+        .collect();
+    assert_eq!(left, vec![top]);
+    assert!(inner.is_file());
+}
