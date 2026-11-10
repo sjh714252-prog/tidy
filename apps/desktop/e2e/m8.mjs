@@ -30,10 +30,8 @@ const RULES = path.join(T, "rules.toml");
 const SHOT = path.join(process.env.S, "shots");
 fs.mkdirSync(SHOT, { recursive: true });
 fs.mkdirSync(DOWN, { recursive: true });
-const ym = (() => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-})();
+// (0.13.0) The starter "문서" rule files by year.
+const ym = String(new Date().getFullYear());
 
 const results = [];
 const ok = (step, what, pass, note = "") => {
@@ -168,7 +166,7 @@ await sleep(1000);
   fs.writeFileSync(path.join(DOWN, "사진 모음.zip"), "zip");
   const inPlace = path.join(DESK, "문서", ym, "분기 보고서.pdf");
   const collected = path.join(ORG, "압축 파일", "사진 모음.zip");
-  ok("D", "in_place: 바탕 화면/문서/연-월 로 이동", await waitFor(() => fs.existsSync(inPlace), 20000), inPlace);
+  ok("D", "in_place: 바탕 화면/문서/연도 로 이동", await waitFor(() => fs.existsSync(inPlace), 20000), inPlace);
   ok("D", "collect: 정리 보관함/압축 파일 로 이동", await waitFor(() => fs.existsSync(collected), 20000), collected);
   ok(
     "D",
