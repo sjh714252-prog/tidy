@@ -129,7 +129,7 @@ await sleep(1000);
   ok(
     "B",
     "요약: 폴더별 목적지",
-    sum.includes(`${DESK}/문서/{yyyy}-{mm}`) && sum.includes(`${ORG}/압축 파일`) && !sum.includes("스크린샷"),
+    sum.includes(`${DESK}/문서/{yyyy}`) && sum.includes(`${ORG}/압축 파일`) && !sum.includes("스크린샷"),
     sum.replace(/\n/g, " | "),
   );
   await wiz.screenshot({ path: `${SHOT}/m8-B-summary.png` });
@@ -157,7 +157,7 @@ await sleep(1000);
   ok(
     "D",
     "rules.toml: 체크한 규칙만 (문서·압축), 상대 경로",
-    rules.includes('name = "문서"') && rules.includes('name = "압축 파일"') && !rules.includes("스크린샷") && !rules.includes("설치파일") && rules.includes('dest = "문서/{yyyy}-{mm}"'),
+    rules.includes('name = "문서"') && rules.includes('name = "압축 파일"') && !rules.includes("스크린샷") && !rules.includes("설치파일") && rules.includes('dest = "문서/{yyyy}"'),
     rules.split("\n").filter((l) => l.startsWith("name") || l.startsWith("dest")).join(" | "),
   );
   await waitFor(async () => (await bridge("get_status")).watching.length === 2, 15000);

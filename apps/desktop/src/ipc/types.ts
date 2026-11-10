@@ -780,6 +780,8 @@ export interface CuratePatch {
   template: string;
   other_template: string;
   min_confidence: number;
+  /** (0.13.0) New kind / sub-topic folder only with at least this many items. */
+  min_folder_items?: number | null;
 }
 
 export interface CurateSettings {

@@ -57,14 +57,14 @@ pub fn starters() -> Vec<Starter> {
         Starter {
             id: "documents",
             title: "문서",
-            summary: "pdf·한글·워드·엑셀·파워포인트 → 문서/연도-월",
+            summary: "pdf·한글·워드·엑셀·파워포인트 → 문서/연도",
             card: card(
                 "문서",
                 &[
                     "pdf", "hwp", "hwpx", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
                 ],
                 "",
-                "문서/{yyyy}-{mm}",
+                "문서/{yyyy}",
                 false,
             ),
         },

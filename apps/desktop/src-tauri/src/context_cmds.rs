@@ -114,6 +114,7 @@ fn curate_dto(cfg: &Config, store: Option<&Store>) -> CmdResult<CurateDto> {
             template: c.template.clone(),
             other_template: c.other_template.clone(),
             min_confidence: c.min_confidence,
+            min_folder_items: Some(c.min_folder_items),
         },
         dict: ContextDict::load(&c.context).map_err(err)?,
         context_path: c.context.display().to_string(),

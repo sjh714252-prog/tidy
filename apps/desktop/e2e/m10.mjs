@@ -180,8 +180,8 @@ let planId = null;
   ok("D", "분석만으로 무이동", Object.keys(FILES).every((n) => fs.existsSync(at(n))));
   const after = await panel.locator(".diff pre.tree").nth(1).textContent().catch(() => "");
   ok("D", "적용 후 트리: 가람정보/20261014_과금이슈/로그", /가람정보[\s\S]*20261014_과금이슈[\s\S]*로그/.test(after));
-  ok("D", "14일 안 날짜 병합: 20261020 안내문도 20261014_과금이슈로", !after.includes("20261020"));
-  ok("D", "하늘통신/20261005_번호전환 (회의록 병합) + 20260915_장애", after.includes("하늘통신") && after.includes("20261005_번호전환") && after.includes("회의록") && after.includes("20260915_장애"));
+  ok("D", "14일 안 날짜 병합: 20261020 안내문도 20261014_과금이슈로", !after.includes("20261020_과금이슈/"));
+  ok("D", "하늘통신/20261005_번호전환 (회의 병합, 1개뿐이라 회의록 폴더 없이) + 20260915_장애", after.includes("하늘통신") && after.includes("20261005_번호전환/") && after.includes("하늘통신_번호전환_20261008_회의.txt") && after.includes("20260915_장애/"));
   ok("D", "고객사 없는 정책 문서 → 기타/정책/…", /기타[\s\S]*정책/.test(after));
   const row = (name) => panel.locator(`[data-testid=context-row][data-name="${name}"]`);
   const vague = await row("애매한 메모.txt").innerText();
@@ -202,7 +202,7 @@ let planId = null;
   await r.locator("[data-testid=ctx-entity]").selectOption("가람정보");
   const moved = await waitFor(async () => ((await r.locator("td.path").nth(1).getAttribute("title")) ?? "").includes("가람정보"), 10000);
   const to = await r.locator("td.path").nth(1).getAttribute("title");
-  ok("E", "고객사 변경 → 옮길 곳 다시 계산 (가람정보/20261014_과금이슈/데이터)", moved && to.includes(path.join("가람정보", "20261014_과금이슈", "데이터")), `${before} → ${to}`);
+  ok("E", "고객사 변경 → 옮길 곳 다시 계산 (가람정보/20261014_과금이슈, 1개라 데이터 폴더 없이)", moved && to.includes(path.join("가람정보", "20261014_과금이슈", "RiverInfo")), `${before} → ${to}`);
   ok("E", "고친 항목 표시", (await r.innerText()).includes("직접 고침"));
   const sug = panel.locator("[data-testid=context-suggestions]");
   const sugText = await sug.innerText().catch(() => "");
@@ -212,19 +212,21 @@ let planId = null;
   const t = fs.readFileSync(CTX, "utf8");
   ok("E", "사전에 반영 → context.toml 별칭 RiverInfo", t.includes("RiverInfo"));
   const after = await panel.locator(".diff pre.tree").nth(1).textContent();
-  ok("E", "트리에 RiverInfo 폴더 없음", !after.includes("RiverInfo"));
+  ok("E", "트리에 RiverInfo 폴더 없음", !after.includes("RiverInfo/"));
 }
 
-// F. apply → files moved where the preview said; undo → all back
+// F. apply → files moved where the preview said; undo → all back.
+// (0.13.0) Each kind / sub-topic has one or two files here, so no kind or
+// sub-topic folders: straight into the issue folder / 기타/정책.
 const DEST = {
-  "GARA_과금_20261014_로그.log": ["가람정보", "20261014_과금이슈", "로그"],
-  "가람정보_과금이슈_20261020_안내문.txt": ["가람정보", "20261014_과금이슈", "안내문서"],
-  "RiverInfo_과금_20261016_정산.csv": ["가람정보", "20261014_과금이슈", "데이터"],
-  "가람정보_장애_20261002_캡처.png": ["가람정보", "20261002_장애", "캡처"],
-  "SKY_번호전환_20261005_대상.csv": ["하늘통신", "20261005_번호전환", "데이터"],
-  "하늘통신_번호전환_20261008_회의.txt": ["하늘통신", "20261005_번호전환", "회의록"],
-  "하늘통신_장애_20260915_로그.log": ["하늘통신", "20260915_장애", "로그"],
-  "문자 발송 정책.txt": ["기타", "정책", "문자 발송 정책"],
+  "GARA_과금_20261014_로그.log": ["가람정보", "20261014_과금이슈"],
+  "가람정보_과금이슈_20261020_안내문.txt": ["가람정보", "20261014_과금이슈"],
+  "RiverInfo_과금_20261016_정산.csv": ["가람정보", "20261014_과금이슈"],
+  "가람정보_장애_20261002_캡처.png": ["가람정보", "20261002_장애"],
+  "SKY_번호전환_20261005_대상.csv": ["하늘통신", "20261005_번호전환"],
+  "하늘통신_번호전환_20261008_회의.txt": ["하늘통신", "20261005_번호전환"],
+  "하늘통신_장애_20260915_로그.log": ["하늘통신", "20260915_장애"],
+  "문자 발송 정책.txt": ["기타", "정책"],
 };
 {
   const panel = main.locator(".restructure");
@@ -233,7 +235,7 @@ const DEST = {
   const done = await waitFor(async () => (await panel.locator(".notice", { hasText: "옮겼습니다" }).count()) === 1, 20000);
   ok("F", "적용 전 확인 대화상자", dialogs.some((d) => d.includes("되돌릴 수 있습니다")));
   const wrong = Object.entries(DEST).filter(([n, p]) => !fs.existsSync(at(...p, n)));
-  ok("F", "파일 위치 = 미리보기 (고객사/날짜_이슈/종류, 기타/정책)", done && wrong.length === 0, wrong.map(([n]) => n).join(", "));
+  ok("F", "파일 위치 = 미리보기 (고객사/날짜_이슈, 기타/정책 — 작은 종류 폴더 없음)", done && wrong.length === 0, wrong.map(([n]) => n).join(", "));
   ok("F", "미분류 파일은 그대로", fs.existsSync(at("애매한 메모.txt")));
   const batches = await bridge("list_batches", { limit: 5 });
   ok("F", "이동 기록: 한 배치 '업무 맥락'", batches[0]?.label?.includes("업무 맥락") ?? false, batches[0]?.label ?? "");
@@ -276,7 +278,7 @@ const DEST = {
   ok("G", "제안 위치: 가람정보/20261021_대체발송 중복", dest.includes("20261021_대체발송 중복"), dest);
   await c.screenshot({ path: `${SHOT}/m10-G-confirm.png` });
   await c.getByRole("button", { name: "이동", exact: true }).click();
-  const okMove = await waitFor(() => fs.existsSync(at("가람정보", "20261021_대체발송 중복", "안내문서", "가람정보_대체발송_20261021_문의.txt")), 10000);
+  const okMove = await waitFor(() => fs.existsSync(at("가람정보", "20261021_대체발송 중복", "가람정보_대체발송_20261021_문의.txt")), 10000);
   ok("G", "승인 → 새 이슈 폴더로 이동", okMove);
   await c.close();
 }

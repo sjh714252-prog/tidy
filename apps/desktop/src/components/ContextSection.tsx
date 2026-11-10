@@ -218,6 +218,23 @@ export function ContextSection() {
             폴더로 묶고, 이미 있는 폴더가 있으면 그 폴더를 씁니다.
           </p>
           <label className="row">
+            <span>작은 폴더 만들지 않기</span>
+            <input
+              type="number"
+              min={1}
+              max={50}
+              step={1}
+              className="narrow"
+              data-testid="curate-min-folder"
+              value={s.min_folder_items ?? 3}
+              onChange={(e) => patch({ min_folder_items: Math.max(1, Number(e.target.value) || 1) })}
+            />
+            <span className="muted small">
+              개 미만이 들어갈 자료 종류·작은 주제 폴더(<code>로그/</code>, <code>정책/문자 정책</code>)는 새로 만들지 않고 한
+              단계 위 폴더에 둡니다. 이미 있는 폴더는 그대로 씁니다.
+            </span>
+          </label>
+          <label className="row">
             <span>미분류 기준</span>
             <input
               type="number"

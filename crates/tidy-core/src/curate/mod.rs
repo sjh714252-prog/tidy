@@ -466,6 +466,36 @@ impl Curator {
         &self.cfg
     }
 
+    /// (0.13.0, SPEC §14.19) The customer a file's name (or its path below
+    /// the watch folder) mentions: a dictionary customer or alias, or one
+    /// the cache already knows. Offline, no AI. While watching, such a
+    /// file is placed by work context before the type rules, so a
+    /// customer's PDF lands in the customer's folder (as in the first
+    /// sweep) instead of `문서/…`.
+    pub fn customer_hint(&self, text: &str, store: Option<&Store>) -> Option<String> {
+        let hay = existing::norm(text);
+        if hay.is_empty() {
+            return None;
+        }
+        // Short Latin names ("KT", "LG") match inside too many words.
+        let usable = |k: &str| {
+            let n = k.chars().count();
+            n >= 3 || (n == 2 && !k.is_ascii())
+        };
+        let hit = |name: &str| {
+            let k = existing::norm(name);
+            usable(&k) && hay.contains(&k)
+        };
+        for e in &self.dict.entities {
+            if hit(&e.name) || e.aliases.iter().any(|a| hit(a)) {
+                return Some(e.name.clone());
+            }
+        }
+        customer_names(&self.dict, store)
+            .into_iter()
+            .find(|n| hit(n))
+    }
+
     /// (0.12.0) Look at what is already in these organize roots, so the AI
     /// is told the folder names to reuse (see [`existing`]).
     pub fn note_existing(&self, anchors: &[PathBuf]) {
@@ -990,6 +1020,19 @@ impl Curator {
         anchor: &Path,
         folder: Option<&str>,
     ) -> PathBuf {
+        self.dest_at(c, date, anchor, folder, false)
+    }
+
+    /// [`Self::dest_for`], or with `coarse` the less detailed folder
+    /// (`{doc_kind}` dropped, `{topic}` first level only).
+    fn dest_at(
+        &self,
+        c: &Curation,
+        date: NaiveDate,
+        anchor: &Path,
+        folder: Option<&str>,
+        coarse: bool,
+    ) -> PathBuf {
         let (t, vals) = match c.entity.as_deref().filter(|e| !e.trim().is_empty()) {
             Some(e) => (
                 &self.template,
@@ -1000,6 +1043,7 @@ impl Curator {
                     topic: None,
                     date: Some(date),
                     folder,
+                    coarse,
                 },
             ),
             None => (
@@ -1011,6 +1055,7 @@ impl Curator {
                     topic: c.topic.as_deref(),
                     date: Some(date),
                     folder,
+                    coarse,
                 },
             ),
         };
@@ -1018,6 +1063,44 @@ impl Curator {
         match folder {
             Some(f) if !t.uses("folder") => dir.join(clean(f)),
             _ => dir,
+        }
+    }
+
+    /// (0.13.0, SPEC §14.19) The folder an item goes into (existing
+    /// folders reused) and, when the layout has one, the less detailed
+    /// folder right above it — the kind (`로그/`) or sub-topic level, used
+    /// instead when the detailed folder would be new and nearly empty.
+    fn dir_choices(
+        &self,
+        c: &Curation,
+        date: NaiveDate,
+        anchor: &Path,
+        folder: Option<&str>,
+    ) -> (PathBuf, Option<PathBuf>) {
+        let up = |p: PathBuf| match folder {
+            Some(_) => p.parent().map(Path::to_path_buf).unwrap_or(p),
+            None => p,
+        };
+        let md = self.cfg.merge_days;
+        let full = existing::reuse_existing(
+            &up(self.dest_at(c, date, anchor, folder, false)),
+            anchor,
+            md,
+        );
+        let coarse =
+            existing::reuse_existing(&up(self.dest_at(c, date, anchor, folder, true)), anchor, md);
+        let coarse = (coarse != full && full.starts_with(&coarse)).then_some(coarse);
+        (full, coarse)
+    }
+
+    /// (0.13.0) Detailed folder or the one above: an existing detailed
+    /// folder is always used; a new one only when at least
+    /// `min_folder_items` items go there (`count`), so a tree never fills
+    /// up with folders holding one or two files.
+    fn pick_dir(&self, full: PathBuf, coarse: Option<PathBuf>, count: usize) -> PathBuf {
+        match coarse {
+            Some(c) if !full.is_dir() && count < self.cfg.min_folder_items => c,
+            _ => full,
         }
     }
 
@@ -1276,8 +1359,12 @@ impl Curator {
         let mut new_dirs: Vec<PathBuf> = Vec::new();
         let mut entities: Vec<String> = Vec::new();
         let mut issues: Vec<(String, String)> = Vec::new();
+        // Per item: (anchor, detailed folder, folder above, leaf, date).
+        type Laid = (PathBuf, PathBuf, Option<PathBuf>, String, NaiveDate);
+        let mut laid: Vec<Option<Laid>> = Vec::with_capacity(plan.moves.len());
         for m in plan.moves.iter_mut() {
             let Some(n) = m.context.as_mut() else {
+                laid.push(None);
                 continue;
             };
             n.folder_state.clear();
@@ -1285,6 +1372,7 @@ impl Curator {
             if n.unclassified {
                 m.to = m.from.clone();
                 unclassified += 1;
+                laid.push(None);
                 continue;
             }
             let anchor = n.anchor.clone().unwrap_or_else(|| plan_anchor.clone());
@@ -1328,18 +1416,38 @@ impl Curator {
                 .file_name()
                 .map(|x| x.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            let (dir, leaf) = if m.is_dir {
+            let (full, coarse, leaf) = if m.is_dir {
                 let to = self.dest_for(&c, date, &anchor, Some(&name));
                 let leaf = to
                     .file_name()
                     .map(|x| x.to_string_lossy().into_owned())
                     .unwrap_or_else(|| name.clone());
-                (to.parent().map(Path::to_path_buf).unwrap_or(to), leaf)
+                let (f, co) = self.dir_choices(&c, date, &anchor, Some(&name));
+                (f, co, leaf)
             } else {
                 let leaf = if m.encrypt { zip_name_for(&name) } else { name };
-                (self.dest_dir(&c, date, &anchor), leaf)
+                let (f, co) = self.dir_choices(&c, date, &anchor, None);
+                (f, co, leaf)
             };
-            let dir = existing::reuse_existing(&dir, &anchor, self.cfg.merge_days);
+            // "기타/미분류에 종류별로 모으기": the kind folder is what the
+            // user asked for — never folded away.
+            let coarse = coarse.filter(|_| n.settled != "kind");
+            laid.push(Some((anchor, full, coarse, leaf, date)));
+        }
+        // (0.13.0) How many items each detailed folder would get.
+        let mut count: HashMap<PathBuf, usize> = HashMap::new();
+        for (_, full, _, _, _) in laid.iter().flatten() {
+            *count.entry(full.clone()).or_default() += 1;
+        }
+        for (m, l) in plan.moves.iter_mut().zip(laid) {
+            let Some((anchor, full, coarse, leaf, date)) = l else {
+                continue;
+            };
+            let Some(n) = m.context.as_mut() else {
+                continue;
+            };
+            let k = count.get(&full).copied().unwrap_or(0);
+            let dir = self.pick_dir(full, coarse, k);
             // The date of the issue folder actually used (an existing one
             // may be a few days off).
             let used = dir
@@ -1573,11 +1681,15 @@ impl Curator {
         };
         // (0.12.0) Into the folders already there when they stand for the
         // same customer / issue (spelling, a few days apart).
-        let dest_dir = existing::reuse_existing(
-            &self.dest_dir(&c, date, anchor),
-            anchor,
-            self.cfg.merge_days,
-        );
+        // (0.13.0) One file never opens a new kind / sub-topic folder of
+        // its own: it goes one level up unless that folder exists.
+        let (full, coarse) = self.dir_choices(&c, date, anchor, None);
+        // Known: the detailed folder or the one above it exists (a new
+        // kind folder in an existing issue folder) — judged on the
+        // detailed folder, so a new issue folder is never "known".
+        let known_folder =
+            full.is_dir() || full.parent().is_some_and(|p| p != anchor && p.is_dir());
+        let dest_dir = self.pick_dir(full, coarse, 1);
         let date = dest_dir
             .strip_prefix(anchor)
             .ok()
@@ -1588,8 +1700,6 @@ impl Curator {
             })
             .filter(|_| c.entity.is_some())
             .unwrap_or(date);
-        let known_folder =
-            dest_dir.is_dir() || dest_dir.parent().is_some_and(|p| p != anchor && p.is_dir());
         // A customer is known from the dictionary or from its folder.
         let entity_dir = dest_dir
             .strip_prefix(anchor)

@@ -13,9 +13,9 @@ use tidy_core::mover::Mover;
 use tidy_core::store::Store;
 use tidy_core::watcher::IgnoreFilter;
 
-fn ym(p: &Path) -> String {
+fn year(p: &Path) -> String {
     let t: chrono::DateTime<chrono::Local> = fs::metadata(p).unwrap().modified().unwrap().into();
-    t.format("%Y-%m").to_string()
+    t.format("%Y").to_string()
 }
 
 #[test]
@@ -50,7 +50,7 @@ fn in_place_and_collect_with_the_same_relative_rules() {
     let zip = down.join("사진 모음.zip");
     fs::write(&pdf, "pdf").unwrap();
     fs::write(&zip, "zip").unwrap();
-    let m_pdf = ym(&pdf);
+    let m_pdf = year(&pdf);
 
     let batch = new_batch_id();
     let a = engine.handle(&pdf, &batch).unwrap();

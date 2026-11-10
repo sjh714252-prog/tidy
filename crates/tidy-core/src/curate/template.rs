@@ -35,6 +35,10 @@ pub struct TemplateVals<'a> {
     pub date: Option<NaiveDate>,
     /// (M12) A folder item's own name; empty for files (the segment drops).
     pub folder: Option<&'a str>,
+    /// (0.13.0, SPEC §14.19) The less detailed folder: `{doc_kind}` drops
+    /// and `{topic}` keeps only its first level. Used when the detailed
+    /// folder would be a new one holding too few items.
+    pub coarse: bool,
 }
 
 impl FolderTemplate {
@@ -106,6 +110,7 @@ impl FolderTemplate {
                     let val = match v.as_str() {
                         "entity" => clean(vals.entity.unwrap_or("기타")),
                         "issue" => clean(or(vals.issue, "기타 이슈")),
+                        "doc_kind" if vals.coarse => String::new(),
                         "doc_kind" => clean(or(vals.doc_kind, "기타 자료")),
                         // Up to two levels; each level cleaned on its own.
                         "topic" => {
@@ -115,7 +120,7 @@ impl FolderTemplate {
                                 .split(['/', '\\', '>'])
                                 .map(clean)
                                 .filter(|p| !p.is_empty())
-                                .take(2)
+                                .take(if vals.coarse { 1 } else { 2 })
                                 .collect();
                             if parts.is_empty() {
                                 "미분류".into()
@@ -194,6 +199,7 @@ mod tests {
                 topic: None,
                 date: d(2026, 10, 20),
                 folder: None,
+                coarse: false,
             },
             a,
         );
@@ -227,6 +233,28 @@ mod tests {
             a.join("가온누리원").join("로그분석").join("x")
         );
         assert!(f.uses("folder"));
+    }
+
+    #[test]
+    fn coarse_drops_kind_and_sub_topic() {
+        let a = Path::new("/정리");
+        let t = FolderTemplate::parse("{entity}/{yyyymmdd}_{issue}/{doc_kind}").unwrap();
+        let v = TemplateVals {
+            entity: Some("가람정보"),
+            issue: "과금",
+            doc_kind: "로그",
+            date: d(2026, 10, 20),
+            coarse: true,
+            ..Default::default()
+        };
+        assert_eq!(t.render(&v, a), a.join("가람정보").join("20261020_과금"));
+        let o = FolderTemplate::parse("기타/{topic}").unwrap();
+        let v = TemplateVals {
+            topic: Some("개발/소스 예제"),
+            coarse: true,
+            ..Default::default()
+        };
+        assert_eq!(o.render(&v, a), a.join("기타").join("개발"));
     }
 
     #[test]

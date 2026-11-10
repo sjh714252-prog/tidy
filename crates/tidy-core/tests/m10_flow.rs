@@ -243,37 +243,31 @@ fn curate_plan_layout_merge_cache_edit_apply_undo() {
     let r = |n: &str| rel(&to_of(&plan, n), &desk);
     assert_eq!(
         r("가람정보_과금오류_20261020.log"),
-        "가람정보/20261020_과금이슈/로그/가람정보_과금오류_20261020.log"
+        "가람정보/20261020_과금이슈/가람정보_과금오류_20261020.log"
     );
     // Alias → dictionary name, date 10-22 merged into the 10-20 folder.
     assert_eq!(
         r("과금 안내문(가람).txt"),
-        "가람정보/20261020_과금이슈/안내문서/과금 안내문(가람).txt"
+        "가람정보/20261020_과금이슈/과금 안내문(가람).txt"
     );
     assert_eq!(
         r("GARA_장애로그_20261105.log"),
-        "가람정보/20261105_장애/로그/GARA_장애로그_20261105.log"
+        "가람정보/20261105_장애/GARA_장애로그_20261105.log"
     );
     assert_eq!(
         r("SKY_전환대상.csv"),
-        "하늘통신/20260901_번호전환/데이터/SKY_전환대상.csv"
+        "하늘통신/20260901_번호전환/SKY_전환대상.csv"
     );
     assert_eq!(
         r("하늘통신_번호전환_회의록.txt"),
-        "하늘통신/20260901_번호전환/회의록/하늘통신_번호전환_회의록.txt"
+        "하늘통신/20260901_번호전환/하늘통신_번호전환_회의록.txt"
     );
     assert!(
         r("하늘통신_정기점검_결과.txt").starts_with("하늘통신/"),
         "no date in text → modified date"
     );
-    assert_eq!(
-        r("문자 발송 정책.txt"),
-        "기타/정책/문자 정책/문자 발송 정책.txt"
-    );
-    assert_eq!(
-        r("보안 정책 v2.txt"),
-        "기타/정책/보안 정책/보안 정책 v2.txt"
-    );
+    assert_eq!(r("문자 발송 정책.txt"), "기타/정책/문자 발송 정책.txt");
+    assert_eq!(r("보안 정책 v2.txt"), "기타/정책/보안 정책 v2.txt");
     // Unsure → stays (미분류), not part of the preview's moves.
     let memo = plan
         .moves
@@ -374,11 +368,9 @@ fn curate_plan_layout_merge_cache_edit_apply_undo() {
     let rep = restructure::apply(&mover, &plan, None, &[], None).unwrap();
     assert_eq!(rep.moved.len(), 10, "{:?} {:?}", rep.skipped, rep.errors);
     assert!(desk
-        .join("가람정보/20261020_과금이슈/안내문서/과금 안내문(가람).txt")
+        .join("가람정보/20261020_과금이슈/과금 안내문(가람).txt")
         .is_file());
-    assert!(desk
-        .join("기타/정책/문자 정책/문자 발송 정책.txt")
-        .is_file());
+    assert!(desk.join("기타/정책/문자 발송 정책.txt").is_file());
     let batch = store.moves_in_batch(&rep.batch_id).unwrap();
     assert_eq!(batch.len(), 10);
     assert_eq!(
@@ -438,7 +430,7 @@ fn watch_time_placement_auto_into_existing_folder_or_ask() {
     };
     assert_eq!(
         rel(dst, &desk),
-        "가람정보/20261020_과금이슈/로그/가람정보_과금_추가로그.log"
+        "가람정보/20261020_과금이슈/가람정보_과금_추가로그.log"
     );
     // A new issue of a known customer → asked, nothing moved.
     let f = desk.join("가람정보_대체발송_중복건.txt");
@@ -460,10 +452,7 @@ fn watch_time_placement_auto_into_existing_folder_or_ask() {
             .starts_with("가람정보의 새 이슈 '대체발송 중복'(20261020)으로 폴더를 만들까요?"),
         "{reason:?}"
     );
-    assert_eq!(
-        rel(suggested, &desk),
-        "가람정보/20261020_대체발송 중복/안내문서"
-    );
+    assert_eq!(rel(suggested, &desk), "가람정보/20261020_대체발송 중복");
     assert!(f.exists());
     // Unsure → left alone (no rule either).
     let a = engine
@@ -614,10 +603,7 @@ fn unclassified_items_settle_with_one_click() {
     // The AI's guess (topic 메모/기타, confidence 0.3).
     let changed = cur.settle_unclassified(&mut plan, None, Settle::Guess, Some(store));
     assert_eq!(changed, vec![memo]);
-    assert_eq!(
-        rel(&to_of(&plan, "메모.txt"), &desk),
-        "기타/메모/기타/메모.txt"
-    );
+    assert_eq!(rel(&to_of(&plan, "메모.txt"), &desk), "기타/메모/메모.txt");
     let note = plan
         .moves
         .iter()
