@@ -675,21 +675,99 @@ impl Curator {
             Some(store),
             std::time::SystemTime::now(),
         );
-        // (0.12.3) Folders left by earlier organizing in `root`: file by
-        // file, each with its path ("KGM/20260527_장애") as the hint.
+        // (0.12.3) Folders left by earlier organizing in `root`: what Tidy
+        // put there, item by item, each with its path ("KGM/20260527_장애")
+        // as the hint. (0.12.5) Only down to the folders Tidy made: a
+        // sub-folder Tidy never moved anything into (a customer's
+        // `tools/go/src/…`) stays one folder item, never torn apart.
+        let mut unsettled = scan.unsettled;
+        let now = std::time::SystemTime::now();
         for d in &scan.leftovers {
-            inputs.extend(
-                Self::files_in(d, true, filter, protected)
-                    .iter()
-                    .filter(|p| !store.get_file(p).ok().flatten().is_some_and(|f| f.vault))
-                    .filter_map(|p| self.input_in(p, root, Some(store)).ok()),
+            self.leftover_items(
+                d,
+                root,
+                filter,
+                protected,
+                skip,
+                store,
+                now,
+                &mut inputs,
+                &mut unsettled,
             );
         }
         inputs.extend(scan.units.into_iter().map(CurateInput::from_unit));
         Items {
             inputs,
-            unsettled: scan.unsettled,
+            unsettled,
             leftovers: scan.leftovers,
+        }
+    }
+
+    /// (0.12.5) Items in `dir`, a folder Tidy once moved files into: its
+    /// files one by one; its sub-folders that also hold Tidy's moves the
+    /// same way (recursively); every other sub-folder as one whole item.
+    #[allow(clippy::too_many_arguments)]
+    fn leftover_items(
+        &self,
+        dir: &Path,
+        root: &Path,
+        filter: &IgnoreFilter,
+        protected: &[PathBuf],
+        skip: &[PathBuf],
+        store: &Store,
+        now: std::time::SystemTime,
+        inputs: &mut Vec<CurateInput>,
+        unsettled: &mut Vec<PathBuf>,
+    ) {
+        inputs.extend(
+            Self::files_in(dir, false, filter, protected)
+                .iter()
+                .filter(|p| !store.get_file(p).ok().flatten().is_some_and(|f| f.vault))
+                .filter_map(|p| self.input_in(p, root, Some(store)).ok()),
+        );
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut dirs: Vec<PathBuf> = rd
+            .filter_map(Result::ok)
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .map(|e| e.path())
+            .collect();
+        dirs.sort();
+        for d in dirs {
+            let name = d
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if name.starts_with('.')
+                || name.contains(TMP_MARKER)
+                || filter.in_excluded_dir(&d)
+                || filter.is_ignored(&d)
+                || protected
+                    .iter()
+                    .chain(skip)
+                    .any(|p| d.starts_with(p) || p.starts_with(&d))
+            {
+                continue;
+            }
+            if store.has_moves_into(&d).unwrap_or(false) {
+                self.leftover_items(
+                    &d, root, filter, protected, skip, store, now, inputs, unsettled,
+                );
+                continue;
+            }
+            let doc = if self.send_content { 300 } else { 0 };
+            let Ok(u) = FolderUnit::scan(&d, root, filter, doc) else {
+                continue;
+            };
+            if u.files == 0 {
+                continue;
+            }
+            if !u.is_settled(self.settle(), now) {
+                unsettled.push(d);
+                continue;
+            }
+            inputs.push(CurateInput::from_unit(u));
         }
     }
 
@@ -1074,7 +1152,7 @@ impl Curator {
         self.relayout(&mut plan, Some(store));
         if !leftovers.is_empty() {
             plan.summary.push_str(&format!(
-                " 예전에 이 폴더 안에서 정리했던 폴더 {}개({})도 파일별로 정리 위치로 옮깁니다.",
+                " 예전에 이 폴더 안에서 정리했던 폴더 {}개({})도 정리 위치로 옮깁니다 — Tidy가 넣은 파일은 하나씩, 원래 있던 하위 폴더는 통째로.",
                 leftovers.len(),
                 names_short(&leftovers, 5)
             ));

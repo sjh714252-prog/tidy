@@ -152,6 +152,21 @@ pub fn run_watch(
     if opts.index {
         engine = engine.with_index(IndexOptions::from_config(cfg));
     }
+    if !opts.dry_run {
+        match engine.drop_scattering_pending() {
+            Ok(d) if !d.is_empty() => {
+                for p in &d {
+                    tracing::info!(path = %p.display(), "dropped AI suggestion for a file inside a sub-folder");
+                }
+                on_event(WatchEvent::Warning(format!(
+                    "확인 대기에서 예전 AI 제안 {}개를 뺐습니다 — 하위 폴더 안 파일을 하나씩 다른 곳으로 옮기자는 제안이라, 폴더째 정리하도록 바꿨습니다 (파일은 그대로)",
+                    d.len()
+                )));
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("queue clean-up failed: {e}"),
+        }
+    }
     if opts.ai && cfg.ai.enabled {
         // Re-read the rules for the AI's view (ai_auto folders, tree roots).
         let rules = RuleSet::load(&rules_path)?;
