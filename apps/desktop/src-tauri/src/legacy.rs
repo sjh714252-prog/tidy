@@ -83,5 +83,32 @@ pub fn run(app: &AppHandle) {
             }
             Err(e) => tracing::warn!("relocation plans failed: {e}"),
         }
+        compact_once(&app, &cfg, &store);
     });
+}
+
+/// (0.13.0, SPEC §14.19) Once: propose folding the small kind / sub-topic
+/// folders the older layout made ("정리 위치 다듬기") — a saved plan on the
+/// home tab, nothing moved until the user applies it.
+fn compact_once(app: &AppHandle, cfg: &tidy_core::Config, store: &Store) {
+    let marker = cfg.store.db_path().with_file_name("compact-0.13.0.done");
+    if marker.exists() {
+        return;
+    }
+    let min = cfg.curate.min_folder_items;
+    for root in tidy_core::report::compact::result_roots(cfg) {
+        let Some(plan) = tidy_core::report::compact::plan_compact(&root, min, store) else {
+            continue;
+        };
+        match tidy_core::report::restructure::save(store, plan) {
+            Ok(p) => {
+                tracing::info!(id = p.id, root = %p.root.display(), moves = p.moves.len(), "compact plan saved");
+                watch::emit_activity(app, "info", &p.root, p.summary.clone());
+            }
+            Err(e) => tracing::warn!("compact plan not saved: {e}"),
+        }
+    }
+    if let Err(e) = std::fs::write(&marker, "0.13.0") {
+        tracing::warn!("compact marker not written: {e}");
+    }
 }

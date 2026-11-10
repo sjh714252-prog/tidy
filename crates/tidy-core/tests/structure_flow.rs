@@ -281,3 +281,90 @@ fn customer_first_falls_back_to_the_rules_when_the_ai_fails() {
     assert_eq!(rule, "문서");
     assert!(rel(dst, &org).starts_with("문서/"), "{dst:?}");
 }
+
+fn put(mover: &Mover, src: &Path, dest_dir: &Path) {
+    mover
+        .move_file(&tidy_core::mover::MoveRequest {
+            src: src.to_path_buf(),
+            dest_dir: dest_dir.to_path_buf(),
+            batch_id: new_batch_id(),
+            decided_by: tidy_core::store::DecidedBy::Restructure,
+            rule_name: Some("업무 맥락".into()),
+            ai_confidence: Some(0.9),
+            new_name: None,
+            encrypt: false,
+            on_duplicate: None,
+        })
+        .unwrap();
+}
+
+/// "정리 위치 다듬기": the older layout's small kind / sub-topic folders
+/// fold one level up; big ones, folders a user filled and folders moved
+/// whole stay; one undoable batch.
+#[test]
+fn compact_folds_small_layout_folders_already_made() {
+    use tidy_core::report::{compact, restructure};
+    let tmp = tempfile::tempdir().unwrap();
+    let base = dunce::canonicalize(tmp.path()).unwrap();
+    let desk = base.join("바탕 화면");
+    let org = base.join("정리");
+    fs::create_dir_all(&desk).unwrap();
+    let mover = Mover::new(Store::open_in_memory().unwrap(), DuplicatePolicy::Rename);
+    let issue = org.join("가람정보").join("20261020_과금");
+    let mk = |n: &str| {
+        let p = desk.join(n);
+        fs::write(&p, n).unwrap();
+        p
+    };
+    // Older layout: 로그/ with 3 files (stays), 안내문서/ with 1 (folds).
+    for n in ["a.log", "b.log", "c.log"] {
+        put(&mover, &mk(n), &issue.join("로그"));
+    }
+    put(&mover, &mk("안내.txt"), &issue.join("안내문서"));
+    // 기타/개발/소스 예제 with 2 files (folds).
+    put(&mover, &mk("x.go"), &org.join("기타/개발/소스 예제"));
+    put(&mover, &mk("y.go"), &org.join("기타/개발/소스 예제"));
+    // A kind folder the user also put a file in (stays).
+    put(&mover, &mk("회의.txt"), &issue.join("회의록"));
+    fs::write(issue.join("회의록").join("내 메모.txt"), "직접").unwrap();
+    // A folder moved whole (folder item) with one file inside (stays).
+    let tool = desk.join("도구");
+    fs::create_dir_all(&tool).unwrap();
+    fs::write(tool.join("run.sh"), "x").unwrap();
+    put(&mover, &tool.join("run.sh"), &issue.join("도구"));
+
+    let store = mover.store();
+    let plan = compact::plan_compact(&org, 3, store).unwrap();
+    let mut got: Vec<String> = plan
+        .moves
+        .iter()
+        .map(|m| format!("{} -> {}", rel(&m.from, &org), rel(&m.to, &org)))
+        .collect();
+    got.sort();
+    assert_eq!(
+        got,
+        vec![
+            "가람정보/20261020_과금/안내문서/안내.txt -> 가람정보/20261020_과금/안내.txt",
+            "기타/개발/소스 예제/x.go -> 기타/개발/x.go",
+            "기타/개발/소스 예제/y.go -> 기타/개발/y.go",
+        ]
+    );
+    assert!(
+        compact::plan_compact(&org, 1, store).is_none(),
+        "1 = never fold"
+    );
+
+    let plan = restructure::save(store, plan).unwrap();
+    let r = restructure::apply(&mover, &plan, None, &[], None).unwrap();
+    assert_eq!(r.moved.len(), 3, "{:?}", r.errors);
+    assert!(issue.join("안내.txt").is_file());
+    assert!(!issue.join("안내문서").exists(), "emptied folder removed");
+    assert!(!org.join("기타/개발/소스 예제").exists());
+    assert!(issue.join("로그").join("a.log").is_file());
+    assert!(issue.join("도구").join("run.sh").is_file());
+    // Nothing left to fold; undo puts it back.
+    assert!(compact::plan_compact(&org, 3, store).is_none());
+    mover.undo_batch(&r.batch_id).unwrap();
+    assert!(issue.join("안내문서").join("안내.txt").is_file());
+    assert!(org.join("기타/개발/소스 예제/x.go").is_file());
+}

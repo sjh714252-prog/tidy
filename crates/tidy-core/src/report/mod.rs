@@ -8,6 +8,7 @@
 //! [`crate::mover::Mover`] (logged in `move_log`).
 
 pub mod backlog;
+pub mod compact;
 pub mod dup;
 pub mod html;
 pub mod import;

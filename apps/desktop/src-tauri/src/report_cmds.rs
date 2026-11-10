@@ -318,6 +318,7 @@ pub async fn apply_plan(
                     restructure::PlanSource::Command => "명령",
                     restructure::PlanSource::Relocate => "정리 위치로 옮기기",
                     restructure::PlanSource::Imported => "제안 파일",
+                    restructure::PlanSource::Compact => "정리 위치 다듬기",
                     _ => "정리 제안",
                 },
                 r.moved.len(),
