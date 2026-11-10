@@ -30,10 +30,8 @@ const RULES = path.join(T, "rules.toml");
 const SHOT = path.join(process.env.S, "shots");
 fs.mkdirSync(SHOT, { recursive: true });
 fs.mkdirSync(DOWN, { recursive: true });
-const ym = (() => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-})();
+// (0.13.0) The starter "문서" rule files by year.
+const ym = String(new Date().getFullYear());
 
 const results = [];
 const ok = (step, what, pass, note = "") => {
@@ -129,7 +127,7 @@ await sleep(1000);
   ok(
     "B",
     "요약: 폴더별 목적지",
-    sum.includes(`${DESK}/문서/{yyyy}-{mm}`) && sum.includes(`${ORG}/압축 파일`) && !sum.includes("스크린샷"),
+    sum.includes(`${DESK}/문서/{yyyy}`) && sum.includes(`${ORG}/압축 파일`) && !sum.includes("스크린샷"),
     sum.replace(/\n/g, " | "),
   );
   await wiz.screenshot({ path: `${SHOT}/m8-B-summary.png` });
@@ -157,7 +155,7 @@ await sleep(1000);
   ok(
     "D",
     "rules.toml: 체크한 규칙만 (문서·압축), 상대 경로",
-    rules.includes('name = "문서"') && rules.includes('name = "압축 파일"') && !rules.includes("스크린샷") && !rules.includes("설치파일") && rules.includes('dest = "문서/{yyyy}-{mm}"'),
+    rules.includes('name = "문서"') && rules.includes('name = "압축 파일"') && !rules.includes("스크린샷") && !rules.includes("설치파일") && rules.includes('dest = "문서/{yyyy}"'),
     rules.split("\n").filter((l) => l.startsWith("name") || l.startsWith("dest")).join(" | "),
   );
   await waitFor(async () => (await bridge("get_status")).watching.length === 2, 15000);
@@ -168,7 +166,7 @@ await sleep(1000);
   fs.writeFileSync(path.join(DOWN, "사진 모음.zip"), "zip");
   const inPlace = path.join(DESK, "문서", ym, "분기 보고서.pdf");
   const collected = path.join(ORG, "압축 파일", "사진 모음.zip");
-  ok("D", "in_place: 바탕 화면/문서/연-월 로 이동", await waitFor(() => fs.existsSync(inPlace), 20000), inPlace);
+  ok("D", "in_place: 바탕 화면/문서/연도 로 이동", await waitFor(() => fs.existsSync(inPlace), 20000), inPlace);
   ok("D", "collect: 정리 보관함/압축 파일 로 이동", await waitFor(() => fs.existsSync(collected), 20000), collected);
   ok(
     "D",

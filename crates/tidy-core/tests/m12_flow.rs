@@ -137,7 +137,7 @@ fn a_folder_moves_as_one_item_with_path_context_and_undoes() {
     assert_eq!(folder.files, 32);
     assert_eq!(
         rel(&folder.to, &org),
-        "가온누리원/20261023_로그분석/개발/가온누리원 로그"
+        "가온누리원/20261023_로그분석/가온누리원 로그"
     );
     let note = folder.context.as_ref().unwrap();
     assert!(
@@ -172,7 +172,6 @@ fn a_folder_moves_as_one_item_with_path_context_and_undoes() {
     let moved = org
         .join("가온누리원")
         .join("20261023_로그분석")
-        .join("개발")
         .join("가온누리원 로그");
     assert!(moved
         .join("tools")
@@ -182,12 +181,7 @@ fn a_folder_moves_as_one_item_with_path_context_and_undoes() {
         .is_file());
     assert!(moved.join("README.md").is_file());
     assert!(!d.tool.exists(), "no empty shell left on the desktop");
-    assert!(org
-        .join("기타")
-        .join("메모")
-        .join("개인")
-        .join("장보기.txt")
-        .is_file());
+    assert!(org.join("기타").join("메모").join("장보기.txt").is_file());
     let u = mover.undo_batch(&r.batch_id).unwrap();
     assert_eq!(u.restored.len(), 34, "{:?}", u.conflicts);
     assert!(d.tool.join("tools").join("go").join("f29.go").is_file());

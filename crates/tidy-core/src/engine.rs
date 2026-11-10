@@ -274,6 +274,22 @@ impl Engine {
             if let Some(a) = self.curate_step(&facts, batch_id)? {
                 return Ok(a);
             }
+        } else if self.ai.is_some()
+            && self.curator.as_ref().is_some_and(|c| {
+                path.file_name().is_some_and(|n| {
+                    c.customer_hint(&n.to_string_lossy(), Some(self.mover.store()))
+                        .is_some()
+                })
+            })
+        {
+            // (0.13.0, SPEC §14.19) The name says whose work this is: the
+            // customer's folder comes before the type rules (`문서/…`).
+            // Not placed (unclassified, AI failed, inside a sub-folder) →
+            // the rules as usual.
+            match self.curate_step(&facts, batch_id)? {
+                Some(Action::AiFailed { .. }) | None => {}
+                Some(a) => return Ok(a),
+            }
         }
         let Some(c) = self.rules.classify_in(&facts, self.anchors.for_path(path)) else {
             if self.curator.is_some() && self.ai.is_some() {

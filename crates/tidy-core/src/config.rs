@@ -657,6 +657,10 @@ pub struct CurateCfg {
     /// (M12) A sub-folder becomes a folder item only after nothing inside
     /// changed for this long (not while it is being copied / unpacked).
     pub folder_settle_secs: u64,
+    /// (0.13.0, SPEC §14.19) A new kind (`로그/`) or sub-topic folder is
+    /// made only when at least this many items go into it; fewer stay one
+    /// level up. Existing folders are always used. 0 or 1: always split.
+    pub min_folder_items: usize,
 }
 
 impl Default for CurateCfg {
@@ -672,6 +676,7 @@ impl Default for CurateCfg {
             merge_days: 14,
             excerpt_chars: 400,
             folder_settle_secs: 60,
+            min_folder_items: 3,
         }
     }
 }
@@ -684,6 +689,9 @@ pub struct CuratePatch {
     pub template: String,
     pub other_template: String,
     pub min_confidence: f64,
+    /// (0.13.0) `None`: leave as it is.
+    #[serde(default)]
+    pub min_folder_items: Option<usize>,
 }
 
 /// Apply `patch` to `[curate]` of the config at `path`, keeping the rest.
@@ -716,6 +724,9 @@ pub fn write_curate_settings(path: &Path, patch: &CuratePatch) -> Result<(), Con
         "min_confidence",
         value(patch.min_confidence.clamp(0.0, 1.0)),
     );
+    if let Some(n) = patch.min_folder_items {
+        t.insert("min_folder_items", value(n.min(1000) as i64));
+    }
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
             path: parent.to_path_buf(),

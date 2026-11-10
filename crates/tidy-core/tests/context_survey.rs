@@ -178,20 +178,19 @@ fn survey_all_watch_folders_reuses_existing_folders() {
     );
     assert_eq!(
         r("kt 과금 안내.txt"),
-        "KT스마트메시지/20261014_과금/안내문서/kt 과금 안내.txt"
+        "KT스마트메시지/20261014_과금/kt 과금 안내.txt"
     );
     let n = |name: &str| item(&plan, name).context.clone().unwrap();
     assert_eq!(n("KT 과금 로그 1020.log").folder_state, "existing");
     assert_eq!(n("KT 과금 로그 1020.log").date, "2026-10-14");
-    assert_eq!(n("kt 과금 안내.txt").folder_state, "new");
-    assert_eq!(
-        n("kt 과금 안내.txt").new_dir.as_deref(),
-        Some("KT스마트메시지/20261014_과금/안내문서")
-    );
+    // (0.13.0) One 안내문서 file: no new kind folder of its own — it goes
+    // into the existing issue folder.
+    assert_eq!(n("kt 과금 안내.txt").folder_state, "existing");
+    assert_eq!(n("kt 과금 안내.txt").new_dir, None);
     // A new customer.
     assert_eq!(
         r("가람정보_장애.txt"),
-        "가람정보/20261030_장애/회의록/가람정보_장애.txt"
+        "가람정보/20261030_장애/가람정보_장애.txt"
     );
     assert_eq!(n("가람정보_장애.txt").new_dir.as_deref(), Some("가람정보"));
     // The folder item from 다운로드: whole, under the existing customer.
@@ -199,7 +198,7 @@ fn survey_all_watch_folders_reuses_existing_folders() {
     assert!(f.is_dir);
     assert_eq!(
         rel(&f.to, &target),
-        "KT스마트메시지/20261028_전환/자료/KT 전환 자료"
+        "KT스마트메시지/20261028_전환/KT 전환 자료"
     );
     assert_eq!(
         n("KT 전환 자료").new_dir.as_deref(),
@@ -207,7 +206,7 @@ fn survey_all_watch_folders_reuses_existing_folders() {
     );
     assert!(n("메모.txt").unclassified);
     assert!(
-        plan.summary.contains("이미 있는 폴더로 1개"),
+        plan.summary.contains("이미 있는 폴더로 2개"),
         "{}",
         plan.summary
     );
@@ -240,7 +239,7 @@ fn survey_all_watch_folders_reuses_existing_folders() {
         .join("KT스마트메시지/20261014_과금/로그/KT 과금 로그 1020.log")
         .is_file());
     assert!(target
-        .join("KT스마트메시지/20261028_전환/자료/KT 전환 자료/캡처/화면.png")
+        .join("KT스마트메시지/20261028_전환/KT 전환 자료/캡처/화면.png")
         .is_file());
     assert!(!down.join("KT 전환 자료").exists());
     assert!(desk.join("메모.txt").is_file(), "미분류 stays");

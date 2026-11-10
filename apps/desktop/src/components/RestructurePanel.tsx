@@ -10,7 +10,7 @@ import { AiNeeded, useAiOn } from "./AiNeeded";
 import { ContextTable, Suggestions } from "./ContextPlan";
 import { PlanMoves } from "./PlanMoves";
 
-const SOURCE: Record<string, string> = { ai: "AI", rules: "규칙", context: "업무 맥락", relocate: "정리 위치로 옮기기", imported: "제안 파일" };
+const SOURCE: Record<string, string> = { ai: "AI", rules: "규칙", context: "업무 맥락", relocate: "정리 위치로 옮기기", imported: "제안 파일", compact: "정리 위치 다듬기" };
 
 /**
  * Restructure (SPEC §5.7): plan from rules (no AI) or from the AI →

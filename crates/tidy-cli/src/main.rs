@@ -86,6 +86,9 @@ enum Cmd {
     /// (M14) Identical files (content, any name): list groups with the copy
     /// kept by default; --apply sends the other copies to the OS trash.
     Dedupe(DedupeArgs),
+    /// (0.13.0) "정리 위치 다듬기": small kind / sub-topic folders Tidy made
+    /// are folded one level up. Saves a plan; apply with `restructure --apply ID`.
+    Compact(CompactArgs),
     /// (M10) Work-context curation: customer / dated issue / kind folders
     /// proposed by the AI, applied only on approval.
     #[command(subcommand)]
@@ -181,6 +184,15 @@ struct ReportArgs {
     /// for huge folders. Default: `report.scan_depth`, else unlimited.
     #[arg(long, value_name = "N")]
     scan_depth: Option<usize>,
+}
+
+#[derive(Args)]
+struct CompactArgs {
+    /// Folder (default: every organize root / in-place watch folder).
+    path: Option<PathBuf>,
+    /// Fold folders with fewer files than this (default `[curate] min_folder_items`).
+    #[arg(long)]
+    min: Option<usize>,
 }
 
 #[derive(Args)]
@@ -631,6 +643,7 @@ fn main() -> Result<()> {
         Cmd::Learn(args) => cmd_learn(cli.config, args),
         Cmd::Report(args) => cmd_report(cli.config, args),
         Cmd::Dedupe(args) => cmd_dedupe(cli.config, args),
+        Cmd::Compact(args) => cmd_compact(cli.config, args),
         Cmd::Ask(args) => cmd_ask(cli.config, args),
         Cmd::Restructure(args) => cmd_restructure(cli.config, args),
         Cmd::Pii(cmd) => cmd_pii(cli.config, cmd),
@@ -2070,6 +2083,33 @@ fn default_folder(cfg: &Config, path: Option<PathBuf>) -> Result<PathBuf> {
             .map(|w| w.path.clone())
             .context("no folder given and no [[watch]] folder configured"),
     }
+}
+
+fn cmd_compact(config: Option<PathBuf>, args: CompactArgs) -> Result<()> {
+    let cfg = load_config(config)?;
+    let store = Store::open(&cfg.store.db_path())?;
+    let min = args.min.unwrap_or(cfg.curate.min_folder_items);
+    let roots = match args.path {
+        Some(p) => vec![p],
+        None => report::compact::result_roots(&cfg),
+    };
+    let mut any = false;
+    for root in roots {
+        let Some(plan) = report::compact::plan_compact(&root, min, &store) else {
+            println!("{}: nothing to fold", root.display());
+            continue;
+        };
+        any = true;
+        let plan = report::restructure::save(&store, plan)?;
+        println!("plan #{} — {}", plan.id, plan.summary);
+        for m in &plan.moves {
+            println!("  [{}] {} -> {}", m.id, m.from.display(), m.to.display());
+        }
+    }
+    if any {
+        println!("apply: tidy restructure --apply <ID> [--only 1,3]");
+    }
+    Ok(())
 }
 
 fn cmd_dedupe(config: Option<PathBuf>, args: DedupeArgs) -> Result<()> {

@@ -9,7 +9,7 @@
 //   C. home: "새 폴더 1개 — 지금 정리" → 정리하기 + cost notice (폴더 1개)
 //   D. preview: ONE folder row (📁, 파일 31개, inner tree) + top-level file
 //      rows; the prompt carries paths; folder date editable; nothing moved
-//   E. apply → 정리/가온누리원/날짜_로그분석/개발/가온누리원 로그/tools/go/…
+//   E. apply → 정리/가온누리원/날짜_로그분석/가온누리원 로그/tools/go/…
 //   F. 고객사별 보기 (click opens the folder) · search filter by customer ·
 //      도움말 "고객사 자료는 어디 있나요?"
 //   G. 되돌리기 → the folder is back on the desktop, all 30 .go files
@@ -181,8 +181,8 @@ const fileRows = () => panel.locator("[data-testid=context-row][data-kind=file]"
   ok("D", "프롬프트: 폴더 요약 줄 (경로·파일 수·확장자)", /\] 폴더: 가온누리원 로그 \| 경로: 가온누리원 로그 \| 파일 31개 .*확장자: go 30/.test(u), u.split("\n").find((l) => l.includes("] 폴더:"))?.slice(0, 160));
   ok("D", "프롬프트: 파일 줄에 폴더 경로", /\] 파일: 누리원_회의록_20261021\.txt \| 폴더: /.test(u));
   const dest = () => fr.locator("td.path").nth(1).getAttribute("title");
-  const want = (d) => path.join(ORG, "가온누리원", `${d}_로그분석`, "개발", "가온누리원 로그");
-  ok("D", "옮길 곳: 정리/가온누리원/20261020_로그분석/개발/가온누리원 로그 (날짜 = 최근 파일)", (await dest()) === want("20261020"), await dest());
+  const want = (d) => path.join(ORG, "가온누리원", `${d}_로그분석`, "가온누리원 로그");
+  ok("D", "옮길 곳: 정리/가온누리원/20261020_로그분석/가온누리원 로그 (날짜 = 최근 파일)", (await dest()) === want("20261020"), await dest());
   await fr.locator("[data-testid=folder-toggle]").click();
   const tree = await panel.locator("[data-testid=folder-inner] pre").innerText().catch(() => "");
   ok("D", "펼치면 안의 구조 (tools/go)", tree.includes("tools") && tree.includes("go"), tree.split("\n").slice(0, 4).join(" | "));
@@ -199,13 +199,13 @@ const fileRows = () => panel.locator("[data-testid=context-row][data-kind=file]"
 }
 
 // E. apply: the folder keeps its inner structure under the work context
-const DEST = path.join(ORG, "가온누리원", "20261019_로그분석", "개발", "가온누리원 로그");
+const DEST = path.join(ORG, "가온누리원", "20261019_로그분석", "가온누리원 로그");
 {
   dialogs.length = 0;
   await panel.getByRole("button", { name: /선택한 \d+개 옮기기/ }).click();
   const moved = await waitFor(async () => (await panel.locator(".notice", { hasText: "옮겼습니다" }).count()) === 1, 30000);
   const inner = walk(DEST);
-  ok("E", "적용 → …/개발/가온누리원 로그/tools/go/*.go 30개 + README", moved && inner.filter((p) => /^tools\/go\/f\d\d\.go$/.test(p)).length === 30 && inner.includes("README.md"), `${inner.length} files`);
+  ok("E", "적용 → …/가온누리원 로그/tools/go/*.go 30개 + README", moved && inner.filter((p) => /^tools\/go\/f\d\d\.go$/.test(p)).length === 30 && inner.includes("README.md"), `${inner.length} files`);
   ok("E", "바탕 화면의 폴더는 비워져 정리됨", !fs.existsSync(UNIT));
   const n = (await panel.locator(".notice", { hasText: "옮겼습니다" }).innerText()).match(/(\d+)개 파일/)?.[1];
   ok("E", "한 배치로 34개 파일 이동 (폴더 31 + 파일 3)", n === "34", n);

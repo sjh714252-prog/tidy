@@ -313,6 +313,7 @@ const PLAN_SOURCE: Record<string, string> = {
   command: "명령",
   relocate: "정리 위치로 옮기기",
   imported: "제안 파일",
+  compact: "정리 위치 다듬기",
 };
 
 /**
