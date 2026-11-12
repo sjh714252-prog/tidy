@@ -973,6 +973,8 @@ pub struct SettingsDto {
     pub keep_shortcuts: bool,
     /// (M14) `[mover] duplicate_policy`: skip | rename | replace.
     pub duplicate_policy: tidy_core::config::DuplicatePolicy,
+    /// (0.14.0) `[mover] ask_before_move`.
+    pub ask_before_move: bool,
 }
 
 /// Shown when there is no rules.toml yet: explanations only, no rules
@@ -1011,6 +1013,7 @@ pub async fn get_settings(app: AppHandle) -> CmdResult<SettingsDto> {
             check_updates: cfg.general.check_updates,
             keep_shortcuts: cfg.general.keep_shortcuts,
             duplicate_policy: cfg.mover.duplicate_policy,
+            ask_before_move: cfg.mover.ask_before_move,
         })
     })
     .await
@@ -1058,6 +1061,9 @@ pub struct SaveSettingsArgs {
     /// (M14) `[mover] duplicate_policy` (absent = unchanged).
     #[serde(default)]
     pub duplicate_policy: Option<tidy_core::config::DuplicatePolicy>,
+    /// (0.14.0) `[mover] ask_before_move` (absent = unchanged).
+    #[serde(default)]
+    pub ask_before_move: Option<bool>,
 }
 
 fn default_true() -> bool {
@@ -1093,6 +1099,7 @@ pub async fn save_settings(app: AppHandle, args: SaveSettingsArgs) -> CmdResult<
             check_updates: args.check_updates,
             keep_shortcuts: args.keep_shortcuts,
             duplicate_policy: args.duplicate_policy,
+            ask_before_move: args.ask_before_move,
         };
         write_settings(&state.config_path, &patch).map_err(|e| e.to_string())?;
         // Rules path comes from the (re)loaded config.

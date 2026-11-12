@@ -60,6 +60,9 @@ undo_retention_days = 30   # move_log 보관 기간(일). 지나면 로그만 �
 #   replace = 기존 사본을 OS 휴지통으로 보내고 옮김 (영구 삭제 아님)
 # 이름만 같고 내용이 다르면 항상 "이름 (1).ext"로 옮깁니다(덮어쓰기 없음).
 duplicate_policy = "skip"
+# true = 감시 중에도 혼자 옮기지 않고, 규칙에 맞는 파일까지 모두 확인 대기에서 먼저 묻습니다.
+# (미리보기 [적용]으로 하는 정리는 그 [적용]이 승인이라 그대로.)
+ask_before_move = false
 # NAS로/에서 동시에 복사·본문 읽기를 몇 개까지 할지(SPEC §5.9).
 nas_concurrency = 2
 

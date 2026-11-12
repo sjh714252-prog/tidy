@@ -103,6 +103,7 @@ fn exclude_round_trips_through_config_toml() {
         check_updates: true,
         keep_shortcuts: true,
         duplicate_policy: None,
+        ask_before_move: None,
     };
     write_settings(&path, &patch).unwrap();
     let text = fs::read_to_string(&path).unwrap();

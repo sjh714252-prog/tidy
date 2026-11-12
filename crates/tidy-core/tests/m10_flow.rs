@@ -461,6 +461,60 @@ fn watch_time_placement_auto_into_existing_folder_or_ask() {
     assert!(matches!(a, Action::NoRule(_)), "{a:?}");
 }
 
+/// (0.14.0) With `ask_before_move` even a confident answer into an
+/// existing issue folder waits in the queue, worded as an existing folder.
+#[test]
+fn ask_before_move_queues_existing_folder_placement() {
+    use tidy_core::classify::Anchors;
+    use tidy_core::config::WatchRoot;
+    use tidy_core::engine::{new_batch_id, Action, Engine};
+    use tidy_core::store::PendingSource;
+    use tidy_core::watcher::IgnoreFilter;
+
+    let (_tmp, desk) = setup();
+    let cfg = Config::default();
+    let cur = Arc::new(Curator::new(dict(), cfg.curate.clone(), true).unwrap());
+    let mover = Mover::new(Store::open_in_memory().unwrap(), DuplicatePolicy::Rename);
+    let ai = AiClassifier::with_provider(mock(), &cfg, &RuleSet::default()).unwrap();
+    let plan = cur
+        .plan(&ai, mover.store(), &desk, &desk, &nofilter(), &[], &[])
+        .unwrap();
+    let plan = restructure::save(mover.store(), plan).unwrap();
+    restructure::apply(&mover, &plan, None, &[], None).unwrap();
+
+    let watches = vec![WatchRoot {
+        path: desk.clone(),
+        ..Default::default()
+    }];
+    let engine = Engine::new(RuleSet::default(), mover, IgnoreFilter::new(&[]).unwrap())
+        .with_anchors(Anchors::from_watches(&watches))
+        .with_ai(AiClassifier::with_provider(mock(), &cfg, &RuleSet::default()).unwrap())
+        .with_curator(cur)
+        .ask_before_move(true);
+    let f = desk.join("가람정보_과금_추가로그.log");
+    fs::write(&f, "새 파일").unwrap();
+    let a = engine.handle(&f, &new_batch_id()).unwrap();
+    let Action::Pending {
+        reason,
+        suggested,
+        source,
+        ..
+    } = &a
+    else {
+        panic!("{a:?}")
+    };
+    assert_eq!(*source, PendingSource::Ai);
+    assert!(
+        reason
+            .as_deref()
+            .unwrap()
+            .starts_with("이미 있는 폴더에 넣을까요?"),
+        "{reason:?}"
+    );
+    assert_eq!(rel(suggested, &desk), "가람정보/20261020_과금이슈");
+    assert!(f.exists());
+}
+
 #[test]
 fn collect_anchor_and_custom_template() {
     let (tmp, desk) = setup();

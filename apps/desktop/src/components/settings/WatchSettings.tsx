@@ -97,6 +97,8 @@ export function WatchSettings() {
         <button onClick={() => void setCommon()}>찾아보기…</button>
       </div>
 
+      <AskCard />
+
       <DuplicateCard />
 
       <div className="stack">
@@ -119,6 +121,35 @@ export function WatchSettings() {
         </button>
       </div>
     </>
+  );
+}
+
+/** (0.14.0) `[mover] ask_before_move` (SPEC §5.3). */
+function AskCard() {
+  const s = useSettings();
+  const on = s.draft?.askBeforeMove ?? false;
+  return (
+    <div className="card dup-card" data-testid="ask-before-move">
+      <div className="what">
+        <b>
+          옮기기 전에 항상 묻기 <Help id="askBeforeMove" />
+        </b>
+        <span className="small muted">
+          {on
+            ? "감시 중에는 아무것도 혼자 옮기지 않습니다. 모든 파일이 확인 대기에서 [이동]을 기다립니다."
+            : "꺼져 있음: 규칙에 맞거나 AI가 확신한 파일은 바로 옮기고, 새 폴더가 필요할 때만 묻습니다."}
+        </span>
+      </div>
+      <label className="check">
+        <input
+          type="checkbox"
+          aria-label="옮기기 전에 항상 묻기"
+          checked={on}
+          onChange={(e) => s.patch({ askBeforeMove: e.target.checked })}
+        />{" "}
+        항상 묻기
+      </label>
+    </div>
   );
 }
 

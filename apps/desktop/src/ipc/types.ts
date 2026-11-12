@@ -110,6 +110,8 @@ export interface Overview {
   cap: number;
   /** (M12) New sub-folders over all watch folders. */
   newFolders: number;
+  /** (0.14.0) `[mover] ask_before_move`. */
+  askBeforeMove: boolean;
 }
 
 /** (M12) "고객사별 보기". */
@@ -323,6 +325,8 @@ export interface Settings {
   keepShortcuts: boolean;
   /** (M14) `[mover] duplicate_policy`. */
   duplicatePolicy: DuplicatePolicy;
+  /** (0.14.0) `[mover] ask_before_move`: every move waits in the confirm queue. */
+  askBeforeMove: boolean;
 }
 
 export interface SaveSettingsArgs {
@@ -336,6 +340,8 @@ export interface SaveSettingsArgs {
   keepShortcuts: boolean;
   /** (M14) Absent = unchanged. */
   duplicatePolicy?: DuplicatePolicy;
+  /** (0.14.0) Absent = unchanged. */
+  askBeforeMove?: boolean;
 }
 
 export interface RulesCheck {
