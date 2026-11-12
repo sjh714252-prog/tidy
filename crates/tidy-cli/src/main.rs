@@ -218,6 +218,11 @@ struct ReviewArgs {
     /// Offline; `--ai` is ignored.
     #[arg(long, conflicts_with = "ai")]
     rebuild: bool,
+    /// (0.16.1) Write a listing of the organize root (JSON) to this file
+    /// instead, to plan a full cleanup elsewhere (open the result with
+    /// "제안 파일 열기"). Nothing moves.
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["ai", "rebuild"])]
+    export: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -2147,6 +2152,24 @@ fn cmd_review(config: Option<PathBuf>, args: ReviewArgs) -> Result<()> {
     } else {
         None
     };
+    if let Some(out) = &args.export {
+        for (i, root) in roots.iter().enumerate() {
+            let out = if i == 0 {
+                out.clone()
+            } else {
+                out.with_extension(format!("{i}.json"))
+            };
+            let l = report::listing::run(&cfg, root, &store, &cfg.report.protected, Some(out))?;
+            println!(
+                "{}: {} files listed{} -> {}",
+                root.display(),
+                l.files,
+                if l.capped { " (capped)" } else { "" },
+                l.path.display()
+            );
+        }
+        return Ok(());
+    }
     if args.rebuild {
         let mut any = false;
         for root in roots {

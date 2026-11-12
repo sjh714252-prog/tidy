@@ -229,6 +229,30 @@ fn save_preview(
     })
 }
 
+/// (0.16.1, SPEC §14.22) "정리 위치 목록 내보내기": one JSON file describing
+/// the organize root (to plan a full cleanup elsewhere and open it back as
+/// a plan file). Saved to Downloads; nothing moves.
+#[tauri::command]
+pub async fn export_listing(
+    app: AppHandle,
+    path: String,
+    protect: Vec<String>,
+) -> CmdResult<report::listing::Listing> {
+    blocking(move || {
+        let cfg = app.state::<AppState>().config();
+        let store = Store::open(&cfg.store.db_path()).map_err(err)?;
+        report::listing::run(
+            &cfg,
+            &expand(&path),
+            &store,
+            &protected(&cfg, &protect),
+            None,
+        )
+        .map_err(err)
+    })
+    .await
+}
+
 /// (0.16.0, SPEC §14.22) "정리 위치 새로 짜기": re-plan the whole organize
 /// root under today's layout — every customer's file into that customer's
 /// folder by kind, split folders merged, the rest by the rules. Offline;

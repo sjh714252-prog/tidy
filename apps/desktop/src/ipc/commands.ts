@@ -13,6 +13,7 @@ import type {
   MoveLogEntry,
   PlanResult,
   ReviewResult,
+  Listing,
   Preview,
   Report,
   StoredPlan,
@@ -156,6 +157,9 @@ export const reviewRoots = () => invoke<string[]>("review_roots");
 export const planReview = (path: string, useAi: boolean, protect: string[]) =>
   invoke<ReviewResult>("plan_review", { path, useAi, protect });
 /** (0.16.0) "정리 위치 새로 짜기": every customer file into its customer folder by kind, split folders merged, the rest by the rules. Offline; nothing moves. */
+/** (0.16.1) "정리 위치 목록 내보내기": one JSON file (Downloads) describing the organize root. Nothing moves. */
+export const exportListing = (path: string, protect: string[]) =>
+  invoke<Listing>("export_listing", { path, protect });
 export const planRebuild = (path: string, protect: string[]) =>
   invoke<ReviewResult>("plan_rebuild", { path, protect });
 // ── M10 work context ──

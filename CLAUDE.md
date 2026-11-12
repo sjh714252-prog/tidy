@@ -64,7 +64,7 @@ cargo run -p tidy-cli -- rules check [rules.toml] [--each]   # 규칙별 지금 
 cargo run -p tidy-cli -- rules starters [--toml documents,archives]   # 마법사 시작 규칙 목록 / TOML로 출력
 cargo run -p tidy-cli -- report [폴더] [--format text|json|html] [--scan-depth N]
 cargo run -p tidy-cli -- restructure [폴더] --rules|--ai  → --apply ID [--only 1,3]   # 승인 전엔 아무것도 안 옮김
-cargo run -p tidy-cli -- review [폴더] [--ai | --rebuild]   # --rebuild = 처음부터 새로 짜기(0.16.0, 고객사 파일은 어디 있든 고객사/종류). 정리 위치 점검(M19): 나뉜 고객사·이슈 폴더 합치기·기타 속 고객사 폴더·작은 폴더 접기·맨 위 파일(규칙), --ai면 고객사 폴더 밖 고객사 파일도 (계획만, restructure --apply)
+cargo run -p tidy-cli -- review [폴더] [--ai | --rebuild | --export 목록.json]   # --rebuild = 처음부터 새로 짜기(0.16.0, 고객사 파일은 어디 있든 고객사/종류). 정리 위치 점검(M19): 나뉜 고객사·이슈 폴더 합치기·기타 속 고객사 폴더·작은 폴더 접기·맨 위 파일(규칙), --ai면 고객사 폴더 밖 고객사 파일도 (계획만, restructure --apply)
 cargo run -p tidy-cli -- compact [폴더] [--min N]   # 정리 위치 다듬기(0.13.0): Tidy가 만든 작은 종류·주제 폴더를 한 단계 위로 (계획만, restructure --apply)
 cargo run -p tidy-cli -- dedupe [폴더] [--apply [--only 1,3]]   # 내용이 같은 파일 그룹(정리 위치 사본 포함·기본 남김) → 승인 후 휴지통(M14)
 cargo run -p tidy-cli -- empty [--apply [--only 1,3]]   # 빈 폴더 정리(0.14.0): 감시 폴더·정리 위치의 파일 없는 폴더 → 승인 후 지움, undo로 다시 만듦
@@ -115,6 +115,7 @@ node apps/desktop/e2e/fake-llm.mjs 18095   # 느린·긴 가짜 Anthropic/OpenAI
 - [x] 0.14.0 빈 폴더 정리 (2026-11-12) — 감시 폴더·정리 위치에서 파일이 하나도 없는 폴더(빈 하위 폴더·Thumbs.db·desktop.ini만) 찾기(`report::empty`, 10분 안에 만든 폴더·제외·보호·링크·숨김 제외), 홈 "빈 폴더 N개 [살펴보기] [정리]"(체크 목록), `Mover::remove_empty_dirs`(직전 재확인, 잡파일은 휴지통, 폴더는 `remove_dir`, move_log `op = rmdir`, 되돌리기 = 폴더 다시 만들기), 그대로 둔 폴더 이유 "빈 폴더" 구분, `tidy empty`. SPEC §14.20. 창 확인은 로컬에서
 - [x] M19 정리 위치 점검 (2026-11-12, 0.15.0) — 정리 위치 안을 통째로 보고 재정렬하는 계획 하나(`report::review`, `PlanSource::Review`): 철자만 다른 같은 폴더·`기타` 아래 고객사 폴더 합치기, 같은 이슈 `merge_days` 안 폴더 합치기(폴더 통째, 코드 프로젝트 제외), 작은 폴더 접기(compact), 맨 위 파일 규칙, "AI로 이것도 보기"(고객사 이름 보이는 파일·맨 위 파일 → `Curator::place_files`, 실패해도 나머지 유지), 정리하기 "정리 위치 점검 — D:\정리" 선택지·홈 [정리 위치 점검], `tidy review`, e2e m19. SPEC §14.21. 실제 D:\정리에서의 결과·창 확인은 로컬에서
 - [x] 0.16.0 정리 위치 새로 짜기 + 고객사 자료는 고객사 폴더로 (2026-11-12) — `report::rebuild`(`PlanSource::Rebuild`, 오프라인): 점검의 합치기 + 이름·본문(인덱스 앞 20,000자, 고객사 하나만)에 고객사 보이는 파일은 어디 있든 `{고객사}/{종류}`(`curate::kinds`), 고객사 이름 폴더는 통째로, 나머지는 종류·연도 폴더에서만 규칙, 최대 20,000개, 정리하기 [처음부터 새로 짜기 미리보기]·`tidy review --rebuild`. 감시 중 고객사 파일은 AI 실패·없음이면 규칙 대신 `{고객사}/{종류}`(`Engine::customer_kind_step`, 새 고객사는 확인 대기), 점검도 고객사 파일 오프라인 배치. 미리보기 diff 오른쪽 칸 넘침 수정, 미리보기 300개씩 더 보기. SPEC §14.22. 실제 D:\정리 결과·창 확인은 로컬에서
+- [x] 0.16.1 수정 (2026-11-12) — 새로 짜기가 `텍스트/2026` 파일에 연·월 규칙을 다시 적용해 `텍스트/2026/06`·`1980/01`로 맴돌던 문제(규칙은 맨 위 폴더가 다를 때만), 정리 위치 목록 내보내기(`report::listing`, JSON: 경로·크기·날짜·원래 폴더·본문 앞 160자, 다운로드 폴더)→Claude가 계획 파일→[받은 계획 파일 열기], `tidy review --export`, e2e m19 F. SPEC §14.22
 - [x] 0.2.x 핫픽스 (2026-10-22~23) — 규칙 카드 정렬(#12), AI 응답 잘림 분할 재시도(#13), HTTP 타임아웃 상한(#14), 감시 폴더 제외 폴더(SPEC §14.5)
 
 ## 열린 결정
