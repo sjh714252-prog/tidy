@@ -110,6 +110,23 @@ export interface Overview {
   cap: number;
   /** (M12) New sub-folders over all watch folders. */
   newFolders: number;
+  /** (0.14.0) Empty folders (only empty folders / Thumbs.db / desktop.ini inside). */
+  empty?: EmptyFolder[];
+}
+
+/** (0.14.0) A folder "빈 폴더 정리" can remove. */
+export interface EmptyFolder {
+  name: string;
+  path: string;
+  root: string;
+  /** Empty sub-folders that go with it. */
+  subFolders: number;
+}
+
+export interface EmptyRemoveResult {
+  batchId: string;
+  removed: number;
+  failed: string[];
 }
 
 /** (M12) "고객사별 보기". */
@@ -741,7 +758,7 @@ export interface MoveLogEntry {
   /** (M6) Logged but the transfer has not finished (long NAS copy, or interrupted). */
   in_progress: boolean;
   /** move | encrypt | trash (M14: src_path went to the trash, dst_path = the copy kept). */
-  op?: "move" | "encrypt" | "trash";
+  op?: "move" | "encrypt" | "trash" | "rmdir";
 }
 
 /** Progress of a long copy-verify move to/from a NAS (core snake_case). */

@@ -1,4 +1,4 @@
-//! M19 (0.14.0, SPEC §14.20) "정리 위치 점검": the organize root Tidy has
+//! M19 (0.15.0, SPEC §14.21) "정리 위치 점검": the organize root Tidy has
 //! been filling is looked at as a whole and re-sorted — split folders of
 //! one customer / issue merged, a customer folder parked under 기타 moved
 //! back, small folders folded, loose top files placed by the rules and

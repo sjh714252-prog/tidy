@@ -86,6 +86,10 @@ enum Cmd {
     /// (M14) Identical files (content, any name): list groups with the copy
     /// kept by default; --apply sends the other copies to the OS trash.
     Dedupe(DedupeArgs),
+    /// (0.14.0) "빈 폴더 정리": folders with no files (only empty folders /
+    /// Thumbs.db / desktop.ini) in the watch folders and organize location;
+    /// --apply removes them (logged, undo makes them again).
+    Empty(EmptyArgs),
     /// (0.13.0) "정리 위치 다듬기": small kind / sub-topic folders Tidy made
     /// are folded one level up. Saves a plan; apply with `restructure --apply ID`.
     Compact(CompactArgs),
@@ -225,6 +229,16 @@ struct DedupeArgs {
     /// Smallest file size to consider, in bytes.
     #[arg(long, default_value_t = 1024)]
     min_size: u64,
+}
+
+#[derive(Args)]
+struct EmptyArgs {
+    /// Remove the listed folders (one batch; `undo --batch` makes them again).
+    #[arg(long)]
+    apply: bool,
+    /// Comma-separated numbers for --apply, e.g. 1,3.
+    #[arg(long, value_delimiter = ',', value_name = "N,..", requires = "apply")]
+    only: Vec<usize>,
 }
 
 #[derive(Args)]
@@ -659,6 +673,7 @@ fn main() -> Result<()> {
         Cmd::Learn(args) => cmd_learn(cli.config, args),
         Cmd::Report(args) => cmd_report(cli.config, args),
         Cmd::Dedupe(args) => cmd_dedupe(cli.config, args),
+        Cmd::Empty(args) => cmd_empty(cli.config, args),
         Cmd::Compact(args) => cmd_compact(cli.config, args),
         Cmd::Review(args) => cmd_review(cli.config, args),
         Cmd::Ask(args) => cmd_ask(cli.config, args),
@@ -1209,6 +1224,8 @@ fn cmd_log(config: Option<PathBuf>, args: LogArgs) -> Result<()> {
             m.src_path.display(),
             if m.op == tidy_core::store::MoveOp::Trash {
                 format!("trash (kept {})", m.dst_path.display())
+            } else if m.op == tidy_core::store::MoveOp::RemoveDir {
+                "removed empty folder".to_string()
             } else {
                 m.dst_path.display().to_string()
             },
@@ -2280,6 +2297,57 @@ fn cmd_dedupe(config: Option<PathBuf>, args: DedupeArgs) -> Result<()> {
         println!("  left {}: {why}", p.display());
     }
     println!("(undo cannot restore from the OS trash: restore them there if needed)");
+    Ok(())
+}
+
+fn cmd_empty(config: Option<PathBuf>, args: EmptyArgs) -> Result<()> {
+    let cfg = load_config(config)?;
+    let found = report::empty::find_all(&cfg, std::time::SystemTime::now());
+    if found.is_empty() {
+        println!("no empty folders");
+        return Ok(());
+    }
+    let picked = |i: usize| args.only.is_empty() || args.only.contains(&i);
+    for (i, f) in found.iter().enumerate() {
+        if picked(i + 1) {
+            println!(
+                "#{}  {}{}",
+                i + 1,
+                f.path.display(),
+                if f.dirs > 1 {
+                    format!("  (+{} empty sub-folder(s))", f.dirs - 1)
+                } else {
+                    String::new()
+                }
+            );
+        }
+    }
+    if !args.apply {
+        println!(
+            "\n{} empty folder(s). Nothing was removed; `tidy empty --apply [--only 1,3]` removes them.",
+            found.len()
+        );
+        return Ok(());
+    }
+    let paths: Vec<PathBuf> = found
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| picked(i + 1))
+        .map(|(_, f)| f.path.clone())
+        .collect();
+    let store = Store::open(&cfg.store.db_path())?;
+    let mover = Mover::new(store, cfg.mover.duplicate_policy);
+    let batch = new_batch_id();
+    let r = mover.remove_empty_dirs(&paths, &batch);
+    println!(
+        "removed {} empty folder(s) ({} with sub-folders), batch {}",
+        r.removed.len(),
+        r.dirs,
+        short(&batch)
+    );
+    for (p, why) in &r.failed {
+        println!("  left {}: {why}", p.display());
+    }
     Ok(())
 }
 

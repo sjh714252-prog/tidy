@@ -110,6 +110,9 @@ impl Mover {
         if e.op == MoveOp::Trash {
             return self.undo_trash(e, report);
         }
+        if e.op == MoveOp::RemoveDir {
+            return self.undo_rmdir(e, report);
+        }
         if !e.dst_path.is_file() {
             report
                 .conflicts
@@ -160,6 +163,25 @@ impl Mover {
         } else {
             report.conflicts.push(conflict(&e, super::TRASH_UNDO_HINT));
         }
+        Ok(())
+    }
+}
+
+impl Mover {
+    /// (0.14.0) An empty folder that was removed: make it again.
+    fn undo_rmdir(&self, e: MoveLogEntry, report: &mut UndoReport) -> Result<(), MoverError> {
+        if !e.src_path.is_dir() {
+            if e.src_path.exists() {
+                report
+                    .conflicts
+                    .push(conflict(&e, "a file now exists where the folder was"));
+                return Ok(());
+            }
+            self.expected.expect(&e.src_path);
+            fs::create_dir_all(&e.src_path).map_err(MoverError::io("create dir", &e.src_path))?;
+        }
+        self.store.mark_undone(e.id)?;
+        report.restored.push((e.src_path.clone(), e.src_path));
         Ok(())
     }
 }

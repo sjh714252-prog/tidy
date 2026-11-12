@@ -386,6 +386,9 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
             )
         }
         "trash_duplicates" => ok(report_cmds::trash_duplicates(app, arg(&args, "groups")?).await?),
+        "remove_empty_folders" => {
+            ok(report_cmds::remove_empty_folders(app, arg(&args, "paths")?).await?)
+        }
         "open_trash" => ok(report_cmds::open_trash().await?),
         "today_moves" => ok(report_cmds::today_moves(
             app,

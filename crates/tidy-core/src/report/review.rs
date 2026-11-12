@@ -1,4 +1,4 @@
-//! (M19, 0.14.0, SPEC §14.20) "정리 위치 점검": look inside the organize
+//! (M19, 0.15.0, SPEC §14.21) "정리 위치 점검": look inside the organize
 //! root (`D:\정리`) Tidy has been filling, and propose re-sorting what no
 //! longer fits the layout of SPEC §14.19 — as one ordinary plan (preview,
 //! tick, apply as one undoable batch). Nothing moves here.

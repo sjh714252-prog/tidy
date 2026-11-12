@@ -327,7 +327,7 @@ export function RestructurePanel() {
 }
 
 /**
- * (M19, SPEC §14.20) The organize root itself was chosen: instead of
+ * (M19, SPEC §14.21) The organize root itself was chosen: instead of
  * "organizing" it again, look inside it — merge split customer / issue
  * folders, fold small folders, place loose files — as a preview.
  */

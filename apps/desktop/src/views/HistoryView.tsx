@@ -137,6 +137,11 @@ export function HistoryView() {
                         <span className="muted">(남긴 사본: <span className="mono">{m.dst_path}</span>)</span>
                         {m.undone_at ? " (복원됨)" : ""}
                       </li>
+                    ) : m.op === "rmdir" ? (
+                      <li key={m.id} className={m.undone_at ? "muted" : ""} data-testid="rmdir-row">
+                        📁 <span className="mono">{m.src_path}</span> — 빈 폴더 지움
+                        {m.undone_at ? " (다시 만듦)" : ""}
+                      </li>
                     ) : (
                       <li key={m.id} className={m.undone_at ? "muted" : ""}>
                         <span className="mono">{m.src_path}</span> → <span className="mono">{m.dst_path}</span>

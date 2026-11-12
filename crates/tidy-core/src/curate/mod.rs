@@ -715,10 +715,13 @@ impl Curator {
                 }
             };
             if u.files == 0 {
-                keep(
-                    d,
-                    "정리할 파일이 없음(빈 폴더·바로가기·무시되는 파일만)".into(),
-                );
+                // (0.14.0) A truly empty one can go with "빈 폴더 정리".
+                let why = if crate::mover::empty_tree(&d).is_some() {
+                    "빈 폴더(파일 없음) — 홈의 [빈 폴더 정리]로 치울 수 있음"
+                } else {
+                    "정리할 파일이 없음(바로가기·숨김·무시되는 파일만)"
+                };
+                keep(d, why.into());
                 continue;
             }
             if !u.is_settled(self.settle(), now) {
@@ -1323,7 +1326,7 @@ impl Curator {
         Ok(plan)
     }
 
-    /// (0.14.0, SPEC §14.20) "정리 위치 점검": single files that already
+    /// (0.15.0, SPEC §14.21) "정리 위치 점검": single files that already
     /// sit under the organize root `anchor` but not where the work context
     /// puts them (a customer's PDF in `문서/2026`, loose files at the top),
     /// judged like any other file and laid out under `anchor` with the

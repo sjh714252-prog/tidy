@@ -1,4 +1,4 @@
-// M19 (SPEC §14.20) "정리 위치 점검": home [정리 위치 점검] → 정리하기 with
+// M19 (SPEC §14.21) "정리 위치 점검": home [정리 위치 점검] → 정리하기 with
 // the organize root chosen → preview (split customer / same issue merged,
 // 기타\고객사 moved up, loose exe by the rules, code project untouched) →
 // apply (one batch) → review again: nothing left → undo. Fixtures:

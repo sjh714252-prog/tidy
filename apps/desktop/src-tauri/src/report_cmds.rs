@@ -209,7 +209,7 @@ pub struct ReviewDto {
     pub ai_error: Option<String>,
 }
 
-/// (M19, SPEC §14.20) "정리 위치 점검": look inside an organize root and
+/// (M19, SPEC §14.21) "정리 위치 점검": look inside an organize root and
 /// propose re-sorting it. `use_ai`: also let the AI place customer files
 /// outside the customer folders (only when the user asked; an AI that is
 /// off or fails leaves the rest of the plan as it is). Nothing moves.
@@ -671,6 +671,48 @@ pub async fn trash_duplicates(
             batch_id: r.batch_id.clone(),
             trashed: r.trashed.len(),
             bytes: r.bytes(),
+            failed: r
+                .failed
+                .iter()
+                .map(|(p, why)| format!("{}: {why}", p.display()))
+                .collect(),
+        })
+    })
+    .await
+}
+
+// ── empty folders (0.14.0) ──────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmptyRemoveDto {
+    pub batch_id: String,
+    pub removed: usize,
+    pub failed: Vec<String>,
+}
+
+/// "빈 폴더 정리": remove the folders the user ticked, one batch (undo
+/// makes them again). Only ever called from that click; each folder is
+/// checked again first (`Mover::remove_empty_dirs`).
+#[tauri::command]
+pub async fn remove_empty_folders(app: AppHandle, paths: Vec<String>) -> CmdResult<EmptyRemoveDto> {
+    crate::overview::invalidate();
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let inner = state.lock_inner();
+        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        let batch = tidy_core::engine::new_batch_id();
+        let paths: Vec<std::path::PathBuf> = paths.into_iter().map(Into::into).collect();
+        let r = mover.remove_empty_dirs(&paths, &batch);
+        watch::emit_activity(
+            &app,
+            "info",
+            Path::new(""),
+            format!("빈 폴더 정리: {}개", r.removed.len()),
+        );
+        Ok(EmptyRemoveDto {
+            batch_id: r.batch_id.clone(),
+            removed: r.removed.len(),
             failed: r
                 .failed
                 .iter()

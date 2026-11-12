@@ -59,7 +59,7 @@ pub enum PlanSource {
     Imported,
     /// (0.13.0) Small layout folders folded one level up ([`super::compact`]).
     Compact,
-    /// (0.14.0) "정리 위치 점검": the organize root re-sorted ([`super::review`]).
+    /// (0.15.0) "정리 위치 점검": the organize root re-sorted ([`super::review`]).
     Review,
 }
 

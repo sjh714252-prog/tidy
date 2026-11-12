@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import * as ipc from "../ipc/commands";
 import { onActivity, onOrganize, onStatus } from "../ipc/events";
-import type { CustomerStat, FolderOverview, Overview, StoredPlan, TodaySummary } from "../ipc/types";
+import type { CustomerStat, EmptyFolder, FolderOverview, Overview, StoredPlan, TodaySummary } from "../ipc/types";
 import { organizeFolders, organizeNow, useHome } from "../store/home";
 import { useNav } from "../store/nav";
 import { useStatus } from "../store/status";
@@ -52,6 +52,7 @@ export function OrganizeCard() {
         </span>
       </div>
       <UnappliedPlans />
+      {!!o.empty?.length && <EmptyFolders empty={o.empty} />}
       <ReviewRow />
       <div className="folder-grid">
         {o.folders.map((f) => (
@@ -154,6 +155,89 @@ function KeptFolders({ kept }: { kept: { name: string; path: string; reason: str
             </li>
           ))}
         </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * (0.14.0) "빈 폴더 정리": folders with no files at all (only empty
+ * folders / Thumbs.db / desktop.ini) in the watch folders and the organize
+ * location. Nothing goes until the user clicks; undo makes them again.
+ */
+function EmptyFolders({ empty }: { empty: EmptyFolder[] }) {
+  const load = useHome((s) => s.load);
+  const [open, setOpen] = useState(false);
+  const [off, setOff] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const picked = empty.filter((e) => !off.has(e.path));
+  const toggle = (p: string) => {
+    const n = new Set(off);
+    if (n.has(p)) n.delete(p);
+    else n.add(p);
+    setOff(n);
+  };
+  const remove = async () => {
+    setBusy(true);
+    try {
+      const r = await ipc.removeEmptyFolders(picked.map((e) => e.path));
+      setMsg(
+        `빈 폴더 ${r.removed.toLocaleString()}개를 지웠습니다. 되돌리기 탭에서 다시 만들 수 있어요.` +
+          (r.failed.length ? ` 그대로 둔 것 ${r.failed.length}개: ${r.failed.slice(0, 3).join(", ")}` : ""),
+      );
+      setOpen(false);
+      setOff(new Set());
+      await load(true);
+    } catch (e) {
+      setMsg(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="notice" data-testid="empty-folders">
+      <div className="row">
+        <span>
+          <b>빈 폴더 {empty.length.toLocaleString()}개</b> — 안에 파일이 하나도 없는 폴더입니다(빈 하위 폴더·Thumbs.db 같은
+          시스템 파일만).
+        </span>
+        <button className="sm" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {open ? "접기" : "살펴보기"}
+        </button>
+        <button
+          className="sm primary"
+          data-testid="remove-empty"
+          disabled={busy || !picked.length}
+          title="체크한 빈 폴더를 지웁니다. 되돌리기 탭에서 다시 만들 수 있습니다."
+          onClick={() => void remove()}
+        >
+          {busy ? "지우는 중…" : `빈 폴더 ${picked.length.toLocaleString()}개 정리`}
+        </button>
+      </div>
+      {open && (
+        <ul className="kept-list empty-list">
+          {empty.map((e) => (
+            <li key={e.path}>
+              <label title={e.path}>
+                <input
+                  type="checkbox"
+                  data-testid="empty-check"
+                  checked={!off.has(e.path)}
+                  onChange={() => toggle(e.path)}
+                />{" "}
+                <b>{e.name}</b>
+                {e.subFolders > 0 && <span className="muted"> (빈 하위 폴더 {e.subFolders}개 포함)</span>}{" "}
+                <span className="muted small">{baseName(e.root)}</span>
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
+      {msg && (
+        <div className="small" data-testid="empty-result">
+          {msg}
+        </div>
       )}
     </div>
   );
@@ -345,7 +429,7 @@ const PLAN_SOURCE: Record<string, string> = {
 };
 
 /**
- * (M19, SPEC §14.20) "정리 위치 점검": one line per organize root — look
+ * (M19, SPEC §14.21) "정리 위치 점검": one line per organize root — look
  * inside it and re-sort what is split or scattered (a preview).
  */
 function ReviewRow() {
