@@ -15,6 +15,7 @@ pub mod html;
 pub mod import;
 pub mod relocate;
 pub mod restructure;
+pub mod review;
 pub mod scan;
 pub mod stats;
 pub mod today;

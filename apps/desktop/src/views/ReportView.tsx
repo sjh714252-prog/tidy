@@ -38,9 +38,16 @@ export function ReportView() {
             <option value={ALL_WATCHES} data-testid="report-folder-all">
               모든 감시 폴더 한 번에 (업무 맥락 · 처음 정리)
             </option>
-            {r.path && r.path !== ALL_WATCHES && !r.roots.includes(r.path) && (
+            {r.path && r.path !== ALL_WATCHES && !r.roots.includes(r.path) && !r.reviewRoots.includes(r.path) && (
               <option value={r.path}>{shortenTo(r.path, 40)} (다른 폴더)</option>
             )}
+            {r.reviewRoots
+              .filter((p) => !r.roots.includes(p))
+              .map((p) => (
+                <option key={`review-${p}`} value={p} title={p} data-testid="report-folder-review">
+                  정리 위치 점검 — {shortenTo(p, 40)}
+                </option>
+              ))}
             {r.roots.map((p) => {
               const w = watchOf(p, names);
               const label = w && w.path === p ? `${w.alias} — ${shortenTo(p, 32)}` : shortenTo(p, 48);
@@ -54,7 +61,7 @@ export function ReportView() {
         </label>
         <button onClick={() => void pick()}>다른 폴더…</button>
       </div>
-      {r.target && (
+      {r.target && !r.reviewRoots.includes(r.path) && (
         <div className="notice warn" data-testid="organize-root-warning">
           ⚠ 이 폴더는 정리 결과가 모이는 곳입니다({r.target}). 여기서 정리하면 이미 정리된 파일을 다시 옮깁니다.
         </div>

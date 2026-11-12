@@ -1,10 +1,16 @@
 import { create } from "zustand";
 import * as ipc from "../ipc/commands";
 import { useStatus } from "./status";
-import type { ApplyResult, ContextSuggestion, CurateEstimate, MoveEdit, Plan, Preview, Report } from "../ipc/types";
+import type { ApplyResult, ContextSuggestion, CurateEstimate, MoveEdit, Plan, Preview, Report, ReviewResult } from "../ipc/types";
 
 interface ReportState {
   roots: string[];
+  /** (M19) Organize roots: choosing one means "정리 위치 점검". */
+  reviewRoots: string[];
+  /** (M19) What the last review found (counts, AI files waiting). */
+  reviewInfo: Omit<ReviewResult, "plan" | "preview"> | null;
+  /** (M19) A review running ("ai" = with the AI). */
+  reviewing: "rules" | "ai" | null;
   path: string;
   dups: boolean;
   report: Report | null;
@@ -37,6 +43,10 @@ interface ReportState {
   leftover: { files: number; folders: number } | null;
 
   loadRoots: () => Promise<void>;
+  /** (M19) "정리 위치 점검": look inside the organize root and propose
+   * re-sorting it; `useAi` also places customer files outside the
+   * customer folders. Nothing moves. */
+  review: (useAi?: boolean) => Promise<void>;
   setPath: (p: string) => Promise<void>;
   setRecursive: (b: boolean) => void;
   setDups: (b: boolean) => void;
@@ -89,6 +99,9 @@ let previewTimer: ReturnType<typeof setTimeout> | undefined;
 
 export const useReport = create<ReportState>((set, get) => ({
   roots: [],
+  reviewRoots: [],
+  reviewInfo: null,
+  reviewing: null,
   path: "",
   dups: true,
   report: null,
@@ -114,14 +127,25 @@ export const useReport = create<ReportState>((set, get) => ({
   loadRoots: async () => {
     try {
       const roots = await ipc.reportRoots();
-      set({ roots });
+      const reviewRoots = await ipc.reviewRoots().catch(() => [] as string[]);
+      set({ roots, reviewRoots });
       if (!get().path && roots[0]) await get().setPath(roots[0]);
     } catch (e) {
       set({ error: String(e) });
     }
   },
   setPath: async (path) => {
-    set({ path, report: null, plan: null, preview: null, applied: null, target: null, suggestCurate: false, leftover: null });
+    set({
+      path,
+      report: null,
+      plan: null,
+      preview: null,
+      applied: null,
+      target: null,
+      suggestCurate: false,
+      leftover: null,
+      reviewInfo: null,
+    });
     if (!path || path === ALL_WATCHES) return;
     try {
       const target = await ipc.organizeTarget(path);
@@ -185,8 +209,30 @@ export const useReport = create<ReportState>((set, get) => ({
     }
     await get().makePlan("context");
   },
+  review: async (useAi = false) => {
+    const { path, protect } = get();
+    if (!path || path === ALL_WATCHES) return;
+    set({ reviewing: useAi ? "ai" : "rules", error: null, applied: null, suggestions: [], learnt: null });
+    try {
+      const { plan, preview, ...info } = await ipc.planReview(path, useAi, protectList(protect));
+      set({
+        plan,
+        preview,
+        selected: plan ? defaultSelected(plan) : new Set(),
+        reviewInfo: info,
+      });
+    } catch (e) {
+      set({ error: String(e) });
+    } finally {
+      set({ reviewing: null });
+    }
+  },
   start: async (recursive) => {
     const st = get();
+    if (st.reviewRoots.includes(st.path)) {
+      await get().review(false);
+      return;
+    }
     if (st.path === ALL_WATCHES) {
       const ai = useStatus.getState().status?.aiState;
       if (ai === "ready" || ai === "starting") await get().curate(true);
@@ -326,7 +372,7 @@ export const useReport = create<ReportState>((set, get) => ({
     }
   },
   dropSuggestions: () => set({ suggestions: [] }),
-  closePlan: () => set({ plan: null, preview: null, applied: null, suggestions: [], learnt: null }),
+  closePlan: () => set({ plan: null, preview: null, applied: null, suggestions: [], learnt: null, reviewInfo: null }),
 }));
 
 /** Re-render the before/after trees after the selection settles. */

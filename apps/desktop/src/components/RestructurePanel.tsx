@@ -10,7 +10,7 @@ import { AiNeeded, useAiOn } from "./AiNeeded";
 import { ContextTable, Suggestions } from "./ContextPlan";
 import { PlanMoves } from "./PlanMoves";
 
-const SOURCE: Record<string, string> = { ai: "AI", rules: "규칙", context: "업무 맥락", relocate: "정리 위치로 옮기기", imported: "제안 파일", compact: "정리 위치 다듬기" };
+const SOURCE: Record<string, string> = { ai: "AI", rules: "규칙", context: "업무 맥락", relocate: "정리 위치로 옮기기", imported: "제안 파일", compact: "정리 위치 다듬기", review: "정리 위치 점검" };
 
 /**
  * Restructure (SPEC §5.7): plan from rules (no AI) or from the AI →
@@ -30,6 +30,7 @@ export function RestructurePanel() {
 
   const plan = r.plan;
   const all = r.path === ALL_WATCHES;
+  const reviewMode = r.reviewRoots.includes(r.path);
   const rel = (p: string) => {
     if (!plan) return p;
     if (p.startsWith(plan.root)) return p.slice(plan.root.length + 1) || ".";
@@ -65,7 +66,8 @@ export function RestructurePanel() {
         ))}
       </ol>
 
-      {!plan && (
+      {!plan && reviewMode && <ReviewStart />}
+      {!plan && !reviewMode && (
         <div className="start" data-testid="organize-start-box">
           <button
             className="primary big"
@@ -132,6 +134,7 @@ export function RestructurePanel() {
           </p>
           {!plan.applied_batch && unsure.length > 0 && <Unsure items={unsure} first={movable === 0} />}
           {plan.summary && <p className="muted small">{plan.summary}</p>}
+          {plan.source === "review" && !plan.applied_batch && <ReviewAi />}
           {plan.folders.length > 0 && (
             <ul className="small">
               {plan.folders.map((f) => (
@@ -320,6 +323,79 @@ export function RestructurePanel() {
         </details>
       </details>
     </section>
+  );
+}
+
+/**
+ * (M19, SPEC §14.21) The organize root itself was chosen: instead of
+ * "organizing" it again, look inside it — merge split customer / issue
+ * folders, fold small folders, place loose files — as a preview.
+ */
+function ReviewStart() {
+  const r = useReport();
+  const info = r.reviewInfo;
+  return (
+    <div className="start" data-testid="review-start-box">
+      <button
+        className="primary big"
+        data-testid="review-start"
+        disabled={!!r.reviewing || !!r.planning}
+        onClick={() => void r.review(false)}
+      >
+        {r.reviewing ? "정리 위치를 살펴보는 중…" : "정리 위치 점검 미리보기"}
+      </button>
+      <p className="muted small">
+        정리 위치 안을 살펴보고 <b>이름만 다른 같은 고객사 폴더</b>, <b>며칠 차이로 나뉜 같은 이슈 폴더</b>,{" "}
+        <b>기타 아래 들어간 고객사 폴더</b>를 합치고, 파일이 적은 작은 폴더는 한 단계 위로 접고, 맨 위에 흩어진
+        파일은 규칙대로 넣는 미리보기를 만듭니다. 폴더는 통째로 옮기고(안은 그대로), 코드 프로젝트 폴더는 건드리지
+        않습니다. AI는 쓰지 않고, 적용 전에는 아무것도 옮기지 않습니다.
+      </p>
+      {info && (
+        <div className="notice ok" data-testid="review-clean">
+          {info.summary}
+          <ReviewAi />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** (M19) Files a review left for the AI (a customer's file outside the
+ * customer folders, loose files no rule takes): one click, after a
+ * confirmation, re-runs the review with the AI placing them. */
+function ReviewAi() {
+  const r = useReport();
+  const aiOn = useAiOn();
+  const info = r.reviewInfo;
+  if (!info) return null;
+  if (info.aiError)
+    return (
+      <p className="small warn" data-testid="review-ai-error">
+        AI가 답하지 못했습니다({info.aiError}). 나머지 제안은 그대로 쓸 수 있습니다.
+      </p>
+    );
+  if (!info.aiWaiting) return null;
+  const ask = () => {
+    if (
+      window.confirm(
+        `고객사 폴더 밖에 있거나 맨 위에 흩어진 파일 ${info.aiWaiting}개를 AI에 보내 고객사·이슈 폴더를 정합니다(이미 분석한 파일은 다시 묻지 않음). 미리보기만 다시 만들고 아무것도 옮기지 않습니다. 진행할까요?`,
+      )
+    )
+      void r.review(true);
+  };
+  return (
+    <div className="row" style={{ marginTop: 6 }} data-testid="review-ai">
+      <span className="small">
+        AI가 옮길 곳을 정할 수 있는 파일 <b>{info.aiWaiting}개</b>가 더 있습니다.
+      </span>
+      {aiOn ? (
+        <button className="sm" disabled={!!r.reviewing} onClick={ask} data-testid="review-ai-run">
+          {r.reviewing === "ai" ? "AI가 보는 중…" : "AI로 이것도 보기"}
+        </button>
+      ) : (
+        <span className="muted small">(AI를 켜면 쓸 수 있습니다)</span>
+      )}
+    </div>
   );
 }
 

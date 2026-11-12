@@ -1326,6 +1326,61 @@ impl Curator {
         Ok(plan)
     }
 
+    /// (0.15.0, SPEC §14.21) "정리 위치 점검": single files that already
+    /// sit under the organize root `anchor` but not where the work context
+    /// puts them (a customer's PDF in `문서/2026`, loose files at the top),
+    /// judged like any other file and laid out under `anchor` with the
+    /// folders already there reused. Files the AI is unsure about, or that
+    /// would stay in their folder, are left out. Nothing moves.
+    pub fn place_files(
+        &self,
+        ai: &AiClassifier,
+        store: &Store,
+        files: &[PathBuf],
+        anchor: &Path,
+    ) -> Result<Vec<PlannedMove>, CurateError> {
+        if files.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.note_existing(&[anchor.to_path_buf()]);
+        let inputs: Vec<CurateInput> = files
+            .iter()
+            .filter_map(|p| self.input(p, Some(store)).ok())
+            .collect();
+        let judged = self.analyze(ai, store, &inputs)?;
+        let moves = inputs
+            .iter()
+            .zip(judged)
+            .enumerate()
+            .map(|(n, (i, c))| {
+                let note = match c {
+                    Some(c) => note_for(i, &c, !self.is_classified(&c)),
+                    None => unanswered(i),
+                };
+                planned(n as u32 + 1, i, note, false)
+            })
+            .collect();
+        let mut plan = Plan {
+            id: 0,
+            root: anchor.to_path_buf(),
+            source: PlanSource::Context,
+            created_at: 0,
+            summary: String::new(),
+            folders: Vec::new(),
+            moves,
+            rejected: Vec::new(),
+            applied_batch: None,
+            anchor: Some(anchor.to_path_buf()),
+            sources: Vec::new(),
+        };
+        self.relayout(&mut plan, Some(store));
+        Ok(plan
+            .moves
+            .into_iter()
+            .filter(|m| m.from != m.to && m.from.parent() != m.to.parent())
+            .collect())
+    }
+
     /// (M12) "파일별로 나누기": replace folder item `id` by its files (all
     /// of them, any depth), each judged on its own with its path inside
     /// the organized folder as context.
