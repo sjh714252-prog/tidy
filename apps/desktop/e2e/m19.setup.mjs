@@ -46,6 +46,10 @@ put("KT 스마트메시지/20261101_장애/d.txt");
 put("가람정보/20261020_과금/l.log");
 put("기타/가람정보/메모.txt");
 put("기타/개발/예제.go");
+// (0.16.0) A customer's PDF in the type rules' folder (rebuild → 가람정보/문서),
+// and a very long name (the diff panes must stay inside the window).
+put("문서/2026/가람정보_견적서.pdf", "pdf");
+put(`문서/2026/${"아주 긴 이름의 분기별 정산 보고서 최종본 ".repeat(4).trim()}.pdf`, "pdf");
 // Loose at the top; a code project (never touched).
 put("설치.exe", "exe");
 put("tidy/Cargo.toml", "[package]");

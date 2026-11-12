@@ -669,7 +669,7 @@ export interface ContextNote {
 export interface Plan {
   id: number;
   root: string;
-  source: "rules" | "ai" | "context" | "command" | "relocate" | "imported" | "compact" | "review";
+  source: "rules" | "ai" | "context" | "command" | "relocate" | "imported" | "compact" | "review" | "rebuild";
   created_at: number;
   summary: string;
   folders: { path: string; reason: string }[];
@@ -719,6 +719,12 @@ export interface ReviewResult {
   /** Files the AI could place but was not asked to ("AI로 이것도 보기"). */
   aiWaiting: number;
   aiError: string | null;
+  /** (0.16.0) Customer files that go to the customer's folder by kind. */
+  toCustomer: number;
+  /** (0.16.0, rebuild) Customers that get a new folder. */
+  newCustomers: string[];
+  /** (0.16.0, rebuild) More moves than one plan holds: run again after applying. */
+  capped: boolean;
 }
 export interface DupSkip { path: string; existing: string; message: string }
 export interface ApplyResult { batchId: string; moved: number; skipped: string[]; duplicates: DupSkip[]; errors: string[] }

@@ -155,6 +155,9 @@ export const reviewRoots = () => invoke<string[]>("review_roots");
 /** (M19) "정리 위치 점검": merge split folders, fold small ones, place loose files (AI only with useAi). Nothing moves. */
 export const planReview = (path: string, useAi: boolean, protect: string[]) =>
   invoke<ReviewResult>("plan_review", { path, useAi, protect });
+/** (0.16.0) "정리 위치 새로 짜기": every customer file into its customer folder by kind, split folders merged, the rest by the rules. Offline; nothing moves. */
+export const planRebuild = (path: string, protect: string[]) =>
+  invoke<ReviewResult>("plan_rebuild", { path, protect });
 // ── M10 work context ──
 export const getCurateSettings = () => invoke<CurateSettings>("get_curate_settings");
 export const saveCurateSettings = (settings: CurateSettings) =>
