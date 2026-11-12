@@ -585,6 +585,10 @@ fn folders_left_alone_say_why() {
         "{:?}",
         scan.kept
     );
-    assert!(why("빈 폴더").contains("파일이 없음"), "{:?}", scan.kept);
+    assert!(
+        why("빈 폴더").starts_with("빈 폴더(파일 없음)"),
+        "{:?}",
+        scan.kept
+    );
     assert_eq!(scan.units.len(), 1, "the tool folder is still an item");
 }
