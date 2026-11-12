@@ -124,7 +124,7 @@ export function WatchSettings() {
   );
 }
 
-/** (0.14.0) `[mover] ask_before_move` (SPEC §5.3). */
+/** (0.15.0) `[mover] ask_before_move` (SPEC §5.3). */
 function AskCard() {
   const s = useSettings();
   const on = s.draft?.askBeforeMove ?? false;

@@ -1,4 +1,4 @@
-//! (0.14.0, SPEC §5.3) `[mover] ask_before_move`: while watching, nothing
+//! (0.15.0, SPEC §5.3) `[mover] ask_before_move`: while watching, nothing
 //! moves on its own. A rule match and a confident AI answer into an
 //! `ai_auto` folder — both of which move by themselves otherwise — wait in
 //! the confirm queue; approving moves the file (logged, undoable).

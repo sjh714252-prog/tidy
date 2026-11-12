@@ -1,4 +1,4 @@
-// 0.14.0 (SPEC §14.20): "파일 이동 전에 항상 묻고 이동" — 설정 › 감시 폴더
+// 0.15.0 (SPEC §14.21): "파일 이동 전에 항상 묻고 이동" — 설정 › 감시 폴더
 // "옮기기 전에 항상 묻기" on → a file a rule would move on its own waits in
 // 확인 대기 (desktop untouched) → [이동] moves it. Off again → moves as before.
 //
