@@ -116,6 +116,25 @@ const panel = main.locator(".restructure");
   ok("E", "적용: 가람정보/문서/가람정보_견적서.pdf, 기타/가람정보 → 가람정보/텍스트, KT 합치기", moved);
 }
 
+// F. (0.16.1) 정리 위치 목록 내보내기 → a JSON listing file
+{
+  if ((await panel.locator(".plan").count()) > 0) await panel.getByRole("button", { name: "닫기" }).first().click();
+  const btn = main.locator("[data-testid=export-listing-run]");
+  ok("F", "[정리 위치 목록 내보내기] 버튼", await waitFor(async () => (await btn.count()) === 1, 10000));
+  await btn.click();
+  const done = main.locator("[data-testid=export-listing-done]");
+  const shown = await waitFor(async () => (await done.count()) === 1, 20000);
+  const t = shown ? await done.innerText() : "";
+  const file = shown ? await done.locator("[title]").first().getAttribute("title") : null;
+  let parsed = null;
+  try {
+    parsed = file && JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {}
+  ok("F", "목록 파일 저장·내용", !!parsed && parsed.tidy_listing === 1 && parsed.entries.some((e) => e.p === "가람정보/문서/가람정보_견적서.pdf") && parsed.entries.some((e) => e.p === "tidy" && e.n === 2), `${t} | ${file}`);
+  ok("F", "받은 계획 파일 열기 버튼", (await main.locator("[data-testid=review-import-plan]").count()) === 1);
+  await main.screenshot({ path: `${SHOT}/m19-F-export.png` });
+}
+
 await browser.close();
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} passed`);
