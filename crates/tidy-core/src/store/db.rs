@@ -464,7 +464,7 @@ impl Store {
         let found: Option<i64> = self
             .conn
             .query_row(
-                "SELECT 1 FROM move_log WHERE undone_at IS NULL AND op != 'trash' AND substr(dst_path, 1, ?2) = ?1 LIMIT 1",
+                "SELECT 1 FROM move_log WHERE undone_at IS NULL AND op NOT IN ('trash', 'rmdir') AND substr(dst_path, 1, ?2) = ?1 LIMIT 1",
                 params![prefix, n],
                 |r| r.get(0),
             )
@@ -577,7 +577,7 @@ impl Store {
             .conn
             .query_row(
                 "SELECT COALESCE(dst_hash, hash) FROM move_log
-                 WHERE dst_path = ?1 AND undone_at IS NULL AND state = 'done' AND op != 'trash'
+                 WHERE dst_path = ?1 AND undone_at IS NULL AND state = 'done' AND op NOT IN ('trash', 'rmdir')
                  ORDER BY id DESC LIMIT 1",
                 [path_str(dst)?],
                 |r| r.get::<_, Option<String>>(0),
@@ -594,7 +594,7 @@ impl Store {
             .query_row(
                 &format!(
                     "{SELECT_MOVE} WHERE dst_path = ?1 AND undone_at IS NULL AND state = 'done'
-                     AND op != 'trash' ORDER BY id DESC LIMIT 1"
+                     AND op NOT IN ('trash', 'rmdir') ORDER BY id DESC LIMIT 1"
                 ),
                 [path_str(dst)?],
                 move_from_row,
@@ -674,7 +674,7 @@ impl Store {
     pub fn moves_since(&self, since: i64) -> Result<Vec<MoveLogEntry>, StoreError> {
         let mut stmt = self.conn.prepare(&format!(
             "{SELECT_MOVE} WHERE (moved_at >= ?1 OR undone_at >= ?1) AND state = 'done' \
-             AND op != 'trash' ORDER BY id DESC"
+             AND op NOT IN ('trash', 'rmdir') ORDER BY id DESC"
         ))?;
         let rows = stmt.query_map([since], move_from_row)?;
         Ok(rows.collect::<Result<_, _>>()?)

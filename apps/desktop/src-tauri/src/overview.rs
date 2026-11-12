@@ -29,7 +29,21 @@ struct Cache {
     key: String,
     at: Option<Instant>,
     counts: HashMap<PathBuf, Counts>,
+    /// (0.14.0) Empty folders in the watch folders and organize locations.
+    empty: Vec<EmptyDto>,
     computing: bool,
+}
+
+/// (0.14.0) An empty folder "빈 폴더 정리" can remove.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmptyDto {
+    pub name: String,
+    pub path: String,
+    /// Watch folder / organize location it is in.
+    pub root: String,
+    /// Empty sub-folders that go with it.
+    pub sub_folders: usize,
 }
 
 /// Backlog of files + (M12) new sub-folders (folder items) and those
@@ -126,8 +140,11 @@ pub struct OverviewDto {
     /// "업무 맥락으로 정리" next to the rules preview.
     pub can_curate: bool,
     pub cap: usize,
-    /// (0.15.0) `[mover] ask_before_move`: new files wait for approval too.
+    /// (0.16.0) `[mover] ask_before_move`: new files wait for approval too.
     pub ask_before_move: bool,
+    /// (0.14.0) Empty folders (nothing in them but empty folders / OS
+    /// clutter): offered for "빈 폴더 정리".
+    pub empty: Vec<EmptyDto>,
 }
 
 /// Distinct folders results go to: `(in_place count, collect roots)`.
@@ -169,7 +186,7 @@ pub fn overview(app: &AppHandle, refresh: bool) -> OverviewDto {
     let rules_text = std::fs::read_to_string(&cfg.classify.rules).unwrap_or_default();
     let key = key_for(&cfg.watches, &rules_text);
 
-    let (counts, computing) = {
+    let (counts, empty, computing) = {
         let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
         let c = guard.get_or_insert_with(Cache::default);
         let stale = c.key != key || c.at.is_none_or(|t| t.elapsed() > TTL) || refresh;
@@ -186,7 +203,7 @@ pub fn overview(app: &AppHandle, refresh: bool) -> OverviewDto {
                 cfg.clone(),
             );
         }
-        (c.counts.clone(), c.computing)
+        (c.counts.clone(), c.empty.clone(), c.computing)
     };
 
     let folders: Vec<FolderDto> = cfg
@@ -256,6 +273,7 @@ pub fn overview(app: &AppHandle, refresh: bool) -> OverviewDto {
         cap: BACKLOG_CAP,
         new_folders,
         ask_before_move: cfg.mover.ask_before_move,
+        empty,
     }
 }
 
@@ -327,6 +345,19 @@ fn spawn_count(
                     },
                 );
             }
+            let empty: Vec<EmptyDto> = tidy_core::report::empty::find_all(&cfg, now)
+                .into_iter()
+                .map(|f| EmptyDto {
+                    name: f
+                        .path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    path: s(&f.path),
+                    root: s(&f.root),
+                    sub_folders: f.dirs.saturating_sub(1),
+                })
+                .collect();
             {
                 let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
                 let c = guard.get_or_insert_with(Cache::default);
@@ -334,6 +365,7 @@ fn spawn_count(
                 c.key = key;
                 c.at = Some(Instant::now());
                 c.counts = counts;
+                c.empty = empty;
             }
             let _ = app.emit(EV_ORGANIZE, ());
         });

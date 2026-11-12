@@ -17,7 +17,7 @@
 //! step. Only a confident answer into a folder that already exists moves on
 //! its own; a new customer, issue or topic is asked in the confirm popup.
 //!
-//! (0.15.0, SPEC §5.3) With `[mover] ask_before_move` nothing moves on its
+//! (0.16.0, SPEC §5.3) With `[mover] ask_before_move` nothing moves on its
 //! own: every rule match, confident AI / work-context answer and automatic
 //! encryption is queued for the confirm popup like a `confirm = true` rule.
 
@@ -138,7 +138,7 @@ pub struct Engine {
     security: SecurityPolicy,
     /// (M10) Work-context placement (needs `ai`).
     curator: Option<std::sync::Arc<crate::curate::Curator>>,
-    /// (0.15.0) `[mover] ask_before_move`: queue every move for approval.
+    /// (0.16.0) `[mover] ask_before_move`: queue every move for approval.
     ask: bool,
 }
 
@@ -168,7 +168,7 @@ impl Engine {
         }
     }
 
-    /// (0.15.0) Ask before every move (`[mover] ask_before_move`).
+    /// (0.16.0) Ask before every move (`[mover] ask_before_move`).
     pub fn ask_before_move(mut self, on: bool) -> Self {
         self.ask = on;
         self
@@ -799,7 +799,8 @@ pub fn reindex_undo(
     opts: &IndexOptions,
 ) {
     let indexer = Indexer::new(store);
-    for (from, to) in &report.restored {
+    // (0.14.0) A re-made empty folder has nothing to index.
+    for (from, to) in report.restored.iter().filter(|(_, to)| !to.is_dir()) {
         if let Err(e) = indexer.moved(from, to, opts) {
             tracing::warn!("index update after undo failed: {e}");
         }

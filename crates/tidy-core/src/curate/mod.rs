@@ -715,10 +715,13 @@ impl Curator {
                 }
             };
             if u.files == 0 {
-                keep(
-                    d,
-                    "정리할 파일이 없음(빈 폴더·바로가기·무시되는 파일만)".into(),
-                );
+                // (0.14.0) A truly empty one can go with "빈 폴더 정리".
+                let why = if crate::mover::empty_tree(&d).is_some() {
+                    "빈 폴더(파일 없음) — 홈의 [빈 폴더 정리]로 치울 수 있음"
+                } else {
+                    "정리할 파일이 없음(바로가기·숨김·무시되는 파일만)"
+                };
+                keep(d, why.into());
                 continue;
             }
             if !u.is_settled(self.settle(), now) {

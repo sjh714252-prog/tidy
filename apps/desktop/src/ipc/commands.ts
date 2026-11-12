@@ -1,6 +1,7 @@
 // Typed wrappers for every Tauri command (src-tauri/src/commands.rs).
 import { inTauri, invoke } from "./transport";
 import type {
+  EmptyRemoveResult,
   AboutInfo,
   Overview,
   UpdateResult,
@@ -134,6 +135,8 @@ export const acceptLearn = (key: string) => invoke<void>("accept_learn", { key }
 export const dismissLearn = (key: string) => invoke<void>("dismiss_learn", { key });
 
 /** (M14) Send the copies not kept to the trash (one batch; only from "적용"). */
+export const removeEmptyFolders = (paths: string[]) =>
+  invoke<EmptyRemoveResult>("remove_empty_folders", { paths });
 export const trashDuplicates = (groups: DupTrash[]) => invoke<TrashResult>("trash_duplicates", { groups });
 /** (M14) Open the OS trash ("휴지통 열기"). */
 export const openTrash = () => invoke<string | null>("open_trash");

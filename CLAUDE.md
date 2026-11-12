@@ -66,6 +66,7 @@ cargo run -p tidy-cli -- report [폴더] [--format text|json|html] [--scan-depth
 cargo run -p tidy-cli -- restructure [폴더] --rules|--ai  → --apply ID [--only 1,3]   # 승인 전엔 아무것도 안 옮김
 cargo run -p tidy-cli -- compact [폴더] [--min N]   # 정리 위치 다듬기(0.13.0): Tidy가 만든 작은 종류·주제 폴더를 한 단계 위로 (계획만, restructure --apply)
 cargo run -p tidy-cli -- dedupe [폴더] [--apply [--only 1,3]]   # 내용이 같은 파일 그룹(정리 위치 사본 포함·기본 남김) → 승인 후 휴지통(M14)
+cargo run -p tidy-cli -- empty [--apply [--only 1,3]]   # 빈 폴더 정리(0.14.0): 감시 폴더·정리 위치의 파일 없는 폴더 → 승인 후 지움, undo로 다시 만듦
 cargo run -p tidy-cli -- log --batches / undo --batch <id>
 cargo run -p tidy-cli -- recover [--grace-secs 0]        # 중단된 이동(복사 도중 종료·NAS 끊김) 정리
 cargo run -p tidy-cli -- pii scan <폴더> [--all] [--format json]   # 개인정보 의심 파일 (읽기만)
@@ -110,7 +111,8 @@ node apps/desktop/e2e/fake-llm.mjs 18095   # 느린·긴 가짜 Anthropic/OpenAI
 - [x] 0.12.5 수정 (2026-11-10) — 고객사 폴더 안 소스 트리가 낱개로 흩어지던 문제: 예전 정리 폴더(leftovers)는 Tidy가 만든 하위 폴더까지만 파일별로, 손대지 않은 하위 폴더(`고객사 로그/tools`)는 통째 항목, 일반 AI 분류도 하위 폴더 안 파일은 안 물음, 시작 때 확인 대기의 그런 예전 AI 제안 정리(`Engine::drop_scattering_pending`), AI 지시에 "고객사 폴더 안 코드·도구도 그 고객사". SPEC §14.7
 - [x] 0.13.0 정리 구조 점검 (2026-11-10) — 설계 원칙(누구의 일 → 이슈 → 많을 때만 종류, 폴더는 내용 있을 때만, 같은 파일은 언제 와도 같은 곳) SPEC §14.19. `[curate] min_folder_items = 3`(새 자료 종류·작은 주제 폴더는 3개 이상일 때만, 아니면 한 단계 위·기존 폴더는 항상 사용, 감시 중 한 파일은 새 종류 폴더 안 만듦, "종류별로 모으기"는 예외), 파일 이름에 고객사(사전·별칭·캐시)가 보이면 감시 중 업무 맥락을 규칙보다 먼저(`Curator::customer_hint`, 실패·미분류면 규칙), AI 주제 이름 넓게·재사용 지시, 시작 규칙 문서 `문서/{yyyy}`, 설정 세부 "작은 폴더 만들지 않기", 이미 쌓인 작은 폴더는 "정리 위치 다듬기"(`report::compact`, 첫 시작 때 한 번 미리보기, `tidy compact`). 실제 AI 판단·창 확인은 로컬에서
 - [x] 0.13.1 수정 (2026-11-10) — 0.13.0에서도 바탕화면에 폴더가 가득한데 홈 카드가 "0개 · 정리됨": 빠지는 하위 폴더마다 이유를 남김(`FolderScan.kept`, 제외 폴더·무시 패턴·건드리지 말 폴더·정리 위치/규칙 목적지 겹침·빈 폴더·링크 폴더 등), 홈 카드 "그대로 둔 폴더 N개 ▸ 왜?", 미리보기 요약·`tidy curate scan`·로그에도. SPEC §14.7
-- [x] 0.15.0 옮기기 전에 항상 묻기 (2026-11-12) — `[mover] ask_before_move`(기본 꺼짐): 켜면 감시 중 규칙 일치·확신 높은 AI(`ai_auto`)·기존 폴더로 가는 업무 맥락·자동 암호화 모두 옮기지 않고 확인 대기로(승인은 `pending::resolve`), 미리보기 [적용] 정리는 그대로, 설정 › 감시 폴더 카드 "옮기기 전에 항상 묻기"+ⓘ, 홈 안내 문구, `tests/ask_before_move.rs`. SPEC §14.21. 실제 창 확인은 로컬에서
+- [x] 0.14.0 빈 폴더 정리 (2026-11-12) — 감시 폴더·정리 위치에서 파일이 하나도 없는 폴더(빈 하위 폴더·Thumbs.db·desktop.ini만) 찾기(`report::empty`, 10분 안에 만든 폴더·제외·보호·링크·숨김 제외), 홈 "빈 폴더 N개 [살펴보기] [정리]"(체크 목록), `Mover::remove_empty_dirs`(직전 재확인, 잡파일은 휴지통, 폴더는 `remove_dir`, move_log `op = rmdir`, 되돌리기 = 폴더 다시 만들기), 그대로 둔 폴더 이유 "빈 폴더" 구분, `tidy empty`. SPEC §14.20. 창 확인은 로컬에서
+- [x] 0.16.0 옮기기 전에 항상 묻기 (2026-11-12) — `[mover] ask_before_move`(기본 꺼짐): 켜면 감시 중 규칙 일치·확신 높은 AI(`ai_auto`)·기존 폴더로 가는 업무 맥락·자동 암호화 모두 옮기지 않고 확인 대기로(승인은 `pending::resolve`), 미리보기 [적용] 정리는 그대로, 설정 › 감시 폴더 카드 "옮기기 전에 항상 묻기"+ⓘ, 홈 안내 문구, `tests/ask_before_move.rs`. SPEC §14.22. 실제 창 확인은 로컬에서
 - [x] 0.2.x 핫픽스 (2026-10-22~23) — 규칙 카드 정렬(#12), AI 응답 잘림 분할 재시도(#13), HTTP 타임아웃 상한(#14), 감시 폴더 제외 폴더(SPEC §14.5)
 
 ## 열린 결정

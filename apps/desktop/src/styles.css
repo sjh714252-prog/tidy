@@ -564,3 +564,4 @@ button.big { padding: 10px 22px; font-size: 15px; }
 /* (0.13.1) home card: folders left as they are, with why */
 .kept-list { margin: 4px 0 0; padding-left: 16px; max-height: 180px; overflow: auto; text-align: left; }
 .kept-list li { overflow-wrap: anywhere; }
+.empty-list { list-style: none; padding-left: 4px; max-height: 240px; }

@@ -24,6 +24,7 @@
 //!   `<temp>/tidy-open` (see `vault.rs`).
 
 mod dir;
+mod emptydir;
 mod recover;
 mod transfer;
 mod trash;
@@ -40,6 +41,7 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 
 pub use dir::{DirMoveReport, DirMoveRequest};
+pub use emptydir::{empty_tree, is_os_clutter, EmptyDirReport, EmptyTree, OS_CLUTTER};
 pub use recover::{RecoveryReport, DEFAULT_RECOVERY_GRACE};
 pub use transfer::{ProgressFn, TransferProgress};
 pub use trash::{

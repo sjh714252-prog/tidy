@@ -59,6 +59,9 @@ pub enum MoveOp {
     /// (M14) Sent to the OS trash as an identical copy of `dst_path` (the
     /// copy that stays). Undo cannot restore it; it says so.
     Trash,
+    /// (0.14.0) An empty folder removed (`src_path` = `dst_path` = the
+    /// folder). Nothing was in it, so undo just makes it again.
+    RemoveDir,
 }
 
 impl MoveOp {
@@ -67,6 +70,7 @@ impl MoveOp {
             MoveOp::Move => "move",
             MoveOp::Encrypt => "encrypt",
             MoveOp::Trash => "trash",
+            MoveOp::RemoveDir => "rmdir",
         }
     }
 
@@ -74,6 +78,7 @@ impl MoveOp {
         match s {
             "encrypt" => MoveOp::Encrypt,
             "trash" => MoveOp::Trash,
+            "rmdir" => MoveOp::RemoveDir,
             _ => MoveOp::Move,
         }
     }
