@@ -58,6 +58,9 @@ pub struct SettingsPatch {
     /// (M14) `[mover] duplicate_policy`; `None` leaves the key alone.
     #[serde(default)]
     pub duplicate_policy: Option<DuplicatePolicy>,
+    /// (0.17.0) `[mover] ask_before_move`; `None` leaves the key alone.
+    #[serde(default)]
+    pub ask_before_move: Option<bool>,
 }
 
 fn yes() -> bool {
@@ -97,6 +100,13 @@ pub fn write_settings(path: &Path, patch: &SettingsPatch) -> Result<(), ConfigEr
     general.insert("keep_shortcuts", value(patch.keep_shortcuts));
     if let Some(o) = patch.onboarded {
         general.insert("onboarded", value(o));
+    }
+    if let Some(on) = patch.ask_before_move {
+        doc.entry("mover")
+            .or_insert(Item::Table(Table::new()))
+            .as_table_like_mut()
+            .expect("[mover] is a table")
+            .insert("ask_before_move", value(on));
     }
     if let Some(p) = patch.duplicate_policy {
         let mover = doc
@@ -1232,6 +1242,11 @@ pub struct Mover {
     pub undo_retention_days: u32,
     pub duplicate_policy: DuplicatePolicy,
     pub nas_concurrency: u8,
+    /// (0.17.0, SPEC §5.3) Never move a file on its own while watching:
+    /// every rule match, confident AI / work-context answer and automatic
+    /// encryption waits in the confirm queue instead. Previews applied by
+    /// the user (지금 정리, 재구성, 명령) are already approvals.
+    pub ask_before_move: bool,
 }
 
 impl Default for Mover {
@@ -1240,6 +1255,7 @@ impl Default for Mover {
             undo_retention_days: 30,
             duplicate_policy: DuplicatePolicy::Skip,
             nas_concurrency: 2,
+            ask_before_move: false,
         }
     }
 }
@@ -1851,6 +1867,7 @@ path = "~/Desktop"
             check_updates: true,
             keep_shortcuts: true,
             duplicate_policy: None,
+            ask_before_move: None,
         };
         write_settings(&path, &patch).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
@@ -1880,6 +1897,21 @@ path = "~/Desktop"
             DuplicatePolicy::Replace
         );
         assert!(std::fs::read_to_string(&path).unwrap().contains("# 언어"));
+        // (0.17.0) "항상 묻기" on, then off; the policy stays.
+        assert!(!Config::load(&path).unwrap().mover.ask_before_move);
+        for on in [true, false] {
+            write_settings(
+                &path,
+                &SettingsPatch {
+                    ask_before_move: Some(on),
+                    ..patch.clone()
+                },
+            )
+            .unwrap();
+            let m = Config::load(&path).unwrap().mover;
+            assert_eq!(m.ask_before_move, on);
+            assert_eq!(m.duplicate_policy, DuplicatePolicy::Replace);
+        }
         assert!(c.general.quiet_mode);
         assert_eq!(c.general.hotkey, "CmdOrCtrl+Alt+K");
         assert!(!c.general.start_on_login);
@@ -2080,6 +2112,7 @@ send_content = false
             check_updates: true,
             keep_shortcuts: true,
             duplicate_policy: None,
+            ask_before_move: None,
         };
         write_settings(&path, &patch).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
@@ -2103,6 +2136,7 @@ send_content = false
                 check_updates: true,
                 keep_shortcuts: true,
                 duplicate_policy: None,
+                ask_before_move: None,
                 ..patch
             },
         )

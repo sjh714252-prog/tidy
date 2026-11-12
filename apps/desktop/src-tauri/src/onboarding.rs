@@ -210,6 +210,7 @@ pub async fn finish_onboarding(app: AppHandle, args: FinishArgs) -> CmdResult<Fi
             check_updates: cfg.general.check_updates,
             keep_shortcuts: cfg.general.keep_shortcuts,
             duplicate_policy: None,
+            ask_before_move: None,
         };
         write_settings(&state.config_path, &patch).map_err(|e| e.to_string())?;
         state.reload();

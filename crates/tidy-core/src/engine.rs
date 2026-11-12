@@ -16,6 +16,10 @@
 //! `{entity}/{yyyymmdd}_{issue}/{doc_kind}` — instead of the classic AI
 //! step. Only a confident answer into a folder that already exists moves on
 //! its own; a new customer, issue or topic is asked in the confirm popup.
+//!
+//! (0.17.0, SPEC §5.3) With `[mover] ask_before_move` nothing moves on its
+//! own: every rule match, confident AI / work-context answer and automatic
+//! encryption is queued for the confirm popup like a `confirm = true` rule.
 
 use std::path::{Path, PathBuf};
 
@@ -134,6 +138,8 @@ pub struct Engine {
     security: SecurityPolicy,
     /// (M10) Work-context placement (needs `ai`).
     curator: Option<std::sync::Arc<crate::curate::Curator>>,
+    /// (0.17.0) `[mover] ask_before_move`: queue every move for approval.
+    ask: bool,
 }
 
 /// Rule label of work-context moves (log, activity, queue).
@@ -158,7 +164,14 @@ impl Engine {
             anchors: Anchors::default(),
             security: SecurityPolicy::default(),
             curator: None,
+            ask: false,
         }
+    }
+
+    /// (0.17.0) Ask before every move (`[mover] ask_before_move`).
+    pub fn ask_before_move(mut self, on: bool) -> Self {
+        self.ask = on;
+        self
     }
 
     /// (M10) Place files by work context (used only together with an AI).
@@ -257,7 +270,7 @@ impl Engine {
                             path: path.to_path_buf(),
                             rule: VAULT_RULE.into(),
                             dest_dir: vault,
-                            confirm: self.security.approval == Approval::Confirm,
+                            confirm: self.ask || self.security.approval == Approval::Confirm,
                             encrypt: true,
                         });
                     }
@@ -322,7 +335,9 @@ impl Engine {
                 path: path.to_path_buf(),
                 rule: c.rule_name,
                 dest_dir: c.dest_dir,
-                confirm: c.confirm || (encrypt && self.security.approval == Approval::Confirm),
+                confirm: c.confirm
+                    || self.ask
+                    || (encrypt && self.security.approval == Approval::Confirm),
                 encrypt,
             });
         }
@@ -334,7 +349,7 @@ impl Engine {
             return self.secure(path, c.dest_dir, &c.rule_name, shown, c.confirm, batch_id);
         }
 
-        if c.confirm {
+        if c.confirm || self.ask {
             store.upsert_pending(path, Some(&c.dest_dir), Some(&c.rule_name))?;
             return Ok(Action::Pending {
                 path: path.to_path_buf(),
@@ -406,7 +421,8 @@ impl Engine {
             .vault_keys()
             .map(|k| k.has_current())
             .unwrap_or(false);
-        if rule_confirm || self.security.approval == Approval::Confirm || !has_password {
+        if rule_confirm || self.ask || self.security.approval == Approval::Confirm || !has_password
+        {
             store.upsert_pending_entry(&NewPending {
                 path,
                 suggested_dest: Some(&dest_dir),
@@ -576,7 +592,7 @@ impl Engine {
             }
         };
         let c = &placed.curation;
-        let auto = placed.known_folder && c.confidence >= ai.auto_threshold();
+        let auto = !self.ask && placed.known_folder && c.confidence >= ai.auto_threshold();
         if self.dry_run {
             return Ok(Some(Action::WouldMove {
                 path: path.clone(),
@@ -691,7 +707,7 @@ impl Engine {
                 });
             }
         };
-        let auto = ai.auto_allowed(&s);
+        let auto = !self.ask && ai.auto_allowed(&s);
         if self.dry_run {
             return Ok(Action::WouldMove {
                 path: path.clone(),

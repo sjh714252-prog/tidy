@@ -147,6 +147,7 @@ pub fn run_watch(
     let filter = cfg.ignore_filter()?;
     let mut engine = Engine::new(rules, mover, filter.clone())
         .dry_run(opts.dry_run)
+        .ask_before_move(cfg.mover.ask_before_move)
         .with_anchors(crate::classify::Anchors::from_config(cfg))
         .with_security(crate::security::SecurityPolicy::from_config(cfg));
     if opts.index {
