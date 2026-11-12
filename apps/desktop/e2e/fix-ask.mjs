@@ -77,7 +77,7 @@ await sleep(1000);
   await rows.first().getByRole("button", { name: "이동", exact: true }).click();
   const done = await waitFor(() => fs.existsSync(path.join(DOCS, "견적서.txt")), 10000);
   ok("C", "[이동] → 그때 옮김", done && !fs.existsSync(path.join(DESK, "견적서.txt")));
-  const today = await bridge("today_moves");
+  const today = await bridge("today_moves", { since: Math.floor(new Date().setHours(0, 0, 0, 0) / 1000) });
   ok("C", "이동 기록 남음 (오늘 한 일·되돌리기)", JSON.stringify(today).includes("견적서"));
 }
 
