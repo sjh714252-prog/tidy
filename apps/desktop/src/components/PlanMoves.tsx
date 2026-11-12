@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { Plan } from "../ipc/types";
 import { useReport } from "../store/report";
 import { formatSize } from "./format";
@@ -18,9 +19,32 @@ function Source({ p }: { p: string }) {
   return <PathText path={dir} alias={w?.alias} root={w?.path} className="sub-path" />;
 }
 
+/** (0.16.0) Rows drawn at once: a rebuild of a big organize root can hold
+ * thousands of items; the rest come with "더 보기" (all are still
+ * selected / applied as ticked). */
+const PAGE = 300;
+
+function More({ shown, total, onMore }: { shown: number; total: number; onMore: () => void }) {
+  if (shown >= total) return null;
+  return (
+    <div className="row" data-testid="plan-more">
+      <span className="muted small">
+        {shown.toLocaleString()} / {total.toLocaleString()}개 표시 중 · 나머지도 선택한 대로 적용됩니다
+      </span>
+      <button className="sm" onClick={onMore}>
+        {Math.min(PAGE, total - shown).toLocaleString()}개 더 보기
+      </button>
+    </div>
+  );
+}
+
 export function PlanMoves({ plan }: { plan: Plan; rel?: (p: string) => string }) {
   const r = useReport();
   const narrow = useNarrow();
+  const [limit, setLimit] = useState(PAGE);
+  useEffect(() => setLimit(PAGE), [plan.id]);
+  const moves = plan.moves.slice(0, limit);
+  const more = <More shown={moves.length} total={plan.moves.length} onMore={() => setLimit((l) => l + PAGE)} />;
   const locked = !!plan.applied_batch;
   const name = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
   const all = (
@@ -40,7 +64,7 @@ export function PlanMoves({ plan }: { plan: Plan; rel?: (p: string) => string })
       <div className="stack" data-testid="plan-cards">
         {all}
         <div className="item-cards">
-          {plan.moves.map((m) => (
+          {moves.map((m) => (
             <article key={m.id} className="item-card" data-testid="plan-item">
               <div className="ic-top">
                 <input
@@ -76,6 +100,7 @@ export function PlanMoves({ plan }: { plan: Plan; rel?: (p: string) => string })
             </article>
           ))}
         </div>
+        {more}
       </div>
     );
   return (
@@ -87,7 +112,7 @@ export function PlanMoves({ plan }: { plan: Plan; rel?: (p: string) => string })
           <span>지금</span>
           <span>옮길 곳</span>
         </div>
-        {plan.moves.map((m) => (
+        {moves.map((m) => (
           <div key={m.id} className="t-row cols-plan" data-testid="plan-item">
             <input
               type="checkbox"
@@ -124,6 +149,7 @@ export function PlanMoves({ plan }: { plan: Plan; rel?: (p: string) => string })
           </div>
         ))}
       </section>
+      {more}
     </div>
   );
 }

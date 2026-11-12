@@ -136,6 +136,7 @@ fn review_merges_folds_and_places_without_ai() {
             "KT스마트메시지/20261020_과금 -> KT스마트메시지/20261014_과금",
             "가람정보/20261020_과금/안내문서/안내.txt -> 가람정보/20261020_과금/안내.txt",
             "기타/가람정보/메모.txt -> 가람정보/메모.txt",
+            "문서/2026/가람정보_견적서.pdf -> 가람정보/문서/가람정보_견적서.pdf",
             "설치.exe -> 설치파일/설치.exe",
         ],
         "{}",
@@ -143,8 +144,10 @@ fn review_merges_folds_and_places_without_ai() {
     );
     assert_eq!(r.by_rules, 1);
     assert_eq!(r.folded, 1);
-    // The customer PDF in 문서/ and the loose 메모2.txt wait for the AI.
-    assert_eq!(r.ai_waiting, 2, "{}", r.summary);
+    // (0.16.0) The customer PDF in 문서/ goes to the customer by kind
+    // without AI; only the loose 메모2.txt waits for the AI.
+    assert_eq!(r.to_customer, 1);
+    assert_eq!(r.ai_waiting, 1, "{}", r.summary);
     assert!(r.summary.contains("AI로 이것도 보기"), "{}", r.summary);
     assert!(plan
         .moves
@@ -173,6 +176,7 @@ fn review_merges_folds_and_places_without_ai() {
     assert!(org.join("기타/개발/예제.go").is_file(), "real topic stays");
     assert!(org.join("가람정보/메모.txt").is_file());
     assert!(org.join("설치파일/설치.exe").is_file());
+    assert!(org.join("가람정보/문서/가람정보_견적서.pdf").is_file());
     assert!(org.join("tidy/Cargo.toml").is_file());
 
     // Looked at again: only the AI files are left.
@@ -182,13 +186,14 @@ fn review_merges_folds_and_places_without_ai() {
         "{:?}",
         again.plan.map(|p| lines(&p, &org))
     );
-    assert_eq!(again.ai_waiting, 2);
+    assert_eq!(again.ai_waiting, 1);
 
     mover.undo_batch(&a.batch_id).unwrap();
     assert!(org.join("KT 스마트메시지/20261016_과금/c.txt").is_file());
     assert!(org.join("KT스마트메시지/20261020_과금/b.log").is_file());
     assert!(org.join("기타/가람정보/메모.txt").is_file());
     assert!(org.join("설치.exe").is_file());
+    assert!(org.join("문서/2026/가람정보_견적서.pdf").is_file());
 }
 
 #[test]
@@ -247,7 +252,8 @@ fn review_with_ai_places_customer_files_and_survives_failure() {
     o.ai = Some(&ai);
     let r = review(&org, store, &o).unwrap();
     assert!(r.ai_error.is_some());
-    assert_eq!(r.ai_waiting, 3, "no rules here: 설치.exe waits too");
+    assert_eq!(r.ai_waiting, 2, "no rules here: 설치.exe waits too");
+    assert_eq!(r.to_customer, 1, "the customer PDF still goes, offline");
     assert!(r.plan.is_some_and(|p| !p.moves.is_empty()));
 }
 

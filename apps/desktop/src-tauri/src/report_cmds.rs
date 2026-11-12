@@ -207,6 +207,60 @@ pub struct ReviewDto {
     /// Files the AI could place but was not asked to ("AI로 이것도 보기").
     pub ai_waiting: usize,
     pub ai_error: Option<String>,
+    /// (0.16.0) Customer files that go to the customer's folder by kind.
+    pub to_customer: usize,
+    /// (0.16.0, rebuild) Customers that get a new folder.
+    pub new_customers: Vec<String>,
+    /// (0.16.0, rebuild) More moves than one plan holds.
+    pub capped: bool,
+}
+
+fn save_preview(
+    store: &Store,
+    plan: Option<restructure::Plan>,
+) -> CmdResult<(Option<restructure::Plan>, Option<restructure::Preview>)> {
+    Ok(match plan {
+        Some(p) => {
+            let p = restructure::save(store, p).map_err(err)?;
+            let pv = restructure::preview(&p, None).map_err(err)?;
+            (Some(p), Some(pv))
+        }
+        None => (None, None),
+    })
+}
+
+/// (0.16.0, SPEC §14.22) "정리 위치 새로 짜기": re-plan the whole organize
+/// root under today's layout — every customer's file into that customer's
+/// folder by kind, split folders merged, the rest by the rules. Offline;
+/// nothing moves.
+#[tauri::command]
+pub async fn plan_rebuild(
+    app: AppHandle,
+    path: String,
+    protect: Vec<String>,
+) -> CmdResult<ReviewDto> {
+    blocking(move || {
+        let cfg = app.state::<AppState>().config();
+        let store = Store::open(&cfg.store.db_path()).map_err(err)?;
+        let mut r = report::rebuild::run(&cfg, &expand(&path), &store, protected(&cfg, &protect))
+            .map_err(err)?;
+        let (plan, preview) = save_preview(&store, r.plan.take())?;
+        Ok(ReviewDto {
+            plan,
+            preview,
+            summary: r.summary,
+            merged: r.merged,
+            folded: 0,
+            by_rules: r.by_rules,
+            by_ai: 0,
+            ai_waiting: 0,
+            ai_error: None,
+            to_customer: r.to_customer,
+            new_customers: r.new_customers,
+            capped: r.capped,
+        })
+    })
+    .await
 }
 
 /// (M19, SPEC §14.21) "정리 위치 점검": look inside an organize root and
@@ -240,14 +294,7 @@ pub async fn plan_review(
         if use_ai && ai.is_none() && r.ai_error.is_none() && r.ai_waiting > 0 {
             r.ai_error = Some("AI를 쓸 수 없습니다 — 설정 → AI 연결을 확인하세요".into());
         }
-        let (plan, preview) = match r.plan.take() {
-            Some(p) => {
-                let p = restructure::save(&store, p).map_err(err)?;
-                let pv = restructure::preview(&p, None).map_err(err)?;
-                (Some(p), Some(pv))
-            }
-            None => (None, None),
-        };
+        let (plan, preview) = save_preview(&store, r.plan.take())?;
         Ok(ReviewDto {
             plan,
             preview,
@@ -258,6 +305,9 @@ pub async fn plan_review(
             by_ai: r.by_ai,
             ai_waiting: r.ai_waiting,
             ai_error: r.ai_error,
+            to_customer: r.to_customer,
+            new_customers: Vec::new(),
+            capped: false,
         })
     })
     .await
@@ -404,6 +454,7 @@ pub async fn apply_plan(
                     restructure::PlanSource::Imported => "제안 파일",
                     restructure::PlanSource::Compact => "정리 위치 다듬기",
                     restructure::PlanSource::Review => "정리 위치 점검",
+                    restructure::PlanSource::Rebuild => "정리 위치 새로 짜기",
                     _ => "정리 제안",
                 },
                 r.moved.len(),

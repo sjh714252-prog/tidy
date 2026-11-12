@@ -428,6 +428,7 @@ const PLAN_SOURCE: Record<string, string> = {
   imported: "제안 파일",
   compact: "정리 위치 다듬기",
   review: "정리 위치 점검",
+  rebuild: "정리 위치 새로 짜기",
 };
 
 /**

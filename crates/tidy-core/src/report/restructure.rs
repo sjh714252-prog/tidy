@@ -61,6 +61,9 @@ pub enum PlanSource {
     Compact,
     /// (0.15.0) "정리 위치 점검": the organize root re-sorted ([`super::review`]).
     Review,
+    /// (0.16.0) "정리 위치 새로 짜기": the whole organize root re-planned
+    /// under today's layout ([`super::rebuild`]).
+    Rebuild,
 }
 
 impl PlanSource {
@@ -74,6 +77,7 @@ impl PlanSource {
             PlanSource::Imported => "imported",
             PlanSource::Compact => "compact",
             PlanSource::Review => "review",
+            PlanSource::Rebuild => "rebuild",
         }
     }
 }
@@ -864,6 +868,7 @@ pub fn apply(
         PlanSource::Imported => format!("제안 파일 #{}", plan.id),
         PlanSource::Compact => format!("정리 위치 다듬기 #{}", plan.id),
         PlanSource::Review => format!("정리 위치 점검 #{}", plan.id),
+        PlanSource::Rebuild => format!("정리 위치 새로 짜기 #{}", plan.id),
         _ => format!("정리 제안 #{}", plan.id),
     };
     let mut report = ApplyReport {
@@ -989,7 +994,7 @@ pub fn apply(
     }
     if matches!(
         plan.source,
-        PlanSource::Imported | PlanSource::Compact | PlanSource::Review
+        PlanSource::Imported | PlanSource::Compact | PlanSource::Review | PlanSource::Rebuild
     ) {
         // (0.11.2) A cleanup plan: also drop the folders it emptied
         // (e.g. 기타/개발 once all its topic folders went), inside root only.

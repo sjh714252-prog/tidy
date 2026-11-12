@@ -197,6 +197,7 @@ pub fn run() {
             report_cmds::plan_rules,
             report_cmds::review_roots,
             report_cmds::plan_review,
+            report_cmds::plan_rebuild,
             report_cmds::import_plan,
             report_cmds::plan_ai,
             report_cmds::run_command,

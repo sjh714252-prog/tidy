@@ -86,6 +86,36 @@ const panel = main.locator(".restructure");
   ok("D", "되돌리면 원래 폴더로", back);
 }
 
+// E. (0.16.0) 처음부터 새로 짜기: the customer PDF in 문서/2026 → 가람정보/문서,
+// and the before/after panes stay inside the window.
+{
+  await tab("정리하기").click();
+  await sleep(800);
+  const sel = main.locator("[data-testid=report-folder]");
+  if ((await sel.inputValue()) !== ORG) await sel.selectOption(ORG);
+  if ((await panel.locator(".plan").count()) > 0) await panel.getByRole("button", { name: "닫기" }).first().click();
+  const btn = main.locator("[data-testid=rebuild-start]");
+  ok("E", "[처음부터 새로 짜기 미리보기] 버튼", await waitFor(async () => (await btn.count()) === 1, 10000));
+  await btn.click();
+  const open = await waitFor(async () => (await panel.locator(".plan").count()) === 1, 20000);
+  const txt = open ? await panel.innerText() : "";
+  ok("E", "정리 위치 새로 짜기 미리보기", txt.includes("정리 위치 새로 짜기"), txt.replace(/\n/g, " | ").slice(0, 400));
+  ok("E", "고객사 PDF → 가람정보/문서", txt.includes("고객사 '가람정보'가 보임") && txt.includes("가람정보_견적서.pdf"));
+  await panel.locator("details.diff-box").evaluate((d) => (d.open = true));
+  await sleep(300);
+  const vw = await main.evaluate(() => document.documentElement.clientWidth);
+  const right = await panel.locator(".diff > div").nth(1).boundingBox();
+  const sw = await main.evaluate(() => document.documentElement.scrollWidth);
+  ok("E", "미리보기 오른쪽 칸이 창 안에", !!right && right.x + right.width <= vw + 1 && sw <= vw + 1, `pane ${right && Math.round(right.x + right.width)} / vw ${vw}, scroll ${sw}`);
+  await main.screenshot({ path: `${SHOT}/m19-E-rebuild.png`, fullPage: true });
+  await panel.getByRole("button", { name: /선택한 \d+개 옮기기/ }).click();
+  const moved = await waitFor(
+    () => at("가람정보/문서/가람정보_견적서.pdf") && at("KT스마트메시지/20261014_과금/c.txt") && !at("KT 스마트메시지") && at("가람정보/텍스트/메모.txt"),
+    30000,
+  );
+  ok("E", "적용: 가람정보/문서/가람정보_견적서.pdf, 기타/가람정보 → 가람정보/텍스트, KT 합치기", moved);
+}
+
 await browser.close();
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} passed`);

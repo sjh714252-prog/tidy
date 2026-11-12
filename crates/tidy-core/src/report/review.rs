@@ -110,6 +110,9 @@ pub struct Review {
     pub by_rules: usize,
     /// Files the AI placed (step 5).
     pub by_ai: usize,
+    /// (0.16.0) Customer files outside the customer folders placed
+    /// offline into `{고객사}/{종류}` (no AI, or the AI did not place them).
+    pub to_customer: usize,
     /// Files the AI could place but was not asked to (no AI, or not
     /// requested) — "AI로 이것도 보기".
     pub ai_waiting: usize,
@@ -118,20 +121,20 @@ pub struct Review {
 }
 
 /// A folder (or file) to move into a kept folder.
-struct Merge {
-    from: PathBuf,
-    to: PathBuf,
-    is_dir: bool,
-    reason: String,
+pub(super) struct Merge {
+    pub(super) from: PathBuf,
+    pub(super) to: PathBuf,
+    pub(super) is_dir: bool,
+    pub(super) reason: String,
 }
 
-fn visible(name: &str) -> bool {
+pub(super) fn visible(name: &str) -> bool {
     !name.starts_with('.')
         && !name.contains(TMP_MARKER)
         && !name.eq_ignore_ascii_case("desktop.ini")
 }
 
-fn count_files(dir: &Path) -> (u64, u64) {
+pub(super) fn count_files(dir: &Path) -> (u64, u64) {
     let (mut n, mut b) = (0u64, 0u64);
     for e in walkdir::WalkDir::new(dir)
         .into_iter()
@@ -145,22 +148,22 @@ fn count_files(dir: &Path) -> (u64, u64) {
     (n, b)
 }
 
-fn rel(root: &Path, p: &Path) -> String {
+pub(super) fn rel(root: &Path, p: &Path) -> String {
     p.strip_prefix(root)
         .map(|r| r.to_string_lossy().replace('\\', "/"))
         .unwrap_or_else(|_| p.display().to_string())
 }
 
-struct Ctx<'a> {
-    root: PathBuf,
-    o: &'a ReviewOptions<'a>,
-    store: &'a Store,
+pub(super) struct Ctx<'a> {
+    pub(super) root: PathBuf,
+    pub(super) o: &'a ReviewOptions<'a>,
+    pub(super) store: &'a Store,
     /// Known customer names (dictionary, aliases, cache).
-    customers: Vec<String>,
+    pub(super) customers: Vec<String>,
 }
 
 impl Ctx<'_> {
-    fn left_alone(&self, p: &Path) -> bool {
+    pub(super) fn left_alone(&self, p: &Path) -> bool {
         let name = p
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -179,7 +182,7 @@ impl Ctx<'_> {
             || self.o.filter.is_some_and(|f| f.is_ignored(p))
     }
 
-    fn dirs(&self, dir: &Path) -> Vec<PathBuf> {
+    pub(super) fn dirs(&self, dir: &Path) -> Vec<PathBuf> {
         sub_dirs(dir)
             .into_iter()
             .map(|n| dir.join(n))
@@ -188,7 +191,7 @@ impl Ctx<'_> {
     }
 
     /// The customer `name` stands for (dictionary spelling), by name.
-    fn customer(&self, name: &str) -> Option<String> {
+    pub(super) fn customer(&self, name: &str) -> Option<String> {
         let k = norm(name);
         if k.is_empty() {
             return None;
@@ -207,7 +210,7 @@ impl Ctx<'_> {
     }
 
     /// A customer folder by name or by layout (has `날짜_이슈` folders).
-    fn is_customer_dir(&self, dir: &Path) -> bool {
+    pub(super) fn is_customer_dir(&self, dir: &Path) -> bool {
         let name = dir
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -341,7 +344,7 @@ fn merge_group(
     joined
 }
 
-fn name_of(p: &Path) -> String {
+pub(super) fn name_of(p: &Path) -> String {
     p.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()
@@ -350,7 +353,7 @@ fn name_of(p: &Path) -> String {
 /// Steps 1–2: every folder right below the root, grouped with the folders
 /// that stand for the same thing. Returns the moves and how many folders
 /// merge into another.
-fn merges(ctx: &Ctx<'_>) -> (Vec<Merge>, usize) {
+pub(super) fn merges(ctx: &Ctx<'_>) -> (Vec<Merge>, usize) {
     let root = &ctx.root;
     let other = root.join(&ctx.o.other_dir);
     let tops = ctx.dirs(root);
@@ -439,7 +442,7 @@ fn merges(ctx: &Ctx<'_>) -> (Vec<Merge>, usize) {
 
 /// `p` after the folder moves in `dirs` (a file that lands in a folder
 /// that later merges away ends up in the kept folder).
-fn remap(p: &Path, dirs: &[(PathBuf, PathBuf)]) -> PathBuf {
+pub(super) fn remap(p: &Path, dirs: &[(PathBuf, PathBuf)]) -> PathBuf {
     let mut cur = p.to_path_buf();
     for _ in 0..4 {
         let Some((f, t)) = dirs.iter().find(|(f, _)| cur.starts_with(f) && cur != *f) else {
@@ -581,24 +584,60 @@ pub fn review(root: &Path, store: &Store, o: &ReviewOptions<'_>) -> Result<Revie
 
     // 5. Files the AI could place.
     let mut cands = misplaced(&ctx, &claimed);
+    let hinted: Vec<PathBuf> = cands.clone();
     cands.extend(
         loose
             .into_iter()
             .take(MAX_AI_FILES.saturating_sub(cands.len())),
     );
-    let (mut by_ai, mut ai_waiting, mut ai_error) = (Vec::new(), 0, None);
-    match (o.ai, o.curator) {
-        (Some(ai), Some(cur)) if !cands.is_empty() => {
+    let (mut by_ai, mut ai_error) = (Vec::new(), None);
+    if let (Some(ai), Some(cur)) = (o.ai, o.curator) {
+        if !cands.is_empty() {
             match cur.place_files(ai, store, &cands, &root) {
                 Ok(m) => by_ai = m,
-                Err(e) => {
-                    ai_error = Some(e.to_string());
-                    ai_waiting = cands.len();
-                }
+                Err(e) => ai_error = Some(e.to_string()),
             }
         }
-        _ => ai_waiting = cands.len(),
     }
+    // (0.16.0) A customer's file the AI did not place (no AI, AI down or
+    // unsure) still goes to that customer's folder, by kind — offline.
+    let mut by_customer: Vec<PlannedMove> = Vec::new();
+    if let Some(cur) = o.curator {
+        for f in hinted
+            .iter()
+            .filter(|f| !by_ai.iter().any(|m| m.from == **f))
+        {
+            let name = name_of(f);
+            let Some(c) = cur.customer_hint(&name, Some(store)) else {
+                continue;
+            };
+            let kind = crate::curate::kinds::kind_of(Some(cur.dict()), f);
+            let (dir, _) = crate::curate::kinds::customer_kind_dir(&root, &c, &kind);
+            by_customer.push(PlannedMove {
+                id: 0,
+                to: dir.join(&name),
+                from: f.clone(),
+                is_dir: false,
+                files: 1,
+                bytes: std::fs::metadata(f).map(|m| m.len()).unwrap_or(0),
+                reason: format!("이름에 고객사 '{c}'가 보임 → '{}'", rel(&root, &dir)),
+                warnings: Vec::new(),
+                context: None,
+                encrypt: false,
+            });
+        }
+    }
+    let asked = o.ai.is_some() && o.curator.is_some() && ai_error.is_none();
+    let ai_waiting = if asked {
+        0
+    } else {
+        cands
+            .iter()
+            .filter(|f| {
+                !by_ai.iter().any(|m| m.from == **f) && !by_customer.iter().any(|m| m.from == **f)
+            })
+            .count()
+    };
 
     // One plan: files first (their folders remapped through the merges),
     // then the merges, then the folding.
@@ -623,6 +662,10 @@ pub fn review(root: &Path, store: &Store, o: &ReviewOptions<'_>) -> Result<Revie
     let n_ai = by_ai.len();
     for m in by_ai {
         push(m, "제자리 아닌 파일(AI)");
+    }
+    let n_cust = by_customer.len();
+    for m in by_customer {
+        push(m, "고객사 폴더 밖 고객사 파일");
     }
     let n_rules = by_rules.len();
     for m in by_rules {
@@ -679,6 +722,11 @@ pub fn review(root: &Path, store: &Store, o: &ReviewOptions<'_>) -> Result<Revie
             "맨 위에 흩어진 파일 {n_rules}개를 규칙대로 넣습니다"
         ));
     }
+    if n_cust > 0 {
+        parts.push(format!(
+            "고객사 폴더 밖에 있던 고객사 파일 {n_cust}개를 그 고객사 폴더의 종류별 폴더로 옮깁니다"
+        ));
+    }
     if n_ai > 0 {
         parts.push(format!(
             "고객사 폴더 밖에 있던 파일 {n_ai}개를 AI가 고른 고객사·이슈 폴더로 옮깁니다"
@@ -694,7 +742,7 @@ pub fn review(root: &Path, store: &Store, o: &ReviewOptions<'_>) -> Result<Revie
     };
     if ai_waiting > 0 {
         summary.push_str(&format!(
-            " 고객사 이름이 보이는데 고객사 폴더 밖에 있거나 맨 위에 흩어진 파일 {ai_waiting}개는 {}",
+            " 맨 위에 흩어진 파일 {ai_waiting}개는 {}",
             if ai_error.is_some() {
                 "AI가 답하지 못해 그대로 둡니다."
             } else {
@@ -725,6 +773,7 @@ pub fn review(root: &Path, store: &Store, o: &ReviewOptions<'_>) -> Result<Revie
         folded: n_fold,
         by_rules: n_rules,
         by_ai: n_ai,
+        to_customer: n_cust,
         ai_waiting,
         ai_error,
     })

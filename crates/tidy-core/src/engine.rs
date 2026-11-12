@@ -283,25 +283,28 @@ impl Engine {
         }
 
         let prefer = self.curator.as_ref().is_some_and(|c| c.cfg().prefer);
+        let hint = self.curator.as_ref().and_then(|c| {
+            path.file_name()
+                .and_then(|n| c.customer_hint(&n.to_string_lossy(), Some(self.mover.store())))
+        });
         if prefer {
             if let Some(a) = self.curate_step(&facts, batch_id)? {
                 return Ok(a);
             }
-        } else if self.ai.is_some()
-            && self.curator.as_ref().is_some_and(|c| {
-                path.file_name().is_some_and(|n| {
-                    c.customer_hint(&n.to_string_lossy(), Some(self.mover.store()))
-                        .is_some()
-                })
-            })
-        {
+        } else if self.ai.is_some() && hint.is_some() {
             // (0.13.0, SPEC §14.19) The name says whose work this is: the
             // customer's folder comes before the type rules (`문서/…`).
-            // Not placed (unclassified, AI failed, inside a sub-folder) →
-            // the rules as usual.
             match self.curate_step(&facts, batch_id)? {
                 Some(Action::AiFailed { .. }) | None => {}
                 Some(a) => return Ok(a),
+            }
+        }
+        // (0.16.0, SPEC §14.22) Still a customer's file (no AI, AI unsure
+        // or failed): into that customer's folder by kind, never the type
+        // rules' folders where it could not be found by customer.
+        if let Some(c) = &hint {
+            if let Some(a) = self.customer_kind_step(&facts, c, batch_id)? {
+                return Ok(a);
             }
         }
         let Some(c) = self.rules.classify_in(&facts, self.anchors.for_path(path)) else {
@@ -467,6 +470,76 @@ impl Engine {
 
     /// (M10) Work-context placement of one file. `Ok(None)`: no confident
     /// answer (the caller falls back to rules / leaves the file).
+    /// (0.16.0, SPEC §14.22) A file whose name shows `customer`, placed
+    /// without the AI: `{customer}/{kind}` under its organize root. Only
+    /// files directly in a watch folder (a sub-folder is organized whole).
+    /// The customer folder exists → moved; a new customer folder → asked
+    /// in 확인 대기.
+    fn customer_kind_step(
+        &self,
+        facts: &FileFacts,
+        customer: &str,
+        batch_id: &str,
+    ) -> Result<Option<Action>, EngineError> {
+        let path = &facts.path;
+        let parent = path.parent().unwrap_or_else(|| Path::new(""));
+        let Some(root) = self.anchors.watch_root_for(path) else {
+            return Ok(None);
+        };
+        if parent != root {
+            return Ok(None);
+        }
+        let store = self.mover.store();
+        if let Some(p) = store.get_pending_by_path(path)? {
+            if p.source != PendingSource::Rule {
+                return Ok(None);
+            }
+        }
+        let anchor = self.anchors.for_path(path).unwrap_or(parent);
+        let kind = crate::curate::kinds::kind_of(self.curator.as_ref().map(|c| c.dict()), path);
+        let (dest, known) = crate::curate::kinds::customer_kind_dir(anchor, customer, &kind);
+        let rule = format!("고객사 폴더 · {kind}");
+        if self.dry_run {
+            return Ok(Some(Action::WouldMove {
+                path: path.clone(),
+                rule,
+                dest_dir: dest,
+                confirm: !known,
+                encrypt: false,
+            }));
+        }
+        if self.was_undone(path)? {
+            return Ok(Some(Action::Skipped {
+                path: path.clone(),
+                reason: "restored by undo; left in place",
+            }));
+        }
+        if !known {
+            store.upsert_pending(path, Some(&dest), Some(&rule))?;
+            return Ok(Some(Action::Pending {
+                path: path.clone(),
+                rule,
+                suggested: dest,
+                source: PendingSource::Rule,
+                confidence: None,
+                reason: Some(format!(
+                    "파일 이름에 고객사 '{customer}'가 보입니다 — 새 고객사 폴더를 만들까요?"
+                )),
+                encrypt: false,
+                pii: None,
+            }));
+        }
+        Ok(Some(self.move_with(
+            path,
+            dest,
+            batch_id,
+            &rule,
+            DecidedBy::Rule,
+            None,
+            false,
+        )?))
+    }
+
     fn curate_step(
         &self,
         facts: &FileFacts,

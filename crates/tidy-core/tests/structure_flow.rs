@@ -267,10 +267,19 @@ fn a_customer_file_goes_to_the_customer_before_the_type_rule() {
     assert!(rel(dst, &org).starts_with("문서/"), "{dst:?}");
 }
 
+/// (0.16.0, SPEC §14.22) AI failed (or unsure, or off): a customer's file
+/// still goes into that customer's folder, by kind — not to the type rules'
+/// `문서/…` where it could not be found by customer. A customer with no
+/// folder yet is asked about in 확인 대기.
 #[test]
-fn customer_first_falls_back_to_the_rules_when_the_ai_fails() {
-    let (_tmp, desk, org) = desk_with(&["가람정보_견적서.pdf"]);
-    let failing = Arc::new(MockProvider::sequence(vec![Err("offline".into())]));
+fn customer_file_goes_to_the_customer_by_kind_when_the_ai_fails() {
+    let (_tmp, desk, org) = desk_with(&["가람정보_견적서.pdf", "가람정보 로그.log", "KT견적.pdf"]);
+    fs::create_dir_all(org.join("가람정보/20261020_과금")).unwrap();
+    let failing = Arc::new(MockProvider::sequence(vec![
+        Err("offline".into()),
+        Err("offline".into()),
+        Err("offline".into()),
+    ]));
     let e = engine(&desk, &org, failing);
     let a = e
         .handle(&desk.join("가람정보_견적서.pdf"), &new_batch_id())
@@ -278,8 +287,47 @@ fn customer_first_falls_back_to_the_rules_when_the_ai_fails() {
     let Action::Moved { dst, rule, .. } = &a else {
         panic!("{a:?}")
     };
-    assert_eq!(rule, "문서");
-    assert!(rel(dst, &org).starts_with("문서/"), "{dst:?}");
+    assert_eq!(rule, "고객사 폴더 · 문서");
+    assert_eq!(rel(dst, &org), "가람정보/문서/가람정보_견적서.pdf");
+    let a = e
+        .handle(&desk.join("가람정보 로그.log"), &new_batch_id())
+        .unwrap();
+    let Action::Moved { dst, .. } = &a else {
+        panic!("{a:?}")
+    };
+    assert_eq!(rel(dst, &org), "가람정보/로그/가람정보 로그.log");
+
+    // A dictionary customer without a folder yet ("가람정보" exists, a
+    // second one does not): asked, not made silently.
+    let mut d = dict();
+    d.add_entity("한빛소프트", &[]).unwrap();
+    let (_t2, desk2, org2) = desk_with(&["한빛소프트 계약서.pdf"]);
+    let cfg = Config::default();
+    let rules = RuleSet::from_toml(
+        "[[rule]]\nname = \"문서\"\nmatch = { ext = [\"pdf\"] }\ndest = \"문서/{yyyy}\"\n",
+    )
+    .unwrap();
+    let watches = vec![WatchRoot {
+        path: desk2.clone(),
+        mode: tidy_core::config::OrganizeMode::Collect,
+        organize_root: Some(org2.clone()),
+        ..Default::default()
+    }];
+    let e2 = Engine::new(
+        rules,
+        Mover::new(Store::open_in_memory().unwrap(), DuplicatePolicy::Rename),
+        IgnoreFilter::new(&[]).unwrap(),
+    )
+    .with_anchors(Anchors::from_watches(&watches))
+    .with_curator(Arc::new(Curator::new(d, cfg.curate.clone(), true).unwrap()));
+    let a = e2
+        .handle(&desk2.join("한빛소프트 계약서.pdf"), &new_batch_id())
+        .unwrap();
+    let Action::Pending { suggested, .. } = &a else {
+        panic!("no AI, new customer → asked: {a:?}")
+    };
+    assert_eq!(rel(suggested, &org2), "한빛소프트/문서");
+    assert!(desk2.join("한빛소프트 계약서.pdf").is_file());
 }
 
 fn put(mover: &Mover, src: &Path, dest_dir: &Path) {
