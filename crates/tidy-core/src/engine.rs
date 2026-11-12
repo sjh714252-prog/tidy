@@ -783,7 +783,8 @@ pub fn reindex_undo(
     opts: &IndexOptions,
 ) {
     let indexer = Indexer::new(store);
-    for (from, to) in &report.restored {
+    // (0.14.0) A re-made empty folder has nothing to index.
+    for (from, to) in report.restored.iter().filter(|(_, to)| !to.is_dir()) {
         if let Err(e) = indexer.moved(from, to, opts) {
             tracing::warn!("index update after undo failed: {e}");
         }

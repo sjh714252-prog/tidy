@@ -16,6 +16,8 @@ SCRIPT="${1:-m3}"
 [ "$SCRIPT" = m13 ] && APP_ENV="${APP_ENV:-TIDY_E2E_NO_OPEN=1}"
 # m14: "휴지통" is a folder (TIDY_E2E_TRASH) and "기존 파일 열기"/"휴지통 열기" are recorded.
 [ "$SCRIPT" = m14 ] && APP_ENV="${APP_ENV:-TIDY_E2E_NO_OPEN=1 TIDY_E2E_TRASH=${S:-/tmp/tidy-e2e}/t/휴지통}"
+# fix-empty: OS clutter goes to a folder standing in for the trash.
+[ "$SCRIPT" = fix-empty ] && APP_ENV="${APP_ENV:-TIDY_E2E_TRASH=${S:-/tmp/tidy-e2e}/t/휴지통}"
 # m18: a real `tidy serve` agent (built here) plays the NAS.
 [ "$SCRIPT" = m18 ] && (cd "$(dirname "$0")/../../.." && cargo build -p tidy-cli)
 S="${S:-/tmp/tidy-e2e}"; T="$S/t"

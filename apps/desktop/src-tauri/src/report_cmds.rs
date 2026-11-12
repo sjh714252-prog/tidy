@@ -596,6 +596,48 @@ pub async fn trash_duplicates(
     .await
 }
 
+// ── empty folders (0.14.0) ──────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmptyRemoveDto {
+    pub batch_id: String,
+    pub removed: usize,
+    pub failed: Vec<String>,
+}
+
+/// "빈 폴더 정리": remove the folders the user ticked, one batch (undo
+/// makes them again). Only ever called from that click; each folder is
+/// checked again first (`Mover::remove_empty_dirs`).
+#[tauri::command]
+pub async fn remove_empty_folders(app: AppHandle, paths: Vec<String>) -> CmdResult<EmptyRemoveDto> {
+    crate::overview::invalidate();
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let inner = state.lock_inner();
+        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        let batch = tidy_core::engine::new_batch_id();
+        let paths: Vec<std::path::PathBuf> = paths.into_iter().map(Into::into).collect();
+        let r = mover.remove_empty_dirs(&paths, &batch);
+        watch::emit_activity(
+            &app,
+            "info",
+            Path::new(""),
+            format!("빈 폴더 정리: {}개", r.removed.len()),
+        );
+        Ok(EmptyRemoveDto {
+            batch_id: r.batch_id.clone(),
+            removed: r.removed.len(),
+            failed: r
+                .failed
+                .iter()
+                .map(|(p, why)| format!("{}: {why}", p.display()))
+                .collect(),
+        })
+    })
+    .await
+}
+
 /// "휴지통 열기" (undo of a `trash` row points here). With
 /// `TIDY_E2E_NO_OPEN` the request is only recorded (headless e2e).
 #[tauri::command]
