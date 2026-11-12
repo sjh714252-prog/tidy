@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import * as ipc from "../ipc/commands";
-import type { PlannedMove, StoredPlan, StructDir } from "../ipc/types";
+import type { Listing, PlannedMove, StoredPlan, StructDir } from "../ipc/types";
+import { PathText } from "./PathText";
 import { ALL_WATCHES, guardTarget, useReport } from "../store/report";
 import { useCurate } from "../store/curate";
 import { useStatus } from "../store/status";
@@ -363,12 +364,60 @@ function ReviewStart() {
         모으고, 나뉜 고객사·이슈 폴더를 합치고, 나머지는 규칙대로 넣습니다. 이슈 폴더 안과 직접 만든 폴더 안은
         그대로 둡니다.
       </p>
+      <ExportListing />
       {info && (
         <div className="notice ok" data-testid="review-clean">
           {info.summary}
           <ReviewAi />
         </div>
       )}
+    </div>
+  );
+}
+
+/** (0.16.1) "정리 위치 목록 내보내기": a file describing the organize root,
+ * for a full cleanup planned by Claude and opened back with "제안 파일
+ * 열기…". Nothing moves. */
+function ExportListing() {
+  const r = useReport();
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<Listing | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      setDone(await r.exportListing());
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="stack" data-testid="export-listing">
+      <div className="row">
+        <button className="sm" disabled={busy} onClick={() => void run()} data-testid="export-listing-run">
+          {busy ? "목록 만드는 중…" : "정리 위치 목록 내보내기"}
+        </button>
+        <button className="sm" disabled={!!r.planning} onClick={() => void r.importPlan()} data-testid="review-import-plan">
+          받은 계획 파일 열기…
+        </button>
+        <span className="muted small">
+          너무 섞여서 한 번 통째로 정리하고 싶을 때: 목록 파일을 Claude에게 보내면 정리 계획 파일을 받아 [제안 파일 열기]로
+          미리보기·적용할 수 있습니다. 아무것도 옮기지 않습니다.
+        </span>
+      </div>
+      {done && (
+        <div className="notice ok" data-testid="export-listing-done">
+          파일 {done.files.toLocaleString()}개 목록을 저장했습니다{done.capped ? "(최대 개수까지)" : ""}:{" "}
+          <PathText path={done.path} clickable={false} />{" "}
+          <button className="link" onClick={() => void ipc.revealPath(done.path)}>
+            폴더 열기
+          </button>
+        </div>
+      )}
+      {err && <div className="notice warn">{err}</div>}
     </div>
   );
 }

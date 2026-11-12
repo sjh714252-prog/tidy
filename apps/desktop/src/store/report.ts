@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import * as ipc from "../ipc/commands";
 import { useStatus } from "./status";
-import type { ApplyResult, ContextSuggestion, CurateEstimate, MoveEdit, Plan, Preview, Report, ReviewResult } from "../ipc/types";
+import type { Listing, ApplyResult, ContextSuggestion, CurateEstimate, MoveEdit, Plan, Preview, Report, ReviewResult } from "../ipc/types";
 
 interface ReportState {
   roots: string[];
@@ -47,6 +47,8 @@ interface ReportState {
    * re-sorting it; `useAi` also places customer files outside the
    * customer folders. Nothing moves. */
   review: (useAi?: boolean) => Promise<void>;
+  /** (0.16.1) "정리 위치 목록 내보내기" (Downloads). */
+  exportListing: () => Promise<Listing>;
   /** (0.16.0) "정리 위치 새로 짜기": re-plan the whole organize root. */
   rebuild: () => Promise<void>;
   setPath: (p: string) => Promise<void>;
@@ -228,6 +230,10 @@ export const useReport = create<ReportState>((set, get) => ({
     } finally {
       set({ reviewing: null });
     }
+  },
+  exportListing: async () => {
+    const { path, protect } = get();
+    return ipc.exportListing(path, protectList(protect));
   },
   rebuild: async () => {
     const { path, protect } = get();

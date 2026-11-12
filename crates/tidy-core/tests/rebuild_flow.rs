@@ -175,3 +175,73 @@ fn rebuild_names_a_new_customer_folder() {
         r.summary
     );
 }
+
+/// 0.16.1: a file already in its rule's own tree (`텍스트/2026`) is left
+/// there — no churn into `텍스트/2026/06` or `텍스트/1980/01`.
+#[test]
+fn rebuild_leaves_files_in_their_rule_tree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let org = dunce::canonicalize(tmp.path()).unwrap().join("정리");
+    write(&org, "텍스트/2026/리포트.txt", "r");
+    write(&org, "텍스트/1980/VERSION.txt", "v");
+    write(&org, "문서/2026/메모.txt", "m");
+    let store = Store::open_in_memory().unwrap();
+    let cfg = Config::default();
+    let rules = RuleSet::from_toml(
+        "[[rule]]\nname='텍스트 파일 분류'\nmatch={ext=['txt']}\ndest='텍스트/{yyyy}/{mm}'\n",
+    )
+    .unwrap();
+    let nf = IgnoreFilter::new(&[]).unwrap();
+    let mut o = ReviewOptions::base(&cfg, &org, Vec::new());
+    o.rules = Some(&rules);
+    o.filter = Some(&nf);
+    let r = rebuild(&org, &store, &o).unwrap();
+    let got = r.plan.map(|p| lines(&p, &org)).unwrap_or_default();
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert!(
+        got[0].starts_with("문서/2026/메모.txt -> 텍스트/"),
+        "{got:?}"
+    );
+}
+
+/// 0.16.1: "정리 위치 목록 내보내기" — one JSON file describing the root
+/// (paths, sizes, dates, excerpts; a code project as one entry).
+#[test]
+fn listing_describes_the_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = dunce::canonicalize(tmp.path()).unwrap();
+    let org = base.join("정리");
+    let body = write(
+        &org,
+        "문서/2026/회의록.txt",
+        "가람정보 담당자와   과금 회의",
+    );
+    write(&org, "tidy/Cargo.toml", "[package]");
+    write(&org, "tidy/src/main.rs", "fn main(){}");
+    write(&org, ".숨김/x.txt", "x");
+    let store = Store::open_in_memory().unwrap();
+    Indexer::new(&store)
+        .index_file(&body, &IndexOptions::default())
+        .unwrap();
+    let out = base.join("목록.json");
+    let l = tidy_core::report::listing::write_listing(
+        &org,
+        &store,
+        None,
+        &[],
+        vec!["가람정보".into()],
+        "[[rule]]".into(),
+        &out,
+    )
+    .unwrap();
+    assert_eq!(l.files, 3);
+    let v: serde_json::Value = serde_json::from_str(&fs::read_to_string(&out).unwrap()).unwrap();
+    assert_eq!(v["tidy_listing"], 1);
+    assert_eq!(v["customers"][0], "가람정보");
+    let e = v["entries"].as_array().unwrap();
+    assert_eq!(e.len(), 2, "{e:?}");
+    let doc = e.iter().find(|x| x["p"] == "문서/2026/회의록.txt").unwrap();
+    assert_eq!(doc["t"], "가람정보 담당자와 과금 회의");
+    let dev = e.iter().find(|x| x["p"] == "tidy").unwrap();
+    assert_eq!(dev["n"], 2);
+}

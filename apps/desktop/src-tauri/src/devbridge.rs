@@ -347,6 +347,12 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
             arg(&args, "protect")?,
         )
         .await?),
+        "export_listing" => {
+            ok(
+                report_cmds::export_listing(app, arg(&args, "path")?, arg(&args, "protect")?)
+                    .await?,
+            )
+        }
         "plan_rebuild" => {
             ok(report_cmds::plan_rebuild(app, arg(&args, "path")?, arg(&args, "protect")?).await?)
         }

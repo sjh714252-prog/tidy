@@ -13,6 +13,7 @@ pub mod dup;
 pub mod empty;
 pub mod html;
 pub mod import;
+pub mod listing;
 pub mod rebuild;
 pub mod relocate;
 pub mod restructure;

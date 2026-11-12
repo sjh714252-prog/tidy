@@ -732,6 +732,8 @@ export interface ReviewResult {
   /** (0.16.0, rebuild) More moves than one plan holds: run again after applying. */
   capped: boolean;
 }
+/** (0.16.1) "정리 위치 목록 내보내기" result. */
+export interface Listing { path: string; files: number; bytes: number; capped: boolean }
 export interface DupSkip { path: string; existing: string; message: string }
 export interface ApplyResult { batchId: string; moved: number; skipped: string[]; duplicates: DupSkip[]; errors: string[] }
 export interface StoredPlan {

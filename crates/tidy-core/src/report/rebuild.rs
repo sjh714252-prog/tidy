@@ -413,6 +413,20 @@ pub fn rebuild(root: &Path, store: &Store, o: &ReviewOptions<'_>) -> Result<Rebu
                 if !cl.dest_dir.starts_with(&root) || cl.dest_dir == dir {
                     continue;
                 }
+                // (0.16.1) Already in the rule's own tree (`텍스트/2026` for
+                // a `텍스트/{yyyy}/{mm}` rule): left where it is — the
+                // rules only take files from elsewhere, so a file never
+                // churns between period folders (or to `1980/01` for a
+                // bad modified date).
+                let top = |p: &Path| {
+                    p.strip_prefix(&root)
+                        .ok()
+                        .and_then(|r| r.components().next())
+                        .map(|c| norm(&c.as_os_str().to_string_lossy()))
+                };
+                if top(&dir).is_some() && top(&dir) == top(&cl.dest_dir) {
+                    continue;
+                }
                 let to = cl.dest_dir.join(&name);
                 let why = format!("규칙 '{}' → '{}'", cl.rule_name, rel(&root, &cl.dest_dir));
                 if push(&mut moves, p, to, false, why) {
