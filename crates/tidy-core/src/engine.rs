@@ -17,7 +17,7 @@
 //! step. Only a confident answer into a folder that already exists moves on
 //! its own; a new customer, issue or topic is asked in the confirm popup.
 //!
-//! (0.16.0, SPEC §5.3) With `[mover] ask_before_move` nothing moves on its
+//! (0.17.0, SPEC §5.3) With `[mover] ask_before_move` nothing moves on its
 //! own: every rule match, confident AI / work-context answer and automatic
 //! encryption is queued for the confirm popup like a `confirm = true` rule.
 
@@ -138,7 +138,7 @@ pub struct Engine {
     security: SecurityPolicy,
     /// (M10) Work-context placement (needs `ai`).
     curator: Option<std::sync::Arc<crate::curate::Curator>>,
-    /// (0.16.0) `[mover] ask_before_move`: queue every move for approval.
+    /// (0.17.0) `[mover] ask_before_move`: queue every move for approval.
     ask: bool,
 }
 
@@ -168,7 +168,7 @@ impl Engine {
         }
     }
 
-    /// (0.16.0) Ask before every move (`[mover] ask_before_move`).
+    /// (0.17.0) Ask before every move (`[mover] ask_before_move`).
     pub fn ask_before_move(mut self, on: bool) -> Self {
         self.ask = on;
         self

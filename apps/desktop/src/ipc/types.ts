@@ -110,7 +110,7 @@ export interface Overview {
   cap: number;
   /** (M12) New sub-folders over all watch folders. */
   newFolders: number;
-  /** (0.16.0) `[mover] ask_before_move`. */
+  /** (0.17.0) `[mover] ask_before_move`. */
   askBeforeMove: boolean;
   /** (0.14.0) Empty folders (only empty folders / Thumbs.db / desktop.ini inside). */
   empty?: EmptyFolder[];
@@ -342,7 +342,7 @@ export interface Settings {
   keepShortcuts: boolean;
   /** (M14) `[mover] duplicate_policy`. */
   duplicatePolicy: DuplicatePolicy;
-  /** (0.16.0) `[mover] ask_before_move`: every move waits in the confirm queue. */
+  /** (0.17.0) `[mover] ask_before_move`: every move waits in the confirm queue. */
   askBeforeMove: boolean;
 }
 
@@ -357,7 +357,7 @@ export interface SaveSettingsArgs {
   keepShortcuts: boolean;
   /** (M14) Absent = unchanged. */
   duplicatePolicy?: DuplicatePolicy;
-  /** (0.16.0) Absent = unchanged. */
+  /** (0.17.0) Absent = unchanged. */
   askBeforeMove?: boolean;
 }
 

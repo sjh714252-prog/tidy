@@ -461,7 +461,7 @@ fn watch_time_placement_auto_into_existing_folder_or_ask() {
     assert!(matches!(a, Action::NoRule(_)), "{a:?}");
 }
 
-/// (0.16.0) With `ask_before_move` even a confident answer into an
+/// (0.17.0) With `ask_before_move` even a confident answer into an
 /// existing issue folder waits in the queue, worded as an existing folder.
 #[test]
 fn ask_before_move_queues_existing_folder_placement() {

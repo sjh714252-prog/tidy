@@ -973,7 +973,7 @@ pub struct SettingsDto {
     pub keep_shortcuts: bool,
     /// (M14) `[mover] duplicate_policy`: skip | rename | replace.
     pub duplicate_policy: tidy_core::config::DuplicatePolicy,
-    /// (0.16.0) `[mover] ask_before_move`.
+    /// (0.17.0) `[mover] ask_before_move`.
     pub ask_before_move: bool,
 }
 
@@ -1061,7 +1061,7 @@ pub struct SaveSettingsArgs {
     /// (M14) `[mover] duplicate_policy` (absent = unchanged).
     #[serde(default)]
     pub duplicate_policy: Option<tidy_core::config::DuplicatePolicy>,
-    /// (0.16.0) `[mover] ask_before_move` (absent = unchanged).
+    /// (0.17.0) `[mover] ask_before_move` (absent = unchanged).
     #[serde(default)]
     pub ask_before_move: Option<bool>,
 }

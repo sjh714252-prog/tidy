@@ -140,7 +140,7 @@ pub struct OverviewDto {
     /// "업무 맥락으로 정리" next to the rules preview.
     pub can_curate: bool,
     pub cap: usize,
-    /// (0.16.0) `[mover] ask_before_move`: new files wait for approval too.
+    /// (0.17.0) `[mover] ask_before_move`: new files wait for approval too.
     pub ask_before_move: bool,
     /// (0.14.0) Empty folders (nothing in them but empty folders / OS
     /// clutter): offered for "빈 폴더 정리".
