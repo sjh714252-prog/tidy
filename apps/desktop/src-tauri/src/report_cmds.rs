@@ -179,6 +179,90 @@ pub async fn plan_rules(
     .await
 }
 
+/// (M19) The organize roots ("모으기" targets) the 정리하기 tab offers to
+/// review ("정리 위치 점검").
+#[tauri::command]
+pub async fn review_roots(app: AppHandle) -> CmdResult<Vec<String>> {
+    blocking(move || {
+        let cfg = app.state::<AppState>().config();
+        Ok(report::review::review_roots(&cfg)
+            .into_iter()
+            .map(|p| p.display().to_string())
+            .collect())
+    })
+    .await
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewDto {
+    /// `None`: nothing to re-sort.
+    pub plan: Option<restructure::Plan>,
+    pub preview: Option<restructure::Preview>,
+    pub summary: String,
+    pub merged: usize,
+    pub folded: usize,
+    pub by_rules: usize,
+    pub by_ai: usize,
+    /// Files the AI could place but was not asked to ("AI로 이것도 보기").
+    pub ai_waiting: usize,
+    pub ai_error: Option<String>,
+}
+
+/// (M19, SPEC §14.20) "정리 위치 점검": look inside an organize root and
+/// propose re-sorting it. `use_ai`: also let the AI place customer files
+/// outside the customer folders (only when the user asked; an AI that is
+/// off or fails leaves the rest of the plan as it is). Nothing moves.
+#[tauri::command]
+pub async fn plan_review(
+    app: AppHandle,
+    path: String,
+    use_ai: bool,
+    protect: Vec<String>,
+) -> CmdResult<ReviewDto> {
+    blocking(move || {
+        let cfg = app.state::<AppState>().config();
+        let store = Store::open(&cfg.store.db_path()).map_err(err)?;
+        let ai = if use_ai {
+            let rules = RuleSet::load(&cfg.classify.rules).unwrap_or_default();
+            AiClassifier::from_config(&cfg, &rules).ok()
+        } else {
+            None
+        };
+        let mut r = report::review::run(
+            &cfg,
+            &expand(&path),
+            &store,
+            protected(&cfg, &protect),
+            ai.as_ref(),
+        )
+        .map_err(err)?;
+        if use_ai && ai.is_none() && r.ai_error.is_none() && r.ai_waiting > 0 {
+            r.ai_error = Some("AI를 쓸 수 없습니다 — 설정 → AI 연결을 확인하세요".into());
+        }
+        let (plan, preview) = match r.plan.take() {
+            Some(p) => {
+                let p = restructure::save(&store, p).map_err(err)?;
+                let pv = restructure::preview(&p, None).map_err(err)?;
+                (Some(p), Some(pv))
+            }
+            None => (None, None),
+        };
+        Ok(ReviewDto {
+            plan,
+            preview,
+            summary: r.summary,
+            merged: r.merged,
+            folded: r.folded,
+            by_rules: r.by_rules,
+            by_ai: r.by_ai,
+            ai_waiting: r.ai_waiting,
+            ai_error: r.ai_error,
+        })
+    })
+    .await
+}
+
 /// (0.11.2) Open a plan file (`.json`, see `tidy_core::report::import`):
 /// saved as a plan and previewed; nothing moves until applied.
 #[tauri::command]
@@ -319,6 +403,7 @@ pub async fn apply_plan(
                     restructure::PlanSource::Relocate => "정리 위치로 옮기기",
                     restructure::PlanSource::Imported => "제안 파일",
                     restructure::PlanSource::Compact => "정리 위치 다듬기",
+                    restructure::PlanSource::Review => "정리 위치 점검",
                     _ => "정리 제안",
                 },
                 r.moved.len(),

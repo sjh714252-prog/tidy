@@ -652,7 +652,7 @@ export interface ContextNote {
 export interface Plan {
   id: number;
   root: string;
-  source: "rules" | "ai" | "context" | "command";
+  source: "rules" | "ai" | "context" | "command" | "relocate" | "imported" | "compact" | "review";
   created_at: number;
   summary: string;
   folders: { path: string; reason: string }[];
@@ -686,6 +686,23 @@ export interface StructDir {
   files: number;
 }
 export interface PlanResult { plan: Plan; preview: Preview }
+/** (M19) "정리 위치 점검" result: a plan only when something should move. */
+export interface ReviewResult {
+  plan: Plan | null;
+  preview: Preview | null;
+  summary: string;
+  /** Folders merged into another (split customer / same issue). */
+  merged: number;
+  /** Small folders folded one level up. */
+  folded: number;
+  /** Loose top files the rules place. */
+  byRules: number;
+  /** Files the AI placed. */
+  byAi: number;
+  /** Files the AI could place but was not asked to ("AI로 이것도 보기"). */
+  aiWaiting: number;
+  aiError: string | null;
+}
 export interface DupSkip { path: string; existing: string; message: string }
 export interface ApplyResult { batchId: string; moved: number; skipped: string[]; duplicates: DupSkip[]; errors: string[] }
 export interface StoredPlan {

@@ -64,6 +64,7 @@ cargo run -p tidy-cli -- rules check [rules.toml] [--each]   # 규칙별 지금 
 cargo run -p tidy-cli -- rules starters [--toml documents,archives]   # 마법사 시작 규칙 목록 / TOML로 출력
 cargo run -p tidy-cli -- report [폴더] [--format text|json|html] [--scan-depth N]
 cargo run -p tidy-cli -- restructure [폴더] --rules|--ai  → --apply ID [--only 1,3]   # 승인 전엔 아무것도 안 옮김
+cargo run -p tidy-cli -- review [폴더] [--ai]   # 정리 위치 점검(M19): 나뉜 고객사·이슈 폴더 합치기·기타 속 고객사 폴더·작은 폴더 접기·맨 위 파일(규칙), --ai면 고객사 폴더 밖 고객사 파일도 (계획만, restructure --apply)
 cargo run -p tidy-cli -- compact [폴더] [--min N]   # 정리 위치 다듬기(0.13.0): Tidy가 만든 작은 종류·주제 폴더를 한 단계 위로 (계획만, restructure --apply)
 cargo run -p tidy-cli -- dedupe [폴더] [--apply [--only 1,3]]   # 내용이 같은 파일 그룹(정리 위치 사본 포함·기본 남김) → 승인 후 휴지통(M14)
 cargo run -p tidy-cli -- log --batches / undo --batch <id>
@@ -110,6 +111,7 @@ node apps/desktop/e2e/fake-llm.mjs 18095   # 느린·긴 가짜 Anthropic/OpenAI
 - [x] 0.12.5 수정 (2026-11-10) — 고객사 폴더 안 소스 트리가 낱개로 흩어지던 문제: 예전 정리 폴더(leftovers)는 Tidy가 만든 하위 폴더까지만 파일별로, 손대지 않은 하위 폴더(`고객사 로그/tools`)는 통째 항목, 일반 AI 분류도 하위 폴더 안 파일은 안 물음, 시작 때 확인 대기의 그런 예전 AI 제안 정리(`Engine::drop_scattering_pending`), AI 지시에 "고객사 폴더 안 코드·도구도 그 고객사". SPEC §14.7
 - [x] 0.13.0 정리 구조 점검 (2026-11-10) — 설계 원칙(누구의 일 → 이슈 → 많을 때만 종류, 폴더는 내용 있을 때만, 같은 파일은 언제 와도 같은 곳) SPEC §14.19. `[curate] min_folder_items = 3`(새 자료 종류·작은 주제 폴더는 3개 이상일 때만, 아니면 한 단계 위·기존 폴더는 항상 사용, 감시 중 한 파일은 새 종류 폴더 안 만듦, "종류별로 모으기"는 예외), 파일 이름에 고객사(사전·별칭·캐시)가 보이면 감시 중 업무 맥락을 규칙보다 먼저(`Curator::customer_hint`, 실패·미분류면 규칙), AI 주제 이름 넓게·재사용 지시, 시작 규칙 문서 `문서/{yyyy}`, 설정 세부 "작은 폴더 만들지 않기", 이미 쌓인 작은 폴더는 "정리 위치 다듬기"(`report::compact`, 첫 시작 때 한 번 미리보기, `tidy compact`). 실제 AI 판단·창 확인은 로컬에서
 - [x] 0.13.1 수정 (2026-11-10) — 0.13.0에서도 바탕화면에 폴더가 가득한데 홈 카드가 "0개 · 정리됨": 빠지는 하위 폴더마다 이유를 남김(`FolderScan.kept`, 제외 폴더·무시 패턴·건드리지 말 폴더·정리 위치/규칙 목적지 겹침·빈 폴더·링크 폴더 등), 홈 카드 "그대로 둔 폴더 N개 ▸ 왜?", 미리보기 요약·`tidy curate scan`·로그에도. SPEC §14.7
+- [x] M19 정리 위치 점검 (2026-11-12, 0.14.0) — 정리 위치 안을 통째로 보고 재정렬하는 계획 하나(`report::review`, `PlanSource::Review`): 철자만 다른 같은 폴더·`기타` 아래 고객사 폴더 합치기, 같은 이슈 `merge_days` 안 폴더 합치기(폴더 통째, 코드 프로젝트 제외), 작은 폴더 접기(compact), 맨 위 파일 규칙, "AI로 이것도 보기"(고객사 이름 보이는 파일·맨 위 파일 → `Curator::place_files`, 실패해도 나머지 유지), 정리하기 "정리 위치 점검 — D:\정리" 선택지·홈 [정리 위치 점검], `tidy review`, e2e m19. SPEC §14.20. 실제 D:\정리에서의 결과·창 확인은 로컬에서
 - [x] 0.2.x 핫픽스 (2026-10-22~23) — 규칙 카드 정렬(#12), AI 응답 잘림 분할 재시도(#13), HTTP 타임아웃 상한(#14), 감시 폴더 제외 폴더(SPEC §14.5)
 
 ## 열린 결정
