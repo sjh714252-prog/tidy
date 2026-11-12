@@ -93,6 +93,12 @@ enum Cmd {
     /// (0.13.0) "정리 위치 다듬기": small kind / sub-topic folders Tidy made
     /// are folded one level up. Saves a plan; apply with `restructure --apply ID`.
     Compact(CompactArgs),
+    /// (M19) "정리 위치 점검": look inside the organize root and propose
+    /// re-sorting it (merge split customer / issue folders, fold small
+    /// folders, place loose files; `--ai` also places customer files that
+    /// sit outside the customer folders). Saves a plan; apply with
+    /// `restructure --apply ID`.
+    Review(ReviewArgs),
     /// (M10) Work-context curation: customer / dated issue / kind folders
     /// proposed by the AI, applied only on approval.
     #[command(subcommand)]
@@ -197,6 +203,16 @@ struct CompactArgs {
     /// Fold folders with fewer files than this (default `[curate] min_folder_items`).
     #[arg(long)]
     min: Option<usize>,
+}
+
+#[derive(Args)]
+struct ReviewArgs {
+    /// Organize root (default: every "모으기" organize root).
+    path: Option<PathBuf>,
+    /// Also ask the AI where customer files outside the customer folders
+    /// (and loose files no rule takes) belong.
+    #[arg(long)]
+    ai: bool,
 }
 
 #[derive(Args)]
@@ -659,6 +675,7 @@ fn main() -> Result<()> {
         Cmd::Dedupe(args) => cmd_dedupe(cli.config, args),
         Cmd::Empty(args) => cmd_empty(cli.config, args),
         Cmd::Compact(args) => cmd_compact(cli.config, args),
+        Cmd::Review(args) => cmd_review(cli.config, args),
         Cmd::Ask(args) => cmd_ask(cli.config, args),
         Cmd::Restructure(args) => cmd_restructure(cli.config, args),
         Cmd::Pii(cmd) => cmd_pii(cli.config, cmd),
@@ -2100,6 +2117,71 @@ fn default_folder(cfg: &Config, path: Option<PathBuf>) -> Result<PathBuf> {
             .map(|w| w.path.clone())
             .context("no folder given and no [[watch]] folder configured"),
     }
+}
+
+fn cmd_review(config: Option<PathBuf>, args: ReviewArgs) -> Result<()> {
+    let cfg = load_config(config)?;
+    let store = Store::open(&cfg.store.db_path())?;
+    let roots = match args.path {
+        Some(p) => vec![p],
+        None => report::review::review_roots(&cfg),
+    };
+    if roots.is_empty() {
+        println!("no organize root: set a [[watch]] with mode = \"collect\" and organize_root, or pass a folder");
+        return Ok(());
+    }
+    let ai = if args.ai {
+        let rules = RuleSet::load(&cfg.classify.rules).unwrap_or_default();
+        match AiClassifier::from_config(&cfg, &rules) {
+            Ok(ai) => Some(ai),
+            Err(e) => {
+                println!("AI unavailable ({e}) — reviewing without it");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let mut any = false;
+    for root in roots {
+        let r = report::review::run(
+            &cfg,
+            &root,
+            &store,
+            cfg.report.protected.clone(),
+            ai.as_ref(),
+        )?;
+        if let Some(e) = &r.ai_error {
+            println!("AI failed: {e}");
+        }
+        let Some(plan) = r.plan else {
+            println!("{}: {}", root.display(), r.summary);
+            continue;
+        };
+        any = true;
+        let plan = report::restructure::save(&store, plan)?;
+        println!("plan #{} — {}", plan.id, plan.summary);
+        for m in &plan.moves {
+            println!(
+                "  [{}] {}{} -> {}  ({})",
+                m.id,
+                m.from.display(),
+                if m.is_dir { "/" } else { "" },
+                m.to.display(),
+                m.reason
+            );
+        }
+        if r.ai_waiting > 0 && ai.is_none() {
+            println!(
+                "  + {} file(s) the AI could place: tidy review --ai",
+                r.ai_waiting
+            );
+        }
+    }
+    if any {
+        println!("apply: tidy restructure --apply <ID> [--only 1,3]");
+    }
+    Ok(())
 }
 
 fn cmd_compact(config: Option<PathBuf>, args: CompactArgs) -> Result<()> {

@@ -12,6 +12,7 @@ import type {
   BatchSummary,
   MoveLogEntry,
   PlanResult,
+  ReviewResult,
   Preview,
   Report,
   StoredPlan,
@@ -149,6 +150,11 @@ export const buildReport = (path: string, duplicates: boolean) =>
 export const planRules = (path: string, recursive: boolean, protect: string[]) =>
   invoke<PlanResult>("plan_rules", { path, recursive, protect });
 export const planAi = (path: string, protect: string[]) => invoke<PlanResult>("plan_ai", { path, protect });
+/** (M19) Organize roots ("모으기" targets) the 정리하기 tab can review. */
+export const reviewRoots = () => invoke<string[]>("review_roots");
+/** (M19) "정리 위치 점검": merge split folders, fold small ones, place loose files (AI only with useAi). Nothing moves. */
+export const planReview = (path: string, useAi: boolean, protect: string[]) =>
+  invoke<ReviewResult>("plan_review", { path, useAi, protect });
 // ── M10 work context ──
 export const getCurateSettings = () => invoke<CurateSettings>("get_curate_settings");
 export const saveCurateSettings = (settings: CurateSettings) =>

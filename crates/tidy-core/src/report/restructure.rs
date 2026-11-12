@@ -59,6 +59,8 @@ pub enum PlanSource {
     Imported,
     /// (0.13.0) Small layout folders folded one level up ([`super::compact`]).
     Compact,
+    /// (0.15.0) "정리 위치 점검": the organize root re-sorted ([`super::review`]).
+    Review,
 }
 
 impl PlanSource {
@@ -71,6 +73,7 @@ impl PlanSource {
             PlanSource::Relocate => "relocate",
             PlanSource::Imported => "imported",
             PlanSource::Compact => "compact",
+            PlanSource::Review => "review",
         }
     }
 }
@@ -860,6 +863,7 @@ pub fn apply(
         PlanSource::Relocate => format!("정리 위치로 옮기기 #{}", plan.id),
         PlanSource::Imported => format!("제안 파일 #{}", plan.id),
         PlanSource::Compact => format!("정리 위치 다듬기 #{}", plan.id),
+        PlanSource::Review => format!("정리 위치 점검 #{}", plan.id),
         _ => format!("정리 제안 #{}", plan.id),
     };
     let mut report = ApplyReport {
@@ -983,7 +987,10 @@ pub fn apply(
         let out = mover.move_file(&req).map_err(|e| e.to_string());
         record(&mut report, out, &fm.src, fm.context.as_ref(), fm.encrypt);
     }
-    if matches!(plan.source, PlanSource::Imported | PlanSource::Compact) {
+    if matches!(
+        plan.source,
+        PlanSource::Imported | PlanSource::Compact | PlanSource::Review
+    ) {
         // (0.11.2) A cleanup plan: also drop the folders it emptied
         // (e.g. 기타/개발 once all its topic folders went), inside root only.
         for m in selected(plan, ids) {

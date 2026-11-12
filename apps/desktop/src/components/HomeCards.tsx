@@ -53,6 +53,7 @@ export function OrganizeCard() {
       </div>
       <UnappliedPlans />
       {!!o.empty?.length && <EmptyFolders empty={o.empty} />}
+      <ReviewRow />
       <div className="folder-grid">
         {o.folders.map((f) => (
           <FolderCard key={f.path} f={f} o={o} />
@@ -424,7 +425,44 @@ const PLAN_SOURCE: Record<string, string> = {
   relocate: "정리 위치로 옮기기",
   imported: "제안 파일",
   compact: "정리 위치 다듬기",
+  review: "정리 위치 점검",
 };
+
+/**
+ * (M19, SPEC §14.21) "정리 위치 점검": one line per organize root — look
+ * inside it and re-sort what is split or scattered (a preview).
+ */
+function ReviewRow() {
+  const [roots, setRoots] = useState<string[]>([]);
+  useEffect(() => {
+    void ipc
+      .reviewRoots()
+      .then(setRoots)
+      .catch(() => setRoots([]));
+  }, []);
+  if (!roots.length) return null;
+  const go = async (root: string) => {
+    useNav.getState().setTab("report");
+    const r = useReport.getState();
+    if (!r.reviewRoots.includes(root)) useReport.setState({ reviewRoots: [...r.reviewRoots, root] });
+    await r.setPath(root);
+    await useReport.getState().review(false);
+  };
+  return (
+    <div className="row review-row" data-testid="review-row">
+      {roots.map((root) => (
+        <span key={root} className="row">
+          <span className="small">
+            정리 위치 <b title={root}>{baseName(root)}</b> 안 — 나뉜 고객사·이슈 폴더 합치기, 작은 폴더 접기
+          </span>
+          <button className="sm" data-testid="review-open" onClick={() => void go(root)}>
+            정리 위치 점검
+          </button>
+        </span>
+      ))}
+    </div>
+  );
+}
 
 /**
  * (0.11.1) Previews made but never applied (last 14 days): nothing moved
