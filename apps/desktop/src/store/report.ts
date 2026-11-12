@@ -10,7 +10,7 @@ interface ReportState {
   /** (M19) What the last review found (counts, AI files waiting). */
   reviewInfo: Omit<ReviewResult, "plan" | "preview"> | null;
   /** (M19) A review running ("ai" = with the AI). */
-  reviewing: "rules" | "ai" | null;
+  reviewing: "rules" | "ai" | "rebuild" | null;
   path: string;
   dups: boolean;
   report: Report | null;
@@ -47,6 +47,8 @@ interface ReportState {
    * re-sorting it; `useAi` also places customer files outside the
    * customer folders. Nothing moves. */
   review: (useAi?: boolean) => Promise<void>;
+  /** (0.16.0) "정리 위치 새로 짜기": re-plan the whole organize root. */
+  rebuild: () => Promise<void>;
   setPath: (p: string) => Promise<void>;
   setRecursive: (b: boolean) => void;
   setDups: (b: boolean) => void;
@@ -215,6 +217,24 @@ export const useReport = create<ReportState>((set, get) => ({
     set({ reviewing: useAi ? "ai" : "rules", error: null, applied: null, suggestions: [], learnt: null });
     try {
       const { plan, preview, ...info } = await ipc.planReview(path, useAi, protectList(protect));
+      set({
+        plan,
+        preview,
+        selected: plan ? defaultSelected(plan) : new Set(),
+        reviewInfo: info,
+      });
+    } catch (e) {
+      set({ error: String(e) });
+    } finally {
+      set({ reviewing: null });
+    }
+  },
+  rebuild: async () => {
+    const { path, protect } = get();
+    if (!path || path === ALL_WATCHES) return;
+    set({ reviewing: "rebuild", error: null, applied: null, suggestions: [], learnt: null });
+    try {
+      const { plan, preview, ...info } = await ipc.planRebuild(path, protectList(protect));
       set({
         plan,
         preview,

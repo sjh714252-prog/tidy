@@ -213,6 +213,11 @@ struct ReviewArgs {
     /// (and loose files no rule takes) belong.
     #[arg(long)]
     ai: bool,
+    /// (0.16.0) "정리 위치 새로 짜기": re-plan everything under today's
+    /// layout (every customer file into its customer folder by kind).
+    /// Offline; `--ai` is ignored.
+    #[arg(long, conflicts_with = "ai")]
+    rebuild: bool,
 }
 
 #[derive(Args)]
@@ -2142,6 +2147,33 @@ fn cmd_review(config: Option<PathBuf>, args: ReviewArgs) -> Result<()> {
     } else {
         None
     };
+    if args.rebuild {
+        let mut any = false;
+        for root in roots {
+            let r = report::rebuild::run(&cfg, &root, &store, cfg.report.protected.clone())?;
+            let Some(plan) = r.plan else {
+                println!("{}: {}", root.display(), r.summary);
+                continue;
+            };
+            any = true;
+            let plan = report::restructure::save(&store, plan)?;
+            println!("plan #{} — {}", plan.id, plan.summary);
+            for m in &plan.moves {
+                println!(
+                    "  [{}] {}{} -> {}  ({})",
+                    m.id,
+                    m.from.display(),
+                    if m.is_dir { "/" } else { "" },
+                    m.to.display(),
+                    m.reason
+                );
+            }
+        }
+        if any {
+            println!("apply: tidy restructure --apply <ID> [--only 1,3]");
+        }
+        return Ok(());
+    }
     let mut any = false;
     for root in roots {
         let r = report::review::run(

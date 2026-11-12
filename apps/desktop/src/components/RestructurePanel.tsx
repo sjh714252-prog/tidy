@@ -10,7 +10,7 @@ import { AiNeeded, useAiOn } from "./AiNeeded";
 import { ContextTable, Suggestions } from "./ContextPlan";
 import { PlanMoves } from "./PlanMoves";
 
-const SOURCE: Record<string, string> = { ai: "AI", rules: "규칙", context: "업무 맥락", relocate: "정리 위치로 옮기기", imported: "제안 파일", compact: "정리 위치 다듬기", review: "정리 위치 점검" };
+const SOURCE: Record<string, string> = { ai: "AI", rules: "규칙", context: "업무 맥락", relocate: "정리 위치로 옮기기", imported: "제안 파일", compact: "정리 위치 다듬기", review: "정리 위치 점검", rebuild: "정리 위치 새로 짜기" };
 
 /**
  * Restructure (SPEC §5.7): plan from rules (no AI) or from the AI →
@@ -342,13 +342,26 @@ function ReviewStart() {
         disabled={!!r.reviewing || !!r.planning}
         onClick={() => void r.review(false)}
       >
-        {r.reviewing ? "정리 위치를 살펴보는 중…" : "정리 위치 점검 미리보기"}
+        {r.reviewing && r.reviewing !== "rebuild" ? "정리 위치를 살펴보는 중…" : "정리 위치 점검 미리보기"}
+      </button>
+      <button
+        data-testid="rebuild-start"
+        disabled={!!r.reviewing || !!r.planning}
+        onClick={() => void r.rebuild()}
+      >
+        {r.reviewing === "rebuild" ? "처음부터 다시 보는 중…" : "처음부터 새로 짜기 미리보기"}
       </button>
       <p className="muted small">
         정리 위치 안을 살펴보고 <b>이름만 다른 같은 고객사 폴더</b>, <b>며칠 차이로 나뉜 같은 이슈 폴더</b>,{" "}
         <b>기타 아래 들어간 고객사 폴더</b>를 합치고, 파일이 적은 작은 폴더는 한 단계 위로 접고, 맨 위에 흩어진
         파일은 규칙대로 넣는 미리보기를 만듭니다. 폴더는 통째로 옮기고(안은 그대로), 코드 프로젝트 폴더는 건드리지
         않습니다. AI는 쓰지 않고, 적용 전에는 아무것도 옮기지 않습니다.
+      </p>
+      <p className="muted small">
+        <b>처음부터 새로 짜기</b>는 예전 방식으로 쌓여 하나도 안 맞을 때 씁니다. 정리 위치의 모든 파일을 다시 보고,
+        이름이나 본문에 고객사가 보이는 파일은 어디에 있든 <b>그 고객사 폴더의 종류별 폴더</b>(예: 가람정보/문서)로
+        모으고, 나뉜 고객사·이슈 폴더를 합치고, 나머지는 규칙대로 넣습니다. 이슈 폴더 안과 직접 만든 폴더 안은
+        그대로 둡니다.
       </p>
       {info && (
         <div className="notice ok" data-testid="review-clean">

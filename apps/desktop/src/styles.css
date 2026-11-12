@@ -368,7 +368,10 @@ fieldset:disabled { opacity: 0.55; }
 .cols { display: grid; grid-template-columns: 1fr 2fr; gap: 16px; }
 pre.tree { font-family: var(--mono); font-size: 12px; background: var(--surface-2); border: 1px solid var(--line); padding: 8px; border-radius: var(--radius-sm); overflow: auto; max-height: 420px; margin: 0; }
 textarea.protect { width: 100%; min-height: 60px; font-size: 12px; }
-.diff { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.diff { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+/* (0.16.0) 긴 트리가 창 밖으로 넘치지 않게: 칸 안에서 가로 스크롤 */
+.diff > div { min-width: 0; }
+.diff pre.tree { max-width: 100%; overflow: auto; }
 .context-plan { table-layout: fixed; }
 .context-plan col.c-check { width: 30px; }
 .context-plan col.c-id { width: 34px; }
