@@ -461,6 +461,7 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "nas_search" => {
             ok(crate::nas::nas_search(app, arg(&args, "query")?, arg(&args, "limit")?).await?)
         }
+        "nas_names" => ok(crate::nas::nas_names(app).await?),
         "nas_pending" => ok(crate::nas::nas_pending(app).await?),
         "nas_resolve" => ok(crate::nas::nas_resolve(
             app,
@@ -490,6 +491,27 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         }
         // Test-only: what open_url / open_folder recorded (TIDY_E2E_NO_OPEN).
         "debug_opened" => ok(about::opened()),
+        // e2e fix-search: "app" stands in for a long apply holding the app
+        // lock (search must still answer); "search" makes search itself slow
+        // (to stop it).
+        "debug_hold_lock" => {
+            let ms: u64 = arg(&args, "ms")?;
+            let which: String = arg(&args, "which")?;
+            let app = app.clone();
+            std::thread::spawn(move || {
+                use tauri::Manager;
+                let state = app.state::<crate::state::AppState>();
+                let wait = std::time::Duration::from_millis(ms);
+                if which == "search" {
+                    let _s = state.search_store.lock();
+                    std::thread::sleep(wait);
+                } else {
+                    let _inner = state.lock_inner();
+                    std::thread::sleep(wait);
+                }
+            });
+            ok(true)
+        }
         other => Err(format!("unknown command {other}")),
     }
 }

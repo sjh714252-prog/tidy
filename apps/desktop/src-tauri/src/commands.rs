@@ -334,9 +334,9 @@ pub async fn search(
             return Ok(Vec::new());
         }
         let state = app.state::<AppState>();
-        let inner = state.lock_inner();
-        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
-        let hits = fts_search(mover.store(), &q, &search_opts(limit)).map_err(|e| e.to_string())?;
+        let store = state.search_store.lock().unwrap_or_else(|e| e.into_inner());
+        let store = store.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        let hits = fts_search(store, &q, &search_opts(limit)).map_err(|e| e.to_string())?;
         Ok(hits.into_iter().map(hit_dto).collect())
     })
     .await
@@ -406,10 +406,9 @@ pub async fn search_semantic(
             }
             None => {
                 let state = app.state::<AppState>();
-                let inner = state.lock_inner();
-                let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
-                let mut out =
-                    hybrid_search(mover.store(), None, &q, &opts).map_err(|e| e.to_string())?;
+                let store = state.search_store.lock().unwrap_or_else(|e| e.into_inner());
+                let store = store.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+                let mut out = hybrid_search(store, None, &q, &opts).map_err(|e| e.to_string())?;
                 out.note = state
                     .semantic
                     .lock()

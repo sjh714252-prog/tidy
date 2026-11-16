@@ -81,9 +81,13 @@ export const listen: <T>(name: string, cb: (e: { payload: T }) => void) => Promi
 
 export type { UnlistenFn };
 
-/** Hide the current window; a no-op in the browser (bridge) where there is none. */
+/** Hide the current window; in the browser (bridge) there is none: only counted for the e2e tests. */
 export async function hideCurrentWindow(): Promise<void> {
-  if (!inTauri) return;
+  if (!inTauri) {
+    const w = window as unknown as { __tidyHidden?: number };
+    w.__tidyHidden = (w.__tidyHidden ?? 0) + 1;
+    return;
+  }
   const { getCurrentWindow } = await import("@tauri-apps/api/window");
   await getCurrentWindow().hide();
 }

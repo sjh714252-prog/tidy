@@ -265,6 +265,8 @@ export const nasSettings = (name: string) => invoke<AgentSettings>("nas_settings
 export const nasSaveSettings = (name: string, settings: AgentSettings) =>
   invoke<AgentSettings>("nas_save_settings", { name, settings });
 export const nasDirs = (name: string, path: string | null) => invoke<RemoteDir[]>("nas_dirs", { name, path });
+/** Configured NAS names only (no network). */
+export const nasNames = () => invoke<string[]>("nas_names");
 export const nasSearch = (query: string, limit = 30) => invoke<NasSearchResult>("nas_search", { query, limit });
 export const nasPending = () => invoke<NasPendingList>("nas_pending");
 export const nasResolve = (name: string, ids: number[], decision: Decision) =>

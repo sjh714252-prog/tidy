@@ -234,6 +234,7 @@ pub fn run() {
             nas::nas_save_settings,
             nas::nas_dirs,
             nas::nas_search,
+            nas::nas_names,
             nas::nas_pending,
             nas::nas_resolve,
             nas::nas_batches,

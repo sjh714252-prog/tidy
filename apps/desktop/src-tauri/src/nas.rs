@@ -50,7 +50,7 @@ async fn client_named(app: &AppHandle, name: &str) -> CmdResult<(NasCfg, NasClie
 fn save_list(app: &AppHandle, list: Vec<NasCfg>) -> CmdResult<()> {
     let state = app.state::<AppState>();
     write_nas(&state.config_path, &list).map_err(err)?;
-    state.lock_inner().cfg.nas = list;
+    state.update_config(|c| c.nas = list.clone());
     Ok(())
 }
 
@@ -111,6 +111,13 @@ async fn state_of(nas: NasCfg) -> NasStateDto {
 }
 
 /// Every configured NAS with its live state (asked in parallel).
+/// Names of the configured NAS, without asking them anything: the search
+/// window only asks a NAS when there is one.
+#[tauri::command]
+pub async fn nas_names(app: AppHandle) -> CmdResult<Vec<String>> {
+    Ok(configured(&app).into_iter().map(|n| n.name).collect())
+}
+
 #[tauri::command]
 pub async fn nas_list(app: AppHandle) -> CmdResult<Vec<NasStateDto>> {
     let list = configured(&app);
@@ -309,6 +316,12 @@ pub async fn nas_search(
     limit: Option<usize>,
 ) -> CmdResult<NasSearchDto> {
     let list = configured(&app);
+    if list.is_empty() {
+        return Ok(NasSearchDto {
+            hits: Vec::new(),
+            errors: Vec::new(),
+        });
+    }
     let limit = limit.unwrap_or(30);
     let mut tasks = Vec::new();
     for nas in list {
