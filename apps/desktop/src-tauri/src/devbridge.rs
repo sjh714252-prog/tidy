@@ -382,6 +382,13 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "list_batches" => ok(report_cmds::list_batches(app, arg(&args, "limit")?).await?),
         "batch_moves" => ok(report_cmds::batch_moves(app, arg(&args, "batchId")?).await?),
         "undo_batch" => ok(report_cmds::undo_batch(app, arg(&args, "batchId")?).await?),
+        "find_moved" => ok(report_cmds::find_moved(
+            app,
+            arg(&args, "query")?,
+            arg::<Option<usize>>(&args, "limit")?,
+        )
+        .await?),
+        "undo_move" => ok(report_cmds::undo_move(app, arg(&args, "id")?).await?),
         "count_moves_since" => ok(report_cmds::count_moves_since(
             app,
             arg(&args, "sinceSecsAgo")?,

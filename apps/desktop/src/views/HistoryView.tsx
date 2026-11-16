@@ -4,10 +4,12 @@ import type { BatchSummary, MoveLogEntry } from "../ipc/types";
 import { formatTime } from "../components/format";
 import { PathText } from "../components/PathText";
 import { NasHistorySection } from "../components/NasSections";
+import { FindFiles } from "../components/FindFiles";
 
 const BY: Record<string, string> = { rule: "규칙", ai: "AI", user: "확인", restructure: "정리 제안" };
 
-/** Move history (SPEC §9.6): one row per batch, undo per batch, expand for files. */
+/** 찾기·되돌리기 (SPEC §9.6, §14.24): find a moved file and open it where it
+ * is now; move history one row per batch, undo per batch, expand for files. */
 export function HistoryView() {
   const [batches, setBatches] = useState<BatchSummary[]>([]);
   const [open, setOpen] = useState<string | null>(null);
@@ -66,6 +68,7 @@ export function HistoryView() {
 
   return (
     <div className="page history">
+      <FindFiles onUndone={refresh} />
       <section className="card" data-testid="bulk-undo">
         <div className="card-head">
           <h2>자동 이동 한꺼번에 되돌리기</h2>
@@ -143,9 +146,25 @@ export function HistoryView() {
                         {m.undone_at ? " (다시 만듦)" : ""}
                       </li>
                     ) : (
-                      <li key={m.id} className={m.undone_at ? "muted" : ""}>
+                      <li key={m.id} className={m.undone_at ? "muted" : ""} data-testid="move-row">
                         <span className="mono">{m.src_path}</span> → <span className="mono">{m.dst_path}</span>
                         {m.undone_at ? " (되돌림)" : m.in_progress ? " (진행 중 / 중단됨)" : ""}
+                        {!m.undone_at && m.now_path && m.now_path !== m.dst_path && (
+                          <span className="muted">
+                            {" "}
+                            (지금은 <span className="mono">{m.now_path}</span>)
+                          </span>
+                        )}
+                        {m.now_path && !m.in_progress && (
+                          <span className="file-acts">
+                            <button className="link" onClick={() => void ipc.openPath(m.now_path!).catch((e) => setMsg(String(e)))}>
+                              열기
+                            </button>
+                            <button className="link" onClick={() => void ipc.revealPath(m.now_path!).catch((e) => setMsg(String(e)))}>
+                              폴더 열기
+                            </button>
+                          </span>
+                        )}
                       </li>
                     ),
                   )}

@@ -30,11 +30,11 @@ const TABS: { id: MainTab; label: string }[] = [
   { id: "activity", label: "홈" },
   { id: "pending", label: "확인 대기" },
   { id: "report", label: "정리하기" },
-  { id: "history", label: "되돌리기" },
+  { id: "history", label: "찾기·되돌리기" },
   { id: "settings", label: "설정" },
 ];
 
-/** Main window: status bar + tabs (홈 / 확인 대기 / 정리하기 / 되돌리기 / 설정, SPEC §14.6). Hidden to tray on close. */
+/** Main window: status bar + tabs (홈 / 확인 대기 / 정리하기 / 찾기·되돌리기 / 설정, SPEC §14.6·§14.24). Hidden to tray on close. */
 export function MainWindow() {
   const tab = useNav((s) => s.tab);
   const setTab = useNav((s) => s.setTab);

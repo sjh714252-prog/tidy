@@ -69,6 +69,7 @@ cargo run -p tidy-cli -- compact [폴더] [--min N]   # 정리 위치 다듬기(
 cargo run -p tidy-cli -- dedupe [폴더] [--apply [--only 1,3]]   # 내용이 같은 파일 그룹(정리 위치 사본 포함·기본 남김) → 승인 후 휴지통(M14)
 cargo run -p tidy-cli -- empty [--apply [--only 1,3]]   # 빈 폴더 정리(0.14.0): 감시 폴더·정리 위치의 파일 없는 폴더 → 승인 후 지움, undo로 다시 만듦
 cargo run -p tidy-cli -- log --batches / undo --batch <id>
+cargo run -p tidy-cli -- find [낱말…] [-n N]   # 정리한 파일이 지금 어디 있는지(0.18.0, 나중 이동·폴더째 이동 따라감). 앱: 찾기·되돌리기 탭 맨 위
 cargo run -p tidy-cli -- recover [--grace-secs 0]        # 중단된 이동(복사 도중 종료·NAS 끊김) 정리
 cargo run -p tidy-cli -- pii scan <폴더> [--all] [--format json]   # 개인정보 의심 파일 (읽기만)
 cargo run -p tidy-cli -- vault password / status / lock <파일> [--to DIR] / unlock <zip>   # 암호화 보관(AES zip, 키체인 tidy/vault)
@@ -116,6 +117,7 @@ node apps/desktop/e2e/fake-llm.mjs 18095   # 느린·긴 가짜 Anthropic/OpenAI
 - [x] M19 정리 위치 점검 (2026-11-12, 0.15.0) — 정리 위치 안을 통째로 보고 재정렬하는 계획 하나(`report::review`, `PlanSource::Review`): 철자만 다른 같은 폴더·`기타` 아래 고객사 폴더 합치기, 같은 이슈 `merge_days` 안 폴더 합치기(폴더 통째, 코드 프로젝트 제외), 작은 폴더 접기(compact), 맨 위 파일 규칙, "AI로 이것도 보기"(고객사 이름 보이는 파일·맨 위 파일 → `Curator::place_files`, 실패해도 나머지 유지), 정리하기 "정리 위치 점검 — D:\정리" 선택지·홈 [정리 위치 점검], `tidy review`, e2e m19. SPEC §14.21. 실제 D:\정리에서의 결과·창 확인은 로컬에서
 - [x] 0.16.0 정리 위치 새로 짜기 + 고객사 자료는 고객사 폴더로 (2026-11-12) — `report::rebuild`(`PlanSource::Rebuild`, 오프라인): 점검의 합치기 + 이름·본문(인덱스 앞 20,000자, 고객사 하나만)에 고객사 보이는 파일은 어디 있든 `{고객사}/{종류}`(`curate::kinds`), 고객사 이름 폴더는 통째로, 나머지는 종류·연도 폴더에서만 규칙, 최대 20,000개, 정리하기 [처음부터 새로 짜기 미리보기]·`tidy review --rebuild`. 감시 중 고객사 파일은 AI 실패·없음이면 규칙 대신 `{고객사}/{종류}`(`Engine::customer_kind_step`, 새 고객사는 확인 대기), 점검도 고객사 파일 오프라인 배치. 미리보기 diff 오른쪽 칸 넘침 수정, 미리보기 300개씩 더 보기. SPEC §14.22. 실제 D:\정리 결과·창 확인은 로컬에서
 - [x] 0.16.1 수정 (2026-11-12) — 새로 짜기가 `텍스트/2026` 파일에 연·월 규칙을 다시 적용해 `텍스트/2026/06`·`1980/01`로 맴돌던 문제(규칙은 맨 위 폴더가 다를 때만), 정리 위치 목록 내보내기(`report::listing`, JSON: 경로·크기·날짜·원래 폴더·본문 앞 160자, 다운로드 폴더)→Claude가 계획 파일→[받은 계획 파일 열기], `tidy review --export`, e2e m19 F. SPEC §14.22
+- [x] 0.18.0 찾기·되돌리기 (2026-11-16) — 되돌리기 탭 → "찾기·되돌리기", 맨 위 파일 찾기(이름·폴더 일부 → Tidy가 옮긴 파일의 **지금 위치**, `report::find::Chain`이 나중 이동·폴더째 이동을 따라감, 그다음 인덱스 검색 결과), 줄마다 열기·폴더 열기·경로 복사·원래 자리로(`undo_move`), 빈 칸 = 최근 정리한 파일, 이동 기록 파일 보기에도 열기·폴더 열기, `tidy find`, e2e fix-find. SPEC §14.24(§14.23은 PR #41). 실제 Windows 탐색기 열기·창 확인은 로컬에서
 - [x] 0.2.x 핫픽스 (2026-10-22~23) — 규칙 카드 정렬(#12), AI 응답 잘림 분할 재시도(#13), HTTP 타임아웃 상한(#14), 감시 폴더 제외 폴더(SPEC §14.5)
 
 ## 열린 결정

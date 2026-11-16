@@ -52,6 +52,9 @@ enum Cmd {
     Recover(RecoverArgs),
     /// Show recent moves from move_log.
     Log(LogArgs),
+    /// (0.18.0) Find files Tidy moved by name and show where each is now
+    /// (no query = the most recently moved files).
+    Find(FindArgs),
     /// List files waiting for confirmation (rules with confirm = true), or
     /// resolve one with --move / --skip / --ignore.
     Pending(PendingArgs),
@@ -607,6 +610,14 @@ struct LogArgs {
 }
 
 #[derive(Args)]
+struct FindArgs {
+    /// Words in the file name or folder (all must match).
+    query: Vec<String>,
+    #[arg(short = 'n', long, default_value_t = 20)]
+    limit: usize,
+}
+
+#[derive(Args)]
 struct ClassifyArgs {
     /// Files to classify.
     #[arg(required = true)]
@@ -671,6 +682,7 @@ fn main() -> Result<()> {
         Cmd::Undo(args) => cmd_undo(cli.config, args),
         Cmd::Recover(args) => cmd_recover(cli.config, args),
         Cmd::Log(args) => cmd_log(cli.config, args),
+        Cmd::Find(args) => cmd_find(cli.config, args),
         Cmd::Pending(args) => cmd_pending(cli.config, args),
         Cmd::Classify(args) => cmd_classify(cli.config, args),
         Cmd::Index(args) => cmd_index(cli.config, args),
@@ -1244,6 +1256,35 @@ fn cmd_log(config: Option<PathBuf>, args: LogArgs) -> Result<()> {
                 (None, true) => "  (in progress / interrupted)".into(),
                 (None, false) => String::new(),
             }
+        );
+    }
+    Ok(())
+}
+
+fn cmd_find(config: Option<PathBuf>, args: FindArgs) -> Result<()> {
+    let cfg = load_config(config)?;
+    let store = Store::open(&cfg.store.db_path())?;
+    let found = tidy_core::report::find::find_moved(&store, &args.query.join(" "), args.limit)?;
+    if found.is_empty() {
+        println!("no moved file matches");
+    }
+    for f in found {
+        println!(
+            "{}  {}{}",
+            fmt_time(f.moved_at),
+            f.now_path.display(),
+            match (f.exists, f.undone, f.moved_again) {
+                (false, _, _) => "  (missing)",
+                (_, true, _) => "  (undone: back where it was)",
+                (_, _, true) => "  (moved again later)",
+                _ => "",
+            }
+        );
+        println!(
+            "      from {}  [{}]  batch {}",
+            f.src_path.display(),
+            f.rule_name.as_deref().unwrap_or(&f.decided_by),
+            short(&f.batch_id)
         );
     }
     Ok(())

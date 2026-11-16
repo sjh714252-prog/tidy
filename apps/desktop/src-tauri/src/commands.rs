@@ -484,6 +484,9 @@ pub async fn open_path(app: AppHandle, path: String) -> CmdResult<Option<String>
             .await
             .map(Some);
     }
+    if crate::about::e2e_record(&format!("open:{path}")) {
+        return Ok(None);
+    }
     app.opener()
         .open_path(path, None::<&str>)
         .map_err(|e| e.to_string())?;

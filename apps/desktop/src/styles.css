@@ -394,6 +394,19 @@ pre.toml { font-size: 12px; background: var(--surface); padding: 6px 8px; border
 .history-row { grid-template-columns: 120px 80px 110px minmax(0, 1fr) auto; align-items: center; }
 .history-files { padding: 0 16px 12px; font-size: 12px; }
 .history-files li { overflow-wrap: anywhere; }
+.history-files .file-acts { margin-left: 8px; white-space: nowrap; }
+.history-files .file-acts .link { margin-right: 6px; }
+/* (0.18.0) 찾기·되돌리기 › 파일 찾기 */
+.find-files .find-input { width: 100%; box-sizing: border-box; font-size: 15px; padding: 9px 12px; margin: 4px 0 8px; }
+.find-head { margin: 4px 0; }
+.find-list { list-style: none; margin: 0; padding: 0; }
+.find-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 8px 10px; border-radius: 8px; border-bottom: 1px solid var(--line-2); }
+.find-row:last-child { border-bottom: none; }
+.find-row.sel { background: var(--accent-soft); }
+.find-row.gone { opacity: .6; }
+.find-row .cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.find-row .name { font-weight: 600; overflow-wrap: anywhere; }
+.find-actions { display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; justify-content: flex-end; white-space: nowrap; }
 
 /* ── help menu / about ────────────────────────────────────────────── */
 .help-menu { position: relative; }
@@ -477,6 +490,8 @@ pre.toml { font-size: 12px; background: var(--surface); padding: 6px 8px; border
   .watch-panel .hide-narrow { display: none; }
   .history-row { grid-template-columns: 1fr auto; }
   .history-row .hide-narrow { display: none; }
+  .find-row { grid-template-columns: 1fr; }
+  .find-actions { justify-content: flex-start; flex-wrap: wrap; }
 }
 @media (max-width: 559px) {
   .folder-grid { grid-template-columns: 1fr; }

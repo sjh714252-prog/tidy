@@ -680,6 +680,52 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// (0.18.0, SPEC §14.24) Finished file/folder moves (not trash, not
+    /// rmdir) whose source or destination path contains every word of
+    /// `words` (case-insensitive for ASCII), newest first. Empty `words`
+    /// = the newest moves. Undone rows are included (the file is back).
+    pub fn moves_matching(
+        &self,
+        words: &[&str],
+        limit: usize,
+    ) -> Result<Vec<MoveLogEntry>, StoreError> {
+        let mut sql = format!("{SELECT_MOVE} WHERE state = 'done' AND op IN ('move', 'encrypt')");
+        let mut args: Vec<String> = Vec::new();
+        for w in words {
+            let i = args.len() + 1;
+            sql.push_str(&format!(
+                " AND (dst_path LIKE ?{i} ESCAPE '\\' OR src_path LIKE ?{i} ESCAPE '\\')"
+            ));
+            let esc = w
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+            args.push(format!("%{esc}%"));
+        }
+        sql.push_str(&format!(" ORDER BY id DESC LIMIT {}", limit.max(1)));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(args.iter()), move_from_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// (0.18.0) Every move still in effect, as (id, src, dst) — what
+    /// [`crate::report::find`] follows to say where a file is now.
+    pub fn active_move_paths(&self) -> Result<Vec<(i64, PathBuf, PathBuf)>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, src_path, dst_path FROM move_log
+             WHERE undone_at IS NULL AND state = 'done' AND op IN ('move', 'encrypt')
+             ORDER BY id",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                PathBuf::from(r.get::<_, String>(1)?),
+                PathBuf::from(r.get::<_, String>(2)?),
+            ))
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     pub fn recent_moves(&self, limit: usize) -> Result<Vec<MoveLogEntry>, StoreError> {
         let mut stmt = self
             .conn

@@ -209,6 +209,8 @@ pub fn run() {
             report_cmds::discard_plan,
             report_cmds::list_batches,
             report_cmds::batch_moves,
+            report_cmds::find_moved,
+            report_cmds::undo_move,
             report_cmds::undo_batch,
             report_cmds::count_moves_since,
             report_cmds::undo_since,

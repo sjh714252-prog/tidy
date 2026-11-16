@@ -16,8 +16,11 @@ export const waitFor = async (fn, ms, step = 500) => {
   return false;
 };
 
-/** Top bar tab: 홈 / 확인 대기 / 정리하기 / 되돌리기 / 설정. */
-export const tab = (page, name) => page.locator(".topbar nav").getByRole("button", { name, exact: name !== "확인 대기" });
+/** Top bar tab: 홈 / 확인 대기 / 정리하기 / 찾기·되돌리기 (0.18.0, "되돌리기" still works) / 설정. */
+export const tab = (page, name) => {
+  const label = name === "되돌리기" ? "찾기·되돌리기" : name;
+  return page.locator(".topbar nav").getByRole("button", { name: label, exact: label !== "확인 대기" });
+};
 
 /** Settings page by key: watch · rules · context · ai · security · advanced. */
 export const gotoSettings = async (page, key = "watch") => {
