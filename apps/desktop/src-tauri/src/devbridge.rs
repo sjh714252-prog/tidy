@@ -231,6 +231,13 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "open_path" => ok(commands::open_path(app, arg(&args, "path")?).await?),
         "reveal_path" => ok(commands::reveal_path(app, arg(&args, "path")?).await?),
         "list_pending" => ok(commands::list_pending(app).await?),
+        "answer_customer" => ok(commands::answer_customer(
+            app,
+            arg(&args, "id")?,
+            arg(&args, "customer")?,
+            arg(&args, "remember")?,
+        )
+        .await?),
         "resolve_pending" => {
             ok(commands::resolve_pending(app, arg(&args, "id")?, arg(&args, "decision")?).await?)
         }
@@ -382,6 +389,13 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "list_batches" => ok(report_cmds::list_batches(app, arg(&args, "limit")?).await?),
         "batch_moves" => ok(report_cmds::batch_moves(app, arg(&args, "batchId")?).await?),
         "undo_batch" => ok(report_cmds::undo_batch(app, arg(&args, "batchId")?).await?),
+        "find_moved" => ok(report_cmds::find_moved(
+            app,
+            arg(&args, "query")?,
+            arg::<Option<usize>>(&args, "limit")?,
+        )
+        .await?),
+        "undo_move" => ok(report_cmds::undo_move(app, arg(&args, "id")?).await?),
         "count_moves_since" => ok(report_cmds::count_moves_since(
             app,
             arg(&args, "sinceSecsAgo")?,

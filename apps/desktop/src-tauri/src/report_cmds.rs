@@ -268,6 +268,10 @@ pub async fn plan_rebuild(
         let store = Store::open(&cfg.store.db_path()).map_err(err)?;
         let mut r = report::rebuild::run(&cfg, &expand(&path), &store, protected(&cfg, &protect))
             .map_err(err)?;
+        if !r.ask_logs.is_empty() {
+            // (0.18.0) Logs without a customer were queued: "어느 고객사?".
+            watch::pending_changed(&app, false);
+        }
         let (plan, preview) = save_preview(&store, r.plan.take())?;
         Ok(ReviewDto {
             plan,
@@ -577,13 +581,71 @@ pub async fn list_batches(app: AppHandle, limit: Option<usize>) -> CmdResult<Vec
     .await
 }
 
+/// A batch row with where its file is now (0.18.0: later moves followed).
+#[derive(Debug, Serialize)]
+pub struct MoveRowDto {
+    #[serde(flatten)]
+    pub entry: MoveLogEntry,
+    pub now_path: Option<PathBuf>,
+}
+
 #[tauri::command]
-pub async fn batch_moves(app: AppHandle, batch_id: String) -> CmdResult<Vec<MoveLogEntry>> {
+pub async fn batch_moves(app: AppHandle, batch_id: String) -> CmdResult<Vec<MoveRowDto>> {
     blocking(move || {
         let state = app.state::<AppState>();
         let inner = state.lock_inner();
         let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
-        mover.store().moves_in_batch(&batch_id).map_err(err)
+        let rows = mover.store().moves_in_batch(&batch_id).map_err(err)?;
+        let chain = report::find::Chain::load(mover.store()).map_err(err)?;
+        Ok(rows
+            .into_iter()
+            .map(|e| MoveRowDto {
+                now_path: chain.now_path(&e),
+                entry: e,
+            })
+            .collect())
+    })
+    .await
+}
+
+/// (0.18.0, SPEC §14.24) 찾기·되돌리기 tab: files Tidy moved whose path has
+/// every word of `query`, with where each is now (empty = most recent).
+#[tauri::command]
+pub async fn find_moved(
+    app: AppHandle,
+    query: String,
+    limit: Option<usize>,
+) -> CmdResult<Vec<report::find::FoundMove>> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let inner = state.lock_inner();
+        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        report::find::find_moved(mover.store(), &query, limit.unwrap_or(30).min(200)).map_err(err)
+    })
+    .await
+}
+
+/// (0.18.0) Undo one file's move (찾기 result "원래 자리로").
+#[tauri::command]
+pub async fn undo_move(app: AppHandle, id: i64) -> CmdResult<UndoDto> {
+    crate::overview::invalidate();
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let inner = state.lock_inner();
+        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        let report = mover.undo_one(id).map_err(err)?;
+        reindex_undo(
+            mover.store(),
+            &report,
+            &IndexOptions::from_config(&inner.cfg),
+        );
+        watch::emit_activity(
+            &app,
+            "info",
+            Path::new(""),
+            format!("파일 하나 되돌림: {}개", report.restored.len()),
+        );
+        Ok(UndoDto::from(&report))
     })
     .await
 }

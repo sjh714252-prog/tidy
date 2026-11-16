@@ -6,6 +6,7 @@ import { formatSize } from "./format";
 import { MoreMenu, type MoreItem } from "./MoreMenu";
 import { PathText } from "./PathText";
 import { watchOf } from "./paths";
+import { CustomerAsk } from "./CustomerAsk";
 
 /** (M10) Work-context items carry their question first: "…폴더를 만들까요? — 근거". */
 export function splitReason(reason: string | null): { question: string | null; reason: string | null } {
@@ -15,6 +16,7 @@ export function splitReason(reason: string | null): { question: string | null; r
 
 /** "새 고객사 폴더" · "새 이슈" · "새 주제" · "확신 낮음" (SPEC §14.8 4). */
 export function proposalKind(p: PendingItem): string | null {
+  if (p.askCustomer) return "고객사 확인";
   if (p.source !== "ai") return p.rule ? `규칙: ${p.rule}` : null;
   if (p.confidence != null && p.confidence < 0.8) return "확신 낮음";
   const q = splitReason(p.reason).question ?? "";
@@ -182,6 +184,7 @@ export function PendingRow({
         {p.suggestedName && <span className="reason">새 이름: {p.suggestedName}</span>}
         {p.encrypt && <span className="tag lock">🔒 암호화해서 보관</span>}
         <DuplicateNotice p={p} a={a} />
+        <CustomerAsk p={p} a={a} />
       </div>
       <div className="cell" style={{ gap: 4 }}>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, flexWrap: "wrap" }}>
@@ -191,7 +194,7 @@ export function PendingRow({
         <span className="muted small">{shortTime(p.createdAt)}</span>
       </div>
       <div className="cell right">
-        {!p.duplicateOf && (
+        {!p.duplicateOf && !p.askCustomer && (
           <button
             className="primary"
             disabled={a.busy || !p.suggestedDest}
@@ -288,10 +291,11 @@ export function PendingCard({
         {p.suggestedName && <div className="reason">새 이름 제안: {p.suggestedName}</div>}
         {!p.exists && <div className="warn small">파일이 더 이상 없습니다.</div>}
         <DuplicateNotice p={p} a={a} />
+        <CustomerAsk p={p} a={a} />
         {renaming && <Rename p={p} a={a} onDone={() => setRenaming(false)} />}
       </div>
       <div className={flush ? "ic-actions flush" : "ic-actions"}>
-        {!p.duplicateOf && (
+        {!p.duplicateOf && !p.askCustomer && (
           <button
             className="primary"
             disabled={a.busy || !p.suggestedDest}

@@ -304,8 +304,9 @@ const noHScroll = () => main.evaluate(() => document.documentElement.scrollWidth
 {
   await tab(main, "되돌리기").click();
   await sleep(1000);
-  const first = await main.locator(".page > .card, .page > section").first().getAttribute("data-testid");
-  ok("G", "되돌리기: 일괄 되돌리기 카드가 맨 위", first === "bulk-undo", first);
+  // 0.18.0: 찾기·되돌리기 — 파일 찾기 카드, 그다음 일괄 되돌리기 카드.
+  const cards = await main.locator(".page > .card, .page > section").evaluateAll((els) => els.slice(0, 2).map((e) => e.getAttribute("data-testid")));
+  ok("G", "찾기·되돌리기: 파일 찾기 → 일괄 되돌리기 카드 순서", cards[0] === "find-files" && cards[1] === "bulk-undo", cards.join(","));
   ok("G", "이동 기록 행", (await main.locator("[data-testid=batch-row]").count()) >= 2);
   await main.screenshot({ path: `${SHOT}/m13-G-history.png` });
   await tab(main, "홈").click();

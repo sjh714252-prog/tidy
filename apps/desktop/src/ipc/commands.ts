@@ -33,6 +33,7 @@ import type {
   RulesCheck,
   SaveSettingsArgs,
   SearchHit,
+  FoundMove,
   SearchResult,
   SecuritySettings,
   ContextCandidates,
@@ -204,6 +205,13 @@ export const discardPlan = (id: number) => invoke<boolean>("discard_plan", { id 
 export const listBatches = (limit = 100) => invoke<BatchSummary[]>("list_batches", { limit });
 export const batchMoves = (batchId: string) => invoke<MoveLogEntry[]>("batch_moves", { batchId });
 export const undoBatch = (batchId: string) => invoke<UndoResult>("undo_batch", { batchId });
+/** (0.18.0) Files Tidy moved matching `query` (empty = most recent), with where each is now. */
+export const findMoved = (query: string, limit = 30) => invoke<FoundMove[]>("find_moved", { query, limit });
+/** (0.18.0) "어느 고객사?" answer → the folder to move to (remember = alias the log's name). */
+export const answerCustomer = (id: number, customer: string, remember: boolean) =>
+  invoke<string>("answer_customer", { id, customer, remember });
+/** (0.18.0) Put one moved file back where it was. */
+export const undoMove = (id: number) => invoke<UndoResult>("undo_move", { id });
 /** Bulk undo of the last N seconds (autoOnly = rule/AI moves only). */
 export const countMovesSince = (sinceSecsAgo: number, autoOnly: boolean) =>
   invoke<number>("count_moves_since", { sinceSecsAgo, autoOnly });

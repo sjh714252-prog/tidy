@@ -11,6 +11,7 @@ pub mod backlog;
 pub mod compact;
 pub mod dup;
 pub mod empty;
+pub mod find;
 pub mod html;
 pub mod import;
 pub mod listing;

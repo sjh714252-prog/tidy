@@ -61,6 +61,9 @@ pub struct ReviewOptions<'a> {
     pub curator: Option<&'a Curator>,
     /// Set only when the user asked the AI to place the files of step 5.
     pub ai: Option<&'a AiClassifier>,
+    /// (0.18.0, SPEC §14.24) Read names / contents ([`crate::curate::sense`])
+    /// in "새로 짜기": log bundles, manuals, runtimes.
+    pub sense: bool,
 }
 
 impl ReviewOptions<'_> {
@@ -92,6 +95,7 @@ impl ReviewOptions<'_> {
             filter: None,
             curator: None,
             ai: None,
+            sense: cfg.curate.name_sense,
         }
     }
 }

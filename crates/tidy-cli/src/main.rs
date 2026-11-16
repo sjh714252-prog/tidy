@@ -52,6 +52,9 @@ enum Cmd {
     Recover(RecoverArgs),
     /// Show recent moves from move_log.
     Log(LogArgs),
+    /// (0.18.0) Find files Tidy moved by name and show where each is now
+    /// (no query = the most recently moved files).
+    Find(FindArgs),
     /// List files waiting for confirmation (rules with confirm = true), or
     /// resolve one with --move / --skip / --ignore.
     Pending(PendingArgs),
@@ -555,6 +558,12 @@ struct PendingArgs {
     /// skip | rename | replace (default: [mover] duplicate_policy).
     #[arg(long, requires = "move", value_name = "POLICY", value_parser = parse_dup_policy)]
     on_duplicate: Option<tidy_core::config::DuplicatePolicy>,
+    /// (0.18.0) Answer "어느 고객사?" for --move: the customer's 로그 folder.
+    #[arg(long, requires = "move", conflicts_with = "to", value_name = "NAME")]
+    customer: Option<String>,
+    /// With --customer: remember the log's name as the customer's alias.
+    #[arg(long, requires = "customer")]
+    remember: bool,
     /// Drop entry ID from the queue and leave the file (this time only).
     #[arg(long, value_name = "ID", conflicts_with = "ignore")]
     skip: Option<i64>,
@@ -604,6 +613,14 @@ struct LogArgs {
     /// One line per batch (move history timeline; undo with --batch).
     #[arg(long)]
     batches: bool,
+}
+
+#[derive(Args)]
+struct FindArgs {
+    /// Words in the file name or folder (all must match).
+    query: Vec<String>,
+    #[arg(short = 'n', long, default_value_t = 20)]
+    limit: usize,
 }
 
 #[derive(Args)]
@@ -671,6 +688,7 @@ fn main() -> Result<()> {
         Cmd::Undo(args) => cmd_undo(cli.config, args),
         Cmd::Recover(args) => cmd_recover(cli.config, args),
         Cmd::Log(args) => cmd_log(cli.config, args),
+        Cmd::Find(args) => cmd_find(cli.config, args),
         Cmd::Pending(args) => cmd_pending(cli.config, args),
         Cmd::Classify(args) => cmd_classify(cli.config, args),
         Cmd::Index(args) => cmd_index(cli.config, args),
@@ -1249,6 +1267,35 @@ fn cmd_log(config: Option<PathBuf>, args: LogArgs) -> Result<()> {
     Ok(())
 }
 
+fn cmd_find(config: Option<PathBuf>, args: FindArgs) -> Result<()> {
+    let cfg = load_config(config)?;
+    let store = Store::open(&cfg.store.db_path())?;
+    let found = tidy_core::report::find::find_moved(&store, &args.query.join(" "), args.limit)?;
+    if found.is_empty() {
+        println!("no moved file matches");
+    }
+    for f in found {
+        println!(
+            "{}  {}{}",
+            fmt_time(f.moved_at),
+            f.now_path.display(),
+            match (f.exists, f.undone, f.moved_again) {
+                (false, _, _) => "  (missing)",
+                (_, true, _) => "  (undone: back where it was)",
+                (_, _, true) => "  (moved again later)",
+                _ => "",
+            }
+        );
+        println!(
+            "      from {}  [{}]  batch {}",
+            f.src_path.display(),
+            f.rule_name.as_deref().unwrap_or(&f.decided_by),
+            short(&f.batch_id)
+        );
+    }
+    Ok(())
+}
+
 fn parse_dup_policy(s: &str) -> std::result::Result<tidy_core::config::DuplicatePolicy, String> {
     use tidy_core::config::DuplicatePolicy::*;
     match s {
@@ -1261,11 +1308,32 @@ fn parse_dup_policy(s: &str) -> std::result::Result<tidy_core::config::Duplicate
 
 fn cmd_pending(config: Option<PathBuf>, args: PendingArgs) -> Result<()> {
     let cfg = load_config(config)?;
+    let mut to = args.to.map(|p| tidy_core::config::expand_home(&p));
+    if let (Some(id), Some(c)) = (args.r#move, &args.customer) {
+        use tidy_core::curate::sense;
+        let store = Store::open(&cfg.store.db_path())?;
+        let p = store
+            .get_pending(id)?
+            .ok_or_else(|| anyhow::anyhow!("no pending entry {id}"))?;
+        let dict = tidy_core::curate::ContextDict::load(&cfg.curate.context).ok();
+        let sug = p
+            .suggested_dest
+            .ok_or_else(|| anyhow::anyhow!("entry {id} has no suggested folder"))?;
+        to = Some(
+            sense::answer_dest(dict.as_ref(), Some(&store), &sug, c)
+                .ok_or_else(|| anyhow::anyhow!("no folder for customer '{c}'"))?,
+        );
+        if args.remember {
+            if let Some(a) = sense::remember_answer(&cfg.curate.context, c, &p.path)? {
+                println!("remembered '{a}' as an alias of {c} (context.toml)");
+            }
+        }
+    }
     let decision = if let Some(id) = args.r#move {
         Some((
             id,
             Decision::Move {
-                dest_dir: args.to.map(|p| tidy_core::config::expand_home(&p)),
+                dest_dir: to,
                 new_name: args.rename,
                 on_duplicate: args.on_duplicate,
             },

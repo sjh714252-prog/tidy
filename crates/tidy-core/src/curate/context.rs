@@ -72,6 +72,10 @@ pub struct ContextDict {
     pub issue_types: Vec<IssueType>,
     #[serde(rename = "doc_kind")]
     pub doc_kinds: Vec<DocKind>,
+    /// (0.18.0, SPEC §14.24) Service / product names (`RCS`, `알림톡`): a
+    /// manual whose name shows one goes to `서비스/{이름}/매뉴얼`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub services: Vec<String>,
 }
 
 /// An addition the user is asked to confirm.
@@ -120,6 +124,7 @@ impl ContextDict {
         ];
         Self {
             entities: Vec::new(),
+            services: Vec::new(),
             issue_types: ["과금", "장애", "전환", "점검", "제안"]
                 .iter()
                 .map(|n| IssueType { name: (*n).into() })

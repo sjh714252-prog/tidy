@@ -265,6 +265,25 @@ export interface PendingItem {
   pii: string | null;
   /** (M14) An identical file already has this name in the suggested folder. */
   duplicateOf: string | null;
+  /** (0.18.0) "어느 고객사 로그인가요?" — pick a customer folder. */
+  askCustomer: AskCustomer | null;
+}
+
+/** (0.18.0, SPEC §14.24) */
+export interface AskCustomer {
+  /** "2026-06-28 로그" */
+  what: string;
+  /** "m2x_rcs": remembered as the customer's alias when asked to. */
+  prefix: string | null;
+  choices: CustomerChoice[];
+}
+
+export interface CustomerChoice {
+  name: string;
+  dir: string;
+  exists: boolean;
+  /** In the dictionary / cache (not only a folder). */
+  known: boolean;
 }
 
 /** (M14) `[mover] duplicate_policy`. */
@@ -767,6 +786,26 @@ export interface MoveLogEntry {
   in_progress: boolean;
   /** move | encrypt | trash (M14: src_path went to the trash, dst_path = the copy kept). */
   op?: "move" | "encrypt" | "trash" | "rmdir";
+  /** (0.18.0) Where the file is now (later moves followed; undone = back at src). */
+  now_path?: string | null;
+}
+
+/** (0.18.0, SPEC §14.24) A file Tidy moved, with where it is now. */
+export interface FoundMove {
+  moveId: number;
+  batchId: string;
+  name: string;
+  nowPath: string;
+  srcPath: string;
+  dstPath: string;
+  movedAt: number;
+  decidedBy: string;
+  ruleName: string | null;
+  undone: boolean;
+  movedAgain: boolean;
+  encrypted: boolean;
+  exists: boolean;
+  isDir: boolean;
 }
 
 /** Progress of a long copy-verify move to/from a NAS (core snake_case). */

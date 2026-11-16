@@ -34,7 +34,7 @@ export function ConfirmPopup() {
   return (
     <div className="confirm">
       <header>
-        <strong data-testid="confirm-question">{question ?? "정리할까요?"}</strong>
+        <strong data-testid="confirm-question">{item.askCustomer ? "어느 고객사 로그인가요?" : (question ?? "정리할까요?")}</strong>
         {items.length > 1 && <span className="muted"> · 대기 {items.length}건</span>}
       </header>
       <PendingCard key={item.id} p={item} a={{ busy, resolve, defer: () => void hideCurrentWindow() }} popup />
