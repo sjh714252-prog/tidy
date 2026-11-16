@@ -532,16 +532,45 @@ pub struct PendingDto {
     /// (M14) An identical file already has this name at the suggested
     /// folder: "똑같은 파일이 이미 있습니다" + three answers.
     pub duplicate_of: Option<String>,
+    /// (0.18.0, SPEC §14.24) "어느 고객사 로그인가요?": the customers to
+    /// pick from (the answer goes to `{고객사}/로그/{날짜} 로그`).
+    pub ask_customer: Option<AskCustomerDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AskCustomerDto {
+    /// "2026-06-28 로그"
+    pub what: String,
+    /// The log family's name, remembered as the customer's alias on request.
+    pub prefix: Option<String>,
+    pub choices: Vec<tidy_core::curate::sense::CustomerChoice>,
 }
 
 #[tauri::command]
 pub async fn list_pending(app: AppHandle) -> CmdResult<Vec<PendingDto>> {
     blocking(move || {
         let state = app.state::<AppState>();
-        let items = {
+        let (items, mut asks) = {
             let inner = state.lock_inner();
             let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
-            mover.store().list_pending().map_err(|e| e.to_string())?
+            let items = mover.store().list_pending().map_err(|e| e.to_string())?;
+            let dict = tidy_core::curate::ContextDict::load(&inner.cfg.curate.context).ok();
+            // (0.18.0) Choices for "어느 고객사?" (the cache's customers too).
+            let mut asks = std::collections::HashMap::new();
+            for p in &items {
+                if p.reason.as_deref() != Some(tidy_core::curate::sense::ASK_CUSTOMER_RULE) {
+                    continue;
+                }
+                let Some(anchor) = p.suggested_dest.as_deref().and_then(|d| d.parent()?.parent()) else {
+                    continue;
+                };
+                asks.insert(
+                    p.id,
+                    tidy_core::curate::sense::customer_choices(dict.as_ref(), Some(mover.store()), anchor),
+                );
+            }
+            (items, asks)
         };
         // (M14) The duplicate check may hash files: not under the app lock.
         Ok(items
@@ -575,9 +604,56 @@ pub async fn list_pending(app: AppHandle) -> CmdResult<Vec<PendingDto>> {
                         .filter(|_| !p.encrypt)
                         .and_then(|d| tidy_core::pending::duplicate_at_dest(&p.path, d, None))
                         .map(|e| s(&e)),
+                    ask_customer: asks.remove(&p.id).map(|choices| AskCustomerDto {
+                        what: p
+                            .suggested_dest
+                            .as_deref()
+                            .and_then(|d| d.file_name())
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                        prefix: tidy_core::curate::sense::name_prefix(&p.path),
+                        choices,
+                    }),
                 }
             })
             .collect())
+    })
+    .await
+}
+
+/// (0.18.0, SPEC §14.24) "어느 고객사?" answered with `customer` (a
+/// choice or a new name): the folder to move the file to. With
+/// `remember`, the log family's name becomes the customer's alias in the
+/// dictionary first (next time no question). Moves nothing itself — the
+/// app then resolves the item with this folder.
+#[tauri::command]
+pub async fn answer_customer(
+    app: AppHandle,
+    id: i64,
+    customer: String,
+    remember: bool,
+) -> CmdResult<String> {
+    blocking(move || {
+        use tidy_core::curate::sense;
+        let state = app.state::<AppState>();
+        let inner = state.lock_inner();
+        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        let p = mover
+            .store()
+            .get_pending(id)
+            .map_err(|e| e.to_string())?
+            .ok_or("확인 대기에 없는 항목입니다")?;
+        let sug = p.suggested_dest.ok_or("제안된 폴더가 없습니다")?;
+        let ctx = inner.cfg.curate.context.clone();
+        if remember {
+            if let Err(e) = sense::remember_answer(&ctx, customer.trim(), &p.path) {
+                tracing::warn!("alias not remembered: {e}");
+            }
+        }
+        let dict = tidy_core::curate::ContextDict::load(&ctx).ok();
+        let dest = sense::answer_dest(dict.as_ref(), Some(mover.store()), &sug, customer.trim())
+            .ok_or("고객사 이름이 비어 있습니다")?;
+        Ok(s(&dest))
     })
     .await
 }

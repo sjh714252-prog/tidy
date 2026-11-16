@@ -231,6 +231,7 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "open_path" => ok(commands::open_path(app, arg(&args, "path")?).await?),
         "reveal_path" => ok(commands::reveal_path(app, arg(&args, "path")?).await?),
         "list_pending" => ok(commands::list_pending(app).await?),
+        "answer_customer" => ok(commands::answer_customer(app, arg(&args, "id")?, arg(&args, "customer")?, arg(&args, "remember")?).await?),
         "resolve_pending" => {
             ok(commands::resolve_pending(app, arg(&args, "id")?, arg(&args, "decision")?).await?)
         }

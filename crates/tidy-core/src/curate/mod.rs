@@ -17,6 +17,7 @@ pub mod customers;
 pub mod existing;
 pub mod folder;
 pub mod kinds;
+pub mod sense;
 pub mod template;
 
 use std::collections::HashMap;

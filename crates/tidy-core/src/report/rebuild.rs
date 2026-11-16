@@ -27,6 +27,7 @@ use super::scan::ScanError;
 use crate::classify::FileFacts;
 use crate::curate::existing::{norm, reuse_existing, split_dated};
 use crate::curate::kinds::{is_kind_name, kind_of};
+use crate::curate::sense::{self, Clues, Shape};
 use crate::curate::{clean, customer_names};
 use crate::store::Store;
 
@@ -52,6 +53,12 @@ pub struct Rebuild {
     pub new_customers: Vec<String>,
     /// More than [`MAX_MOVES`]: run again after applying.
     pub capped: bool,
+    /// (0.18.0) Files placed by what their names / contents say (log
+    /// bundles, manuals, runtimes).
+    pub by_name: usize,
+    /// (0.18.0) Logs no customer could be found for: left where they are,
+    /// to be asked about in 확인 대기 ([`run`] queues them).
+    pub ask_logs: Vec<(PathBuf, PathBuf)>,
 }
 
 /// A customer and where its folder is (or will be).
@@ -79,6 +86,8 @@ fn is_period(name: &str) -> bool {
 struct Builder<'a> {
     ctx: Ctx<'a>,
     customers: Vec<Customer>,
+    /// (0.18.0) For [`sense::shape`] (None: `name_sense` off).
+    clues: Option<Clues>,
 }
 
 impl Builder<'_> {
@@ -112,6 +121,41 @@ impl Builder<'_> {
             }
         }
         found
+    }
+
+    /// (0.18.0) What `p` is, by name / contents; `cust` the customer found.
+    fn shape(&self, p: &Path, cust: Option<usize>, entries: &[String]) -> Option<Shape> {
+        let clues = self.clues.as_ref()?;
+        let name = cust.map(|i| self.customers[i].name.clone());
+        sense::shape(p, clues, name.as_deref(), Some(entries))
+    }
+
+    /// (0.18.0) The customer a zip's file list names (exactly one).
+    fn in_zip(&self, entries: &[String]) -> Option<usize> {
+        let mut found: Option<usize> = None;
+        for e in entries {
+            if let Some(i) = self.in_text(e) {
+                if found.is_some_and(|f| f != i) {
+                    return None;
+                }
+                found = Some(i);
+            }
+        }
+        found
+    }
+
+    /// Where a customer's file goes: a log bundle to its day folder, a
+    /// manual to `매뉴얼`, the rest to its kind folder.
+    fn customer_dest(&self, cust: &Path, file: &Path, shape: Option<&Shape>) -> PathBuf {
+        let root = &self.ctx.root;
+        match shape {
+            Some(Shape::Log { date, label, .. }) => {
+                reuse_existing(&cust.join(sense::LOG_KIND), root, 0)
+                    .join(Shape::log_folder(*date, label))
+            }
+            Some(Shape::Manual { .. }) => reuse_existing(&cust.join(sense::MANUAL_KIND), root, 0),
+            _ => self.kind_dir(cust, file),
+        }
     }
 
     fn kind_dir(&self, cust: &Path, file: &Path) -> PathBuf {
@@ -243,7 +287,21 @@ pub fn rebuild(root: &Path, store: &Store, o: &ReviewOptions<'_>) -> Result<Rebu
             cust_tops.push(t.clone());
         }
     }
-    let b = Builder { ctx, customers };
+    let clues = o.sense.then(|| {
+        let mut c = Clues::from_dict(o.curator.map(|c| c.dict()), &[]);
+        for cu in &customers {
+            c.add_customer(&cu.name, cu.keys.clone());
+        }
+        c.add_service_dirs(&root);
+        c
+    });
+    let b = Builder {
+        ctx,
+        customers,
+        clues,
+    };
+    let mut by_name = 0usize;
+    let mut ask_logs: Vec<(PathBuf, PathBuf)> = Vec::new();
 
     let mut moves: Vec<PlannedMove> = Vec::new();
     let mut to_customer = 0usize;
@@ -308,21 +366,73 @@ pub fn rebuild(root: &Path, store: &Store, o: &ReviewOptions<'_>) -> Result<Rebu
         let Ok(rd) = std::fs::read_dir(&c.dir) else {
             continue;
         };
-        let mut files: Vec<PathBuf> = rd
-            .filter_map(Result::ok)
+        let entries: Vec<_> = rd.filter_map(Result::ok).collect();
+        let mut files: Vec<PathBuf> = entries
+            .iter()
             .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
             .map(|e| e.path())
             .filter(|p| !b.ctx.left_alone(p))
             .collect();
         files.sort();
+        let ci = b.customers.iter().position(|x| x.dir == c.dir);
         for f in files {
-            let to = b.kind_dir(&c.dir, &f).join(name_of(&f));
-            let why = format!(
-                "고객사 폴더 바로 아래 파일 → 종류별로 '{}'",
-                rel(&root, to.parent().unwrap_or(&to))
-            );
+            let shape = b.shape(&f, ci, &sense::zip_entries(&f, 2000));
+            let to = b
+                .customer_dest(&c.dir, &f, shape.as_ref())
+                .join(name_of(&f));
+            let why = match &shape {
+                Some(s @ (Shape::Log { .. } | Shape::Manual { .. })) => format!(
+                    "고객사 폴더 바로 아래 {} → '{}'",
+                    s.describe(),
+                    rel(&root, to.parent().unwrap_or(&to))
+                ),
+                _ => format!(
+                    "고객사 폴더 바로 아래 파일 → 종류별로 '{}'",
+                    rel(&root, to.parent().unwrap_or(&to))
+                ),
+            };
             if push(&mut moves, f, to, false, why) {
                 to_customer += 1;
+            }
+        }
+        // (0.18.0) Log bundles and manuals lying loose in the customer's
+        // kind folders (`압축파일/`, `로그/`, `텍스트/`) → their own folders.
+        if b.clues.is_some() {
+            let dict = b.ctx.o.curator.map(|c| c.dict());
+            let mut kinds: Vec<PathBuf> = entries
+                .iter()
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+                .map(|e| e.path())
+                .filter(|d| is_kind_name(dict, &name_of(d)) && !b.ctx.left_alone(d))
+                .collect();
+            kinds.sort();
+            for k in kinds {
+                let Ok(rd) = std::fs::read_dir(&k) else {
+                    continue;
+                };
+                let mut files: Vec<PathBuf> = rd
+                    .filter_map(Result::ok)
+                    .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+                    .map(|e| e.path())
+                    .filter(|p| !b.ctx.left_alone(p))
+                    .collect();
+                files.sort();
+                for f in files {
+                    let Some(shape) = b.shape(&f, ci, &sense::zip_entries(&f, 2000)) else {
+                        continue;
+                    };
+                    if !matches!(shape, Shape::Log { .. } | Shape::Manual { .. }) {
+                        continue;
+                    }
+                    let dir = b.customer_dest(&c.dir, &f, Some(&shape));
+                    if dir == k {
+                        continue;
+                    }
+                    let why = format!("{} → '{}'", shape.describe(), rel(&root, &dir));
+                    if push(&mut moves, f.clone(), dir.join(name_of(&f)), false, why) {
+                        by_name += 1;
+                    }
+                }
             }
         }
     }
@@ -385,16 +495,29 @@ pub fn rebuild(root: &Path, store: &Store, o: &ReviewOptions<'_>) -> Result<Rebu
             if !t.is_file() {
                 continue;
             }
+            let entries = if b.clues.is_some() {
+                sense::zip_entries(&p, 2000)
+            } else {
+                Vec::new()
+            };
             let found = b
                 .in_text(&name)
                 .map(|i| (i, "이름"))
-                .or_else(|| b.in_body(&p).map(|i| (i, "내용")));
+                .or_else(|| b.in_body(&p).map(|i| (i, "내용")))
+                .or_else(|| b.in_zip(&entries).map(|i| (i, "압축 파일 안 이름")));
+            let shape = b.shape(&p, found.map(|(i, _)| i), &entries);
             if let Some((i, by)) = found {
                 let c = &b.customers[i];
                 note_new(c);
-                let to = b.kind_dir(&c.dir, &p).join(&name);
+                let to = b.customer_dest(&c.dir, &p, shape.as_ref()).join(&name);
+                let what = match &shape {
+                    Some(s @ (Shape::Log { .. } | Shape::Manual { .. })) => {
+                        format!(" · {}", s.describe())
+                    }
+                    _ => String::new(),
+                };
                 let why = format!(
-                    "{by}에 고객사 '{}'가 보임 → '{}'",
+                    "{by}에 고객사 '{}'가 보임{what} → '{}'",
                     c.name,
                     rel(&root, to.parent().unwrap_or(&to))
                 );
@@ -402,6 +525,34 @@ pub fn rebuild(root: &Path, store: &Store, o: &ReviewOptions<'_>) -> Result<Rebu
                     to_customer += 1;
                 }
                 continue;
+            }
+            // (0.18.0) No customer: manuals → 서비스, runtimes → 설치파일,
+            // logs that say so → asked about (not left to the type rules).
+            if zone {
+                match &shape {
+                    Some(s @ (Shape::Manual { .. } | Shape::Runtime { .. })) => {
+                        if let Some((d, _)) = sense::dest(&root, s, None) {
+                            if d != dir {
+                                let why = format!(
+                                    "이름으로 보면 {} → '{}'",
+                                    s.describe(),
+                                    rel(&root, &d)
+                                );
+                                if push(&mut moves, p, d.join(&name), false, why) {
+                                    by_name += 1;
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    Some(s @ Shape::Log { .. }) if sense::ask_customer(s, &p) => {
+                        if let Some(sub) = sense::customer_sub(s) {
+                            ask_logs.push((p, root.join(sub)));
+                        }
+                        continue;
+                    }
+                    _ => {}
+                }
             }
             let Some(rules) = rules.filter(|_| zone) else {
                 continue;
@@ -490,6 +641,11 @@ pub fn rebuild(root: &Path, store: &Store, o: &ReviewOptions<'_>) -> Result<Rebu
             "같은 고객사·이슈인데 나뉜 폴더 {merged}곳을 합칩니다"
         ));
     }
+    if by_name > 0 {
+        parts.push(format!(
+            "로그 묶음·매뉴얼·설치 파일 {by_name}개를 이름·내용대로 날짜·서비스·OS 폴더에 넣습니다"
+        ));
+    }
     if by_rules > 0 {
         parts.push(format!("다른 파일 {by_rules}개를 규칙대로 넣습니다"));
     }
@@ -504,6 +660,12 @@ pub fn rebuild(root: &Path, store: &Store, o: &ReviewOptions<'_>) -> Result<Rebu
     };
     if !new_customers.is_empty() {
         summary.push_str(&format!(" 새 고객사 폴더: {}.", new_customers.join(", ")));
+    }
+    if !ask_logs.is_empty() {
+        summary.push_str(&format!(
+            " 고객사를 알 수 없는 로그 {}개는 그대로 두고 확인 대기에서 어느 고객사인지 묻습니다.",
+            ask_logs.len()
+        ));
     }
     if capped {
         summary.push_str(&format!(
@@ -534,6 +696,8 @@ pub fn rebuild(root: &Path, store: &Store, o: &ReviewOptions<'_>) -> Result<Rebu
         by_rules,
         new_customers,
         capped,
+        by_name,
+        ask_logs,
     })
 }
 
@@ -552,5 +716,14 @@ pub fn run(
     o.rules = rules.as_ref();
     o.filter = filter.as_ref();
     o.curator = curator.as_ref();
-    rebuild(root, store, &o)
+    let r = rebuild(root, store, &o)?;
+    // (0.18.0) Logs without a customer: "어느 고객사?" in 확인 대기.
+    for (p, sug) in &r.ask_logs {
+        if store.get_pending_by_path(p).ok().flatten().is_none() {
+            if let Err(e) = store.upsert_pending(p, Some(sug), Some(sense::ASK_CUSTOMER_RULE)) {
+                tracing::warn!(path = %p.display(), "not queued: {e}");
+            }
+        }
+    }
+    Ok(r)
 }

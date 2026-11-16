@@ -268,6 +268,10 @@ pub async fn plan_rebuild(
         let store = Store::open(&cfg.store.db_path()).map_err(err)?;
         let mut r = report::rebuild::run(&cfg, &expand(&path), &store, protected(&cfg, &protect))
             .map_err(err)?;
+        if !r.ask_logs.is_empty() {
+            // (0.18.0) Logs without a customer were queued: "어느 고객사?".
+            watch::pending_changed(&app, false);
+        }
         let (plan, preview) = save_preview(&store, r.plan.take())?;
         Ok(ReviewDto {
             plan,

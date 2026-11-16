@@ -134,6 +134,31 @@ pub struct Engine {
     security: SecurityPolicy,
     /// (M10) Work-context placement (needs `ai`).
     curator: Option<std::sync::Arc<crate::curate::Curator>>,
+    /// (0.18.0, SPEC §14.24) Reading what a file is from its name and
+    /// contents (`[curate] name_sense`): the dictionary it matches against.
+    sense: Option<std::sync::Arc<SenseDict>>,
+}
+
+/// (0.18.0) The dictionary [`Engine::sense_step`] reads, re-read when its
+/// file changes (an "어느 고객사?" answer adds an alias while watching).
+struct SenseDict {
+    path: Option<PathBuf>,
+    cur: std::sync::Mutex<(Option<std::time::SystemTime>, crate::curate::ContextDict)>,
+}
+
+impl SenseDict {
+    fn get(&self) -> crate::curate::ContextDict {
+        let mut g = self.cur.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(p) = &self.path {
+            let m = std::fs::metadata(p).and_then(|m| m.modified()).ok();
+            if m != g.0 {
+                if let Ok(d) = crate::curate::ContextDict::load(p) {
+                    *g = (m, d);
+                }
+            }
+        }
+        g.1.clone()
+    }
 }
 
 /// Rule label of work-context moves (log, activity, queue).
@@ -158,7 +183,27 @@ impl Engine {
             anchors: Anchors::default(),
             security: SecurityPolicy::default(),
             curator: None,
+            sense: None,
         }
+    }
+
+    /// (0.18.0, SPEC §14.24) Place log bundles, manuals and runtimes by
+    /// what their names and contents say, before the rules (no AI needed).
+    pub fn with_sense(mut self, dict: crate::curate::ContextDict) -> Self {
+        self.sense = Some(std::sync::Arc::new(SenseDict {
+            path: None,
+            cur: std::sync::Mutex::new((None, dict)),
+        }));
+        self
+    }
+
+    /// [`Self::with_sense`] from the dictionary file, re-read when it changes.
+    pub fn with_sense_file(mut self, path: PathBuf) -> Self {
+        self.sense = Some(std::sync::Arc::new(SenseDict {
+            path: Some(path),
+            cur: std::sync::Mutex::new((None, crate::curate::ContextDict::default())),
+        }));
+        self
     }
 
     /// (M10) Place files by work context (used only together with an AI).
@@ -274,6 +319,11 @@ impl Engine {
             path.file_name()
                 .and_then(|n| c.customer_hint(&n.to_string_lossy(), Some(self.mover.store())))
         });
+        // (0.18.0, SPEC §14.24) A log bundle, a manual, a runtime: its own
+        // place, decided from the name / contents before the AI and rules.
+        if let Some(a) = self.sense_step(&facts, hint.as_deref(), batch_id)? {
+            return Ok(a);
+        }
         if prefer {
             if let Some(a) = self.curate_step(&facts, batch_id)? {
                 return Ok(a);
@@ -509,6 +559,120 @@ impl Engine {
                 reason: Some(format!(
                     "파일 이름에 고객사 '{customer}'가 보입니다 — 새 고객사 폴더를 만들까요?"
                 )),
+                encrypt: false,
+                pii: None,
+            }));
+        }
+        Ok(Some(self.move_with(
+            path,
+            dest,
+            batch_id,
+            &rule,
+            DecidedBy::Rule,
+            None,
+            false,
+        )?))
+    }
+
+    /// (0.18.0, SPEC §14.24) See [`crate::curate::sense`]. Only files right
+    /// in a watch folder (a sub-folder is organized whole).
+    fn sense_step(
+        &self,
+        facts: &FileFacts,
+        hint: Option<&str>,
+        batch_id: &str,
+    ) -> Result<Option<Action>, EngineError> {
+        use crate::curate::sense;
+        let Some(sd) = &self.sense else {
+            return Ok(None);
+        };
+        let path = &facts.path;
+        let parent = path.parent().unwrap_or_else(|| Path::new(""));
+        if self.anchors.watch_root_for(path) != Some(parent) {
+            return Ok(None);
+        }
+        let store = self.mover.store();
+        if let Some(p) = store.get_pending_by_path(path)? {
+            if p.reason.as_deref() == Some(sense::ASK_CUSTOMER_RULE) {
+                // The question stays; the rules must not take the file meanwhile.
+                return Ok(Some(Action::Skipped {
+                    path: path.clone(),
+                    reason: "already waiting for confirmation",
+                }));
+            }
+            if p.source != PendingSource::Rule {
+                return Ok(None);
+            }
+        }
+        let anchor = self.anchors.for_path(path).unwrap_or(parent).to_path_buf();
+        let dict = sd.get();
+        let clues = sense::clues_for(Some(&dict), Some(store), &anchor);
+        let name = facts.name.clone();
+        let entries = sense::zip_entries(path, 2000);
+        let customer = hint
+            .map(str::to_string)
+            .or_else(|| clues.customer_in(&name))
+            .or_else(|| clues.customer_in_list(&entries));
+        let Some(shape) = sense::shape(path, &clues, customer.as_deref(), Some(&entries)) else {
+            return Ok(None);
+        };
+        let what = shape.describe();
+        let (dest, known, ask) = match sense::dest(&anchor, &shape, customer.as_deref()) {
+            Some((d, k)) => (d, k, false),
+            None if sense::ask_customer(&shape, path) => {
+                let sub = sense::customer_sub(&shape).unwrap_or_default();
+                (anchor.join(sub), true, true)
+            }
+            None => return Ok(None),
+        };
+        let rule = if ask {
+            sense::ASK_CUSTOMER_RULE.to_string()
+        } else {
+            match &customer {
+                Some(c)
+                    if matches!(
+                        shape,
+                        sense::Shape::Log { .. } | sense::Shape::Manual { .. }
+                    ) =>
+                {
+                    format!("{c} · {what}")
+                }
+                _ => what.clone(),
+            }
+        };
+        if self.dry_run {
+            return Ok(Some(Action::WouldMove {
+                path: path.clone(),
+                rule,
+                dest_dir: dest,
+                confirm: ask || !known,
+                encrypt: false,
+            }));
+        }
+        if self.was_undone(path)? {
+            return Ok(Some(Action::Skipped {
+                path: path.clone(),
+                reason: "restored by undo; left in place",
+            }));
+        }
+        if ask || !known {
+            store.upsert_pending(path, Some(&dest), Some(&rule))?;
+            return Ok(Some(Action::Pending {
+                path: path.clone(),
+                rule,
+                suggested: dest,
+                source: PendingSource::Rule,
+                confidence: None,
+                reason: Some(if ask {
+                    format!(
+                        "{what} — 어느 고객사 자료인가요? 고르면 그 고객사 폴더의 로그로 옮깁니다"
+                    )
+                } else {
+                    format!(
+                        "{what}: 이름에 고객사 '{}'가 보입니다 — 새 고객사 폴더를 만들까요?",
+                        customer.as_deref().unwrap_or("")
+                    )
+                }),
                 encrypt: false,
                 pii: None,
             }));

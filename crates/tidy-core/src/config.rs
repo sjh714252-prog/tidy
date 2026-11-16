@@ -661,6 +661,11 @@ pub struct CurateCfg {
     /// made only when at least this many items go into it; fewer stay one
     /// level up. Existing folders are always used. 0 or 1: always split.
     pub min_folder_items: usize,
+    /// (0.18.0, SPEC §14.24) Read what a file is from its name and contents
+    /// (log bundles by customer and day, manuals by service, runtimes by
+    /// OS) and place it so, offline — also without the AI. Unknown
+    /// customers' logs are asked about in 확인 대기.
+    pub name_sense: bool,
 }
 
 impl Default for CurateCfg {
@@ -677,6 +682,7 @@ impl Default for CurateCfg {
             excerpt_chars: 400,
             folder_settle_secs: 60,
             min_folder_items: 3,
+            name_sense: true,
         }
     }
 }

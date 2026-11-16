@@ -558,6 +558,12 @@ struct PendingArgs {
     /// skip | rename | replace (default: [mover] duplicate_policy).
     #[arg(long, requires = "move", value_name = "POLICY", value_parser = parse_dup_policy)]
     on_duplicate: Option<tidy_core::config::DuplicatePolicy>,
+    /// (0.18.0) Answer "어느 고객사?" for --move: the customer's 로그 folder.
+    #[arg(long, requires = "move", conflicts_with = "to", value_name = "NAME")]
+    customer: Option<String>,
+    /// With --customer: remember the log's name as the customer's alias.
+    #[arg(long, requires = "customer")]
+    remember: bool,
     /// Drop entry ID from the queue and leave the file (this time only).
     #[arg(long, value_name = "ID", conflicts_with = "ignore")]
     skip: Option<i64>,
@@ -1302,11 +1308,32 @@ fn parse_dup_policy(s: &str) -> std::result::Result<tidy_core::config::Duplicate
 
 fn cmd_pending(config: Option<PathBuf>, args: PendingArgs) -> Result<()> {
     let cfg = load_config(config)?;
+    let mut to = args.to.map(|p| tidy_core::config::expand_home(&p));
+    if let (Some(id), Some(c)) = (args.r#move, &args.customer) {
+        use tidy_core::curate::sense;
+        let store = Store::open(&cfg.store.db_path())?;
+        let p = store
+            .get_pending(id)?
+            .ok_or_else(|| anyhow::anyhow!("no pending entry {id}"))?;
+        let dict = tidy_core::curate::ContextDict::load(&cfg.curate.context).ok();
+        let sug = p
+            .suggested_dest
+            .ok_or_else(|| anyhow::anyhow!("entry {id} has no suggested folder"))?;
+        to = Some(
+            sense::answer_dest(dict.as_ref(), Some(&store), &sug, c)
+                .ok_or_else(|| anyhow::anyhow!("no folder for customer '{c}'"))?,
+        );
+        if args.remember {
+            if let Some(a) = sense::remember_answer(&cfg.curate.context, c, &p.path)? {
+                println!("remembered '{a}' as an alias of {c} (context.toml)");
+            }
+        }
+    }
     let decision = if let Some(id) = args.r#move {
         Some((
             id,
             Decision::Move {
-                dest_dir: args.to.map(|p| tidy_core::config::expand_home(&p)),
+                dest_dir: to,
                 new_name: args.rename,
                 on_duplicate: args.on_duplicate,
             },

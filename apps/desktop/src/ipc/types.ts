@@ -265,6 +265,25 @@ export interface PendingItem {
   pii: string | null;
   /** (M14) An identical file already has this name in the suggested folder. */
   duplicateOf: string | null;
+  /** (0.18.0) "어느 고객사 로그인가요?" — pick a customer folder. */
+  askCustomer: AskCustomer | null;
+}
+
+/** (0.18.0, SPEC §14.24) */
+export interface AskCustomer {
+  /** "2026-06-28 로그" */
+  what: string;
+  /** "m2x_rcs": remembered as the customer's alias when asked to. */
+  prefix: string | null;
+  choices: CustomerChoice[];
+}
+
+export interface CustomerChoice {
+  name: string;
+  dir: string;
+  exists: boolean;
+  /** In the dictionary / cache (not only a folder). */
+  known: boolean;
 }
 
 /** (M14) `[mover] duplicate_policy`. */

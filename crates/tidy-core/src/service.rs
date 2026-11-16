@@ -152,6 +152,10 @@ pub fn run_watch(
     if opts.index {
         engine = engine.with_index(IndexOptions::from_config(cfg));
     }
+    if cfg.curate.name_sense {
+        // No dictionary yet: built-in services and the folders still help.
+        engine = engine.with_sense_file(cfg.curate.context.clone());
+    }
     if !opts.dry_run {
         match engine.drop_scattering_pending() {
             Ok(d) if !d.is_empty() => {
