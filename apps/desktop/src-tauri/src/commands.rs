@@ -562,12 +562,20 @@ pub async fn list_pending(app: AppHandle) -> CmdResult<Vec<PendingDto>> {
                 if p.reason.as_deref() != Some(tidy_core::curate::sense::ASK_CUSTOMER_RULE) {
                     continue;
                 }
-                let Some(anchor) = p.suggested_dest.as_deref().and_then(|d| d.parent()?.parent()) else {
+                let Some(anchor) = p
+                    .suggested_dest
+                    .as_deref()
+                    .and_then(|d| d.parent()?.parent())
+                else {
                     continue;
                 };
                 asks.insert(
                     p.id,
-                    tidy_core::curate::sense::customer_choices(dict.as_ref(), Some(mover.store()), anchor),
+                    tidy_core::curate::sense::customer_choices(
+                        dict.as_ref(),
+                        Some(mover.store()),
+                        anchor,
+                    ),
                 );
             }
             (items, asks)
