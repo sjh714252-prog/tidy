@@ -170,6 +170,14 @@ pub fn run_watch(
             Ok(_) => {}
             Err(e) => tracing::warn!("queue clean-up failed: {e}"),
         }
+        // (0.18.2) Files deleted while Tidy was off leave the queue.
+        match crate::pending::prune_gone(engine.mover().store(), &cfg.queue_roots()) {
+            Ok(d) if !d.is_empty() => {
+                tracing::info!("dropped {} queue entries whose file was deleted", d.len())
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("queue clean-up failed: {e}"),
+        }
     }
     if opts.ai && cfg.ai.enabled {
         // Re-read the rules for the AI's view (ai_auto folders, tree roots).

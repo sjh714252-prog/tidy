@@ -1596,6 +1596,20 @@ impl Config {
     /// M8) a config that already watches folders counts as set up, one
     /// without folders (made by the installer or another feature) does not.
     /// Nothing is moved until this is true.
+    /// (0.18.2) Watch folders and the folders they organize into: the
+    /// places a queued file can live in ([`crate::pending::is_gone`]).
+    pub fn queue_roots(&self) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = Vec::new();
+        for w in &self.watches {
+            for r in [w.path.as_path(), w.anchor()] {
+                if !r.as_os_str().is_empty() && !out.iter().any(|o| o == r) {
+                    out.push(r.to_path_buf());
+                }
+            }
+        }
+        out
+    }
+
     pub fn onboarded(&self) -> bool {
         self.general.onboarded.unwrap_or(!self.watches.is_empty())
     }
