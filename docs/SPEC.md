@@ -1409,7 +1409,7 @@ send_content = false
 `curate::sense`(오프라인, AI 없이도, `[curate] name_sense = true` 기본): 파일 이름(확장자 여러 개 `.log.zip` 포함)을 낱말로 나누고, 이름으로 모자라면 **zip 안 파일 목록**(최대 2,000개)과 **텍스트 파일 앞 16KB**(줄 머리 날짜·시각이 절반 이상이면 로그)를 본다. 세 모양:
 1. **로그 묶음** → `{고객사}/로그/{yyyy-mm-dd} 로그/`(zip 안·이름에 agent가 보이면 `… Agent 로그`). 로그로 보는 경우: 확장자 `.log`·`.out`(`.log.zip`·`.log.1` 포함), 이름 낱말 log·logs·로그, zip 안 파일 절반 이상이 로그, 텍스트 앞부분이 로그, 날짜+agent가 있는 압축 파일, 또는 **고객사 + 짧은 태그(CAMP) + 날짜뿐인 압축 파일**(`현대홈쇼핑_CAMP_13일.zip`). 날짜: `2026-06-28`·`20260628`·`0613`·`6월 13일`·`13일`(없는 연·월은 수정한 날짜 기준, 그날 이후로는 안 감), 없으면 수정한 날짜. 날짜 폴더는 `min_folder_items`와 상관없이 만든다(사용자 요청: 날짜별로 묶어 "언제 것"인지 보이게). `날짜_이슈` 모양(`20261113_…`)이 아니라 이슈 합치기(§14.18)에 섞이지 않는다.
 2. **매뉴얼**(manual·매뉴얼·메뉴얼·설명서·사용설명서·가이드·guide·userguide) → 고객사가 보이면 `{고객사}/매뉴얼/`, 아니면 `서비스/{서비스}/매뉴얼/`. 서비스 = 낱말 안에 아는 서비스 이름(`KTRCS` → `RCS`; 사전 `services`, 기본 RCS·SMS·MMS·LMS·IMS·VoLTE·알림톡·친구톡, 이미 있는 `서비스/*` 폴더), 없으면 매뉴얼·버전·날짜·고객사를 뺀 첫 낱말. 정리 위치 맨 위에 그 서비스 이름 폴더가 이미 있으면 그곳(`RCS/매뉴얼`).
-3. **실행 환경·설치 파일**(첫 낱말이 jre·jdk·openjdk·java·node·python·tomcat·maven·gradle·nginx·mysql·mariadb·postgresql·redis·git·docker·go·dotnet 등이고 바로 버전이 붙은 압축·설치 파일) → `설치파일/{Java}/{OS}/`. OS: linux·windows·win64·mac·osx·darwin·solaris·aix 낱말, 없으면 exe·msi = Windows, rpm·deb = Linux, dmg·pkg = macOS, 그래도 없으면 OS 폴더 없이.
+3. **실행 환경·설치 파일**(첫 낱말이 jre·jdk·openjdk·java·node·python·tomcat·maven·gradle·nginx·mysql·mariadb·postgresql·redis·git·docker·go·dotnet 등이고 바로 버전이 붙은 압축·설치 파일) → `설치파일/{Java}/{OS}/`. OS: linux·windows·win64·mac·osx·darwin·solaris·aix 낱말, 없으면 exe·msi = Windows, rpm·deb = Linux, dmg·pkg = macOS, 그래도 없으면 OS 폴더 없이. (0.18.3, §14.27) 앞에 배포사 낱말(amazon·microsoft·bellsoft·ibm 등)이 와도, CPU(x64·ARM64·x86·ARM32·ppc64le·s390x)도 읽는다.
 
 **고객사**: 이름에 보이는 사전 고객사·별칭·캐시 고객사, 정리 위치 맨 위의 고객사 모양 폴더(`날짜_이슈`·`로그`·`매뉴얼` 하위 폴더가 있는 것), 그다음 zip 안 이름(고객사 하나만). 고객사가 없는 로그 중 압축이거나 이름에 날짜가 있는 것은 **확인 대기 "어느 고객사 로그인가요?"**(규칙 이름 `로그 · 어느 고객사?`, 제안 위치 `정리 위치/로그/{날짜} 로그`): 정리 위치의 고객사 폴더 목록(사전·캐시 고객사 먼저, 없는 폴더는 "새 폴더")·검색·새 이름·[그대로 두기], **"다음부터 이름이 'm2x_rcs'인 로그는 묻지 않고 이 고객사로"**(기본 체크 = 이름 앞 낱말을 그 고객사 별칭으로 사전에 추가, 새 고객사면 사전에 추가) — 감시 중에도 사전 파일이 바뀌면 다시 읽는다. 날짜 없는 `service_out.log` 같은 낱개 로그는 묻지 않고 규칙대로.
 
@@ -1439,3 +1439,19 @@ send_content = false
 - 확인 대기 목록의 "어느 고객사?" 선택지는 같은 정리 위치마다 한 번만 만든다(대기 수천 개일 때 매번 폴더 목록을 읽던 것).
 
 **테스트(화면)**: GUI e2e `fix-busy`(긴 작업 중 F5 → 상태줄 바로·작업 막대 다시·"/ 500개"·%·초째·진행 값 증가, 정리하기 폴더 목록·버튼 켜짐, 확인 대기·찾기·되돌리기·홈 오늘 한 일이 뜸, 설정 탭에도 막대, 끝나면 사라짐). 브리지 `debug_job {ms, total}`.
+
+### 14.27 같은 Java 설치 파일이 CPU마다 다른 곳으로 가던 문제 (0.18.3, 사용 피드백 2026-11-17)
+
+피드백: "이거 같은 java 파일이고, os나 cpu 종류에 맞춰서 다른건데 엉뚱한곳으로 이동해있어". 바탕화면의 `amazon-corretto-8-aarch64-linux-jdk.zip`은 `압축 파일`(규칙), `amazon-corretto-8-x64-linux-jdk.zip`은 `기타\개발`(AI 업무 맥락)로 같은 시각에 따로 갔다. (§14.23은 PR #41, §14.26은 PR #47이 씀.)
+
+**원인**: 이름으로 알아보기(§14.24)의 설치 파일 판단이 **첫 낱말**만 봤다. 첫 낱말이 `amazon`이라 Java로 알아보지 못했고, 그다음 단계(업무 맥락 AI → 규칙)로 넘어갔다. AI는 파일마다 따로 답해 x64는 확신도가 기준(0.6)을 넘어 `기타/개발`, aarch64는 못 미쳐 "미분류" → 확장자 규칙 `압축 파일`이 받았다. 같은 파일 두 개가 갈린 것은 AI 답이 파일마다 달랐기 때문이고, 이름으로 알아봤다면 AI까지 가지 않는다.
+
+**결정**:
+- 런타임 이름 앞의 배포사 낱말(최대 2개: amazon·aws·eclipse·adoptium·microsoft·bellsoft·azul·ibm·sap·alibaba·oracle·redhat·openlogic·tencent·jetbrains·server·apache)은 건너뛴다. Java 이름에 liberica·semeru·sapmachine·dragonwell·graalvm·jbr·kona·adoptopenjdk·openlogic 추가. 배포판 이름(corretto·temurin·zulu·openjdk 등)은 버전이 이름 어디에 있어도 된다(`amazon-corretto-jdk_11.0.21_x64.msi`), 일반 낱말(java·jdk·jre)은 예전처럼 바로 뒤에 버전이 있어야 한다(`java 교육 자료.zip`·`oracle-java-교육자료.zip`은 아님). 버전 떼기는 숫자 뒤 `u`만(`OpenJDK8U` → openjdk, `zulu8` → zulu).
+- **CPU**: x64(x86_64·amd64·x64·win64), ARM64(aarch64·arm64·armv8), ARM32(armhf·armv7·arm32·arm), x86(i386·i586·i686·x86·x32·win32), ppc64le·ppc64·s390x·RISC-V. 설명에 보인다("Java (Linux · ARM64) 설치 파일"). **폴더는 OS까지**(`설치파일/Java/Linux/`에 CPU별 파일이 함께) — CPU마다 폴더를 만들면 파일 한두 개짜리 폴더가 생긴다(§14.19). 사용자가 OS 폴더 안에 CPU 폴더(`aarch64`·`ARM64`·`x64`·`amd64` 등, 대소문자·띄어쓰기 무시)를 만들어 두면 그곳에 넣는다.
+- OS 낱말에 alpine·musl·debian·macosx 추가.
+- **이미 잘못 간 것**: 정리 위치 새로 짜기(§14.22)는 종류·연도 폴더(`압축 파일/`)에 더해 **`기타/` 아래 주제 폴더**(AI가 만든 곳)에 있는 설치 파일도 `설치파일/{이름}/{OS}/`로 옮기자고 제안한다(사용자가 만든 다른 폴더는 그대로).
+
+**남은 것**: 정리하기의 업무 맥락 미리보기("지금 정리")는 아직 이름으로 알아보기를 거치지 않는다(감시 중·새로 짜기만). 감시 중에는 이름으로 알아보기가 업무 맥락·규칙보다 먼저라 이번 문제는 다시 생기지 않는다.
+
+**테스트**: `curate::sense` 단위 테스트 `java_builds_by_vendor_and_cpu`(Corretto·Temurin·Microsoft·Zulu·Liberica·Semeru·GraalVM·Oracle 21개 이름의 OS·CPU, 두 CPU가 한 폴더, 사용자 CPU 폴더 사용, 배포사 낱말만 있는 이름은 아님), `tests/sense_flow.rs`(감시 중 두 Corretto 파일 → `설치파일/Java/Linux`·undo, 새로 짜기가 `압축파일/`·`기타/개발/`의 두 파일을 한 곳으로).

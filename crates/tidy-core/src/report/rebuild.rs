@@ -528,6 +528,27 @@ pub fn rebuild(root: &Path, store: &Store, o: &ReviewOptions<'_>) -> Result<Rebu
             }
             // (0.18.0) No customer: manuals → 서비스, runtimes → 설치파일,
             // logs that say so → asked about (not left to the type rules).
+            // (0.18.3) Runtimes also from the AI's topic folders under
+            // `기타` (`기타/개발/amazon-corretto-8-x64-linux-jdk.zip`).
+            let in_other = dir
+                .strip_prefix(&root)
+                .ok()
+                .and_then(|r| r.components().next())
+                .is_some_and(|c| norm(&c.as_os_str().to_string_lossy()) == norm(&o.other_dir));
+            if !zone && in_other && matches!(shape, Some(Shape::Runtime { .. })) {
+                if let Some(s) = &shape {
+                    if let Some((d, _)) = sense::dest(&root, s, None) {
+                        if d != dir {
+                            let why =
+                                format!("이름으로 보면 {} → '{}'", s.describe(), rel(&root, &d));
+                            if push(&mut moves, p, d.join(&name), false, why) {
+                                by_name += 1;
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
             if zone {
                 match &shape {
                     Some(s @ (Shape::Manual { .. } | Shape::Runtime { .. })) => {
