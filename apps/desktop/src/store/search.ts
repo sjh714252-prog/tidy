@@ -21,6 +21,12 @@ interface SearchState {
   nasLoading: boolean;
   /** NAS that did not answer ("사무실 NAS: 연결할 수 없습니다"). */
   nasErrors: string[];
+  /** Configured NAS (names only). Without one the NAS is never asked. */
+  nasNames: string[];
+  loadNas: () => Promise<void>;
+  /** The user stopped the running search (answers still on the way are dropped). */
+  stopped: boolean;
+  stop: () => void;
   /** (M12) Only this customer's folders ("" = everywhere). */
   customer: string;
   customers: string[];
@@ -66,11 +72,28 @@ export const useSearch = create<SearchState>((set, get) => ({
   nasHits: [],
   nasLoading: false,
   nasErrors: [],
+  nasNames: [],
+  stopped: false,
   customer: "",
   customers: [],
   setCustomer: (customer) => {
     set({ customer });
     get().setQuery(get().query);
+  },
+  loadNas: async () => {
+    try {
+      set({ nasNames: await ipc.nasNames() });
+    } catch {
+      set({ nasNames: [] });
+    }
+  },
+  stop: () => {
+    ++generation;
+    clearTimeout(ftsTimer);
+    clearTimeout(semTimer);
+    clearTimeout(nasTimer);
+    const busy = get().loading || get().semanticLoading || get().nasLoading;
+    set({ loading: false, semanticLoading: false, nasLoading: false, stopped: busy });
   },
   loadCustomers: async () => {
     try {
@@ -83,7 +106,7 @@ export const useSearch = create<SearchState>((set, get) => ({
   },
   setQuery: (query) => {
     const customer = get().customer || null;
-    set({ query });
+    set({ query, stopped: false });
     clearTimeout(ftsTimer);
     clearTimeout(semTimer);
     clearTimeout(nasTimer);
@@ -93,9 +116,11 @@ export const useSearch = create<SearchState>((set, get) => ({
       return;
     }
     // Customer folders are this PC's; with that filter the NAS is not asked.
-    if (customer) set({ nasHits: [], nasErrors: [], nasLoading: false });
+    // No NAS set up (설정 › NAS): never asked, nothing shown about it.
+    if (customer || !get().nasNames.length) set({ nasHits: [], nasErrors: [], nasLoading: false });
     else
       nasTimer = setTimeout(async () => {
+        if (gen !== generation) return;
         set({ nasLoading: true });
         try {
           const r = await ipc.nasSearch(query, 30);
@@ -108,6 +133,7 @@ export const useSearch = create<SearchState>((set, get) => ({
     // meaning answer) are dropped.
     let merged = false;
     ftsTimer = setTimeout(async () => {
+      if (gen !== generation) return;
       set({ loading: true });
       try {
         const hits = await ipc.search(query, 50, customer);
@@ -118,6 +144,7 @@ export const useSearch = create<SearchState>((set, get) => ({
     }, FTS_DELAY_MS);
     if (get().semantic?.state === "off") return;
     semTimer = setTimeout(async () => {
+      if (gen !== generation) return;
       set({ semanticLoading: true });
       try {
         const r = await ipc.searchSemantic(query, 50, customer);

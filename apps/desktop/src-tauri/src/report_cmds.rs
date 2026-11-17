@@ -461,14 +461,17 @@ pub async fn apply_plan(
         // moves are not picked up again as new files.
         let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
         let plan = restructure::load(mover.store(), id).map_err(err)?;
-        let r = restructure::apply(
+        let job = crate::job::begin(&app, "미리보기 적용 중", ids.len());
+        let r = restructure::apply_with_progress(
             mover,
             &plan,
             Some(&ids),
             &protected(&cfg, &protect),
             Some(&IndexOptions::from_config(&cfg)),
+            &|done, total| job.progress(done, total),
         )
         .map_err(err)?;
+        drop(job);
         watch::emit_activity(
             &app,
             "info",
@@ -574,9 +577,9 @@ pub async fn open_plan(app: AppHandle, id: i64) -> CmdResult<PlanDto> {
 pub async fn list_batches(app: AppHandle, limit: Option<usize>) -> CmdResult<Vec<BatchSummary>> {
     blocking(move || {
         let state = app.state::<AppState>();
-        let inner = state.lock_inner();
-        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
-        mover.store().batches(limit.unwrap_or(100)).map_err(err)
+        let reader = state.reader();
+        let store = reader.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        store.batches(limit.unwrap_or(100)).map_err(err)
     })
     .await
 }
@@ -593,10 +596,10 @@ pub struct MoveRowDto {
 pub async fn batch_moves(app: AppHandle, batch_id: String) -> CmdResult<Vec<MoveRowDto>> {
     blocking(move || {
         let state = app.state::<AppState>();
-        let inner = state.lock_inner();
-        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
-        let rows = mover.store().moves_in_batch(&batch_id).map_err(err)?;
-        let chain = report::find::Chain::load(mover.store()).map_err(err)?;
+        let reader = state.reader();
+        let store = reader.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        let rows = store.moves_in_batch(&batch_id).map_err(err)?;
+        let chain = report::find::Chain::load(store).map_err(err)?;
         Ok(rows
             .into_iter()
             .map(|e| MoveRowDto {
@@ -618,9 +621,9 @@ pub async fn find_moved(
 ) -> CmdResult<Vec<report::find::FoundMove>> {
     blocking(move || {
         let state = app.state::<AppState>();
-        let inner = state.lock_inner();
-        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
-        report::find::find_moved(mover.store(), &query, limit.unwrap_or(30).min(200)).map_err(err)
+        let reader = state.reader();
+        let store = reader.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        report::find::find_moved(store, &query, limit.unwrap_or(30).min(200)).map_err(err)
     })
     .await
 }
@@ -632,6 +635,7 @@ pub async fn undo_move(app: AppHandle, id: i64) -> CmdResult<UndoDto> {
     blocking(move || {
         let state = app.state::<AppState>();
         let inner = state.lock_inner();
+        let _job = crate::job::begin(&app, "되돌리는 중", 0);
         let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
         let report = mover.undo_one(id).map_err(err)?;
         reindex_undo(
@@ -660,15 +664,14 @@ pub async fn count_moves_since(
 ) -> CmdResult<usize> {
     blocking(move || {
         let state = app.state::<AppState>();
-        let inner = state.lock_inner();
-        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        let reader = state.reader();
+        let store = reader.as_ref().ok_or("DB가 열려 있지 않습니다")?;
         let since = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0)
             - since_secs_ago.max(0);
-        Ok(mover
-            .store()
+        Ok(store
             .active_moves_since(since, auto_only)
             .map_err(err)?
             .len())
@@ -689,6 +692,7 @@ pub async fn undo_since(
     blocking(move || {
         let state = app.state::<AppState>();
         let inner = state.lock_inner();
+        let _job = crate::job::begin(&app, "되돌리는 중", 0);
         let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
         let since = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -718,6 +722,7 @@ pub async fn undo_batch(app: AppHandle, batch_id: String) -> CmdResult<UndoDto> 
     blocking(move || {
         let state = app.state::<AppState>();
         let inner = state.lock_inner();
+        let _job = crate::job::begin(&app, "되돌리는 중", 0);
         let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
         let report = mover.undo_batch(&batch_id).map_err(err)?;
         reindex_undo(
@@ -750,9 +755,9 @@ pub async fn today_moves(
 ) -> CmdResult<tidy_core::report::today::TodaySummary> {
     blocking(move || {
         let state = app.state::<AppState>();
-        let inner = state.lock_inner();
-        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
-        let entries = mover.store().moves_since(since).map_err(err)?;
+        let reader = state.reader();
+        let store = reader.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        let entries = store.moves_since(since).map_err(err)?;
         Ok(tidy_core::report::today::summarize(
             &entries,
             since,
@@ -785,6 +790,7 @@ pub async fn trash_duplicates(
     blocking(move || {
         let state = app.state::<AppState>();
         let inner = state.lock_inner();
+        let _job = crate::job::begin(&app, "휴지통으로 보내는 중", 0);
         let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
         let batch = tidy_core::engine::new_batch_id();
         let r = mover.trash_duplicates(&groups, &batch);
@@ -837,6 +843,7 @@ pub async fn remove_empty_folders(app: AppHandle, paths: Vec<String>) -> CmdResu
     blocking(move || {
         let state = app.state::<AppState>();
         let inner = state.lock_inner();
+        let _job = crate::job::begin(&app, "빈 폴더 정리 중", 0);
         let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
         let batch = tidy_core::engine::new_batch_id();
         let paths: Vec<std::path::PathBuf> = paths.into_iter().map(Into::into).collect();

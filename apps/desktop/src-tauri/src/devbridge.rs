@@ -33,6 +33,7 @@ const EVENTS: &[&str] = &[
     crate::windows::EV_NAVIGATE,
     crate::windows::EV_FOCUS_SEARCH,
     crate::overview::EV_ORGANIZE,
+    crate::job::EV_JOB,
 ];
 
 #[derive(Default)]
@@ -461,6 +462,8 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         "nas_search" => {
             ok(crate::nas::nas_search(app, arg(&args, "query")?, arg(&args, "limit")?).await?)
         }
+        "current_job" => ok(crate::job::current_job(app).await?),
+        "nas_names" => ok(crate::nas::nas_names(app).await?),
         "nas_pending" => ok(crate::nas::nas_pending(app).await?),
         "nas_resolve" => ok(crate::nas::nas_resolve(
             app,
@@ -490,6 +493,46 @@ async fn dispatch(app: AppHandle, cmd: &str, args: Value) -> Result<Value, Strin
         }
         // Test-only: what open_url / open_folder recorded (TIDY_E2E_NO_OPEN).
         "debug_opened" => ok(about::opened()),
+        // e2e fix-search: "app" stands in for a long apply holding the app
+        // lock (search must still answer); "search" makes search itself slow
+        // (to stop it).
+        // e2e fix-busy: a long job like applying a plan (holds the app lock,
+        // shows the job bar with progress for `ms`).
+        "debug_job" => {
+            let ms: u64 = arg(&args, "ms")?;
+            let total: usize = arg(&args, "total")?;
+            let app = app.clone();
+            std::thread::spawn(move || {
+                use tauri::Manager;
+                let state = app.state::<crate::state::AppState>();
+                let _inner = state.lock_inner();
+                let job = crate::job::begin(&app, "미리보기 적용 중", total);
+                let steps = total.max(1);
+                for i in 0..steps {
+                    job.progress(i, total);
+                    std::thread::sleep(std::time::Duration::from_millis(ms / steps as u64));
+                }
+            });
+            ok(true)
+        }
+        "debug_hold_lock" => {
+            let ms: u64 = arg(&args, "ms")?;
+            let which: String = arg(&args, "which")?;
+            let app = app.clone();
+            std::thread::spawn(move || {
+                use tauri::Manager;
+                let state = app.state::<crate::state::AppState>();
+                let wait = std::time::Duration::from_millis(ms);
+                if which == "search" {
+                    let _s = state.read_store.lock();
+                    std::thread::sleep(wait);
+                } else {
+                    let _inner = state.lock_inner();
+                    std::thread::sleep(wait);
+                }
+            });
+            ok(true)
+        }
         other => Err(format!("unknown command {other}")),
     }
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import * as ipc from "../ipc/commands";
-import { onActivity, onNavigate, onPending, onProgress, onStatus } from "../ipc/events";
+import { onActivity, onJob, onNavigate, onPending, onProgress, onStatus } from "../ipc/events";
+import { useJob } from "../store/job";
 import { useProgress } from "../store/progress";
 import { formatSize } from "../components/format";
 import type { MainTab } from "../ipc/types";
@@ -57,6 +58,7 @@ export function MainWindow() {
   useEffect(() => {
     void refresh();
     void refreshPending();
+    void useJob.getState().load();
     const subs = [
       onNavigate((t, q) => {
         // The event reaches every window; only main-window tabs apply here.
@@ -74,6 +76,7 @@ export function MainWindow() {
         }
       }),
       onStatus(() => void refresh()),
+      onJob((j) => useJob.getState().set(j)),
       onProgress(updateProgress),
       onPending(() => {
         void refresh();
@@ -149,6 +152,7 @@ export function MainWindow() {
           {helpErr && <span className="error small" title={helpErr}>열지 못했습니다</span>}
         </div>
       </header>
+      <JobBar />
       {tab !== "settings" && <StatusBar />}
       <section className="content">
         {tab === "activity" && <ActivityView />}
@@ -168,6 +172,54 @@ const AI_LABEL = {
   unavailable: "AI 사용 불가 — 규칙만",
   starting: "AI 확인 중…",
 } as const;
+
+/** "2분 5초" */
+function elapsed(secs: number): string {
+  const s = Math.max(0, Math.floor(secs));
+  if (s < 60) return `${s}초`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}분 ${s % 60}초`;
+  return `${Math.floor(m / 60)}시간 ${m % 60}분`;
+}
+
+/**
+ * (0.18.1) A long job (apply / undo…) is running: what, how far, for how
+ * long. Shown on every tab, also after F5, so the window never looks dead.
+ */
+function JobBar() {
+  const job = useJob((s) => s.job);
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    if (!job) return;
+    const t = setInterval(() => setNow(Date.now() / 1000), 1000);
+    return () => clearInterval(t);
+  }, [job]);
+  if (!job) return null;
+  const counted = job.total > 0;
+  const pct = counted ? Math.min(100, Math.round((job.done / job.total) * 100)) : null;
+  return (
+    <div className="jobbar" role="status" aria-live="polite" data-testid="jobbar">
+      <span className="spinner" aria-hidden />
+      <span className="job-what">
+        <b>{job.what}</b>
+        {counted && (
+          <>
+            {" "}
+            · {job.done.toLocaleString()} / {job.total.toLocaleString()}개 ({pct}%)
+          </>
+        )}{" "}
+        · {elapsed(now - job.started)}째
+      </span>
+      <progress
+        className="job-progress"
+        data-testid="job-progress"
+        max={counted ? job.total : undefined}
+        value={counted ? job.done : undefined}
+      />
+      <span className="muted small job-note">끝날 때까지 다른 화면은 볼 수 있고, 옮기기·되돌리기는 이 일이 끝난 뒤 이어서 합니다</span>
+    </div>
+  );
+}
 
 const PHASE = { copy: "NAS 복사 중", verify: "검증 중", done: "복사 완료" } as const;
 

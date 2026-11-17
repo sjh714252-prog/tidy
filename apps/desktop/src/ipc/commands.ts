@@ -1,6 +1,7 @@
 // Typed wrappers for every Tauri command (src-tauri/src/commands.rs).
 import { inTauri, invoke } from "./transport";
 import type {
+  JobInfo,
   EmptyRemoveResult,
   AboutInfo,
   Overview,
@@ -265,6 +266,10 @@ export const nasSettings = (name: string) => invoke<AgentSettings>("nas_settings
 export const nasSaveSettings = (name: string, settings: AgentSettings) =>
   invoke<AgentSettings>("nas_save_settings", { name, settings });
 export const nasDirs = (name: string, path: string | null) => invoke<RemoteDir[]>("nas_dirs", { name, path });
+/** (0.18.1) The long job running now, if any. */
+export const currentJob = () => invoke<JobInfo | null>("current_job");
+/** Configured NAS names only (no network). */
+export const nasNames = () => invoke<string[]>("nas_names");
 export const nasSearch = (query: string, limit = 30) => invoke<NasSearchResult>("nas_search", { query, limit });
 export const nasPending = () => invoke<NasPendingList>("nas_pending");
 export const nasResolve = (name: string, ids: number[], decision: Decision) =>

@@ -92,6 +92,8 @@ pub struct StatusDto {
     pub organize_roots: Vec<String>,
     /// (M11) A newer release found by the last update check.
     pub update: Option<tidy_core::update::UpdateInfo>,
+    /// (0.18.1) A long job running now (apply / undo…).
+    pub job: Option<crate::job::JobDto>,
 }
 
 pub fn status(app: &AppHandle) -> StatusDto {
@@ -116,14 +118,16 @@ pub fn status(app: &AppHandle) -> StatusDto {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
-    let inner = state.lock_inner();
-    let (pending_count, files_indexed) = inner
-        .mover
+    // (0.18.1) Never the app lock: a long apply holds it, and a window
+    // without a status looks dead.
+    let cfg = state.config();
+    let (pending_count, files_indexed) = state
+        .reader()
         .as_ref()
-        .map(|m| {
+        .map(|st| {
             (
-                m.store().pending_count().unwrap_or(0),
-                m.store().index_stats().map(|s| s.files).unwrap_or(0),
+                st.pending_count().unwrap_or(0),
+                st.index_stats().map(|s| s.files).unwrap_or(0),
             )
         })
         .unwrap_or((0, 0));
@@ -135,11 +139,11 @@ pub fn status(app: &AppHandle) -> StatusDto {
     StatusDto {
         config_path: s(&state.config_path),
         config_exists: state.config_path.is_file(),
-        rules_path: s(&inner.cfg.classify.rules),
-        rules_exists: inner.cfg.classify.rules.is_file(),
-        db_path: s(&inner.cfg.store.db_path()),
+        rules_path: s(&cfg.classify.rules),
+        rules_exists: cfg.classify.rules.is_file(),
+        db_path: s(&cfg.store.db_path()),
         watching: if running {
-            inner.cfg.watches.iter().map(|w| s(&w.path)).collect()
+            cfg.watches.iter().map(|w| s(&w.path)).collect()
         } else {
             Vec::new()
         },
@@ -148,15 +152,15 @@ pub fn status(app: &AppHandle) -> StatusDto {
         pending_count,
         files_indexed,
         last_error: state.last_error(),
-        hotkey: inner.cfg.general.hotkey.clone(),
-        ai_state: match (&ai, inner.cfg.ai.enabled) {
+        hotkey: cfg.general.hotkey.clone(),
+        ai_state: match (&ai, cfg.ai.enabled) {
             (_, false) => "off",
             (Some(Ok(_)), _) => "ready",
             (Some(Err(_)), _) => "unavailable",
             (None, true) => "starting",
         },
         ai_detail: match ai {
-            Some(Ok(m)) | Some(Err(m)) if inner.cfg.ai.enabled => Some(m),
+            Some(Ok(m)) | Some(Err(m)) if cfg.ai.enabled => Some(m),
             _ => None,
         },
         offline: if running {
@@ -170,15 +174,20 @@ pub fn status(app: &AppHandle) -> StatusDto {
         } else {
             Vec::new()
         },
-        onboarded: inner.cfg.onboarded(),
+        onboarded: cfg.onboarded(),
         semantic_state,
         semantic_detail,
-        watch_total: inner.cfg.watches.len(),
-        watch_paths: inner.cfg.watches.iter().map(|w| s(&w.path)).collect(),
-        watch_aliases: inner.cfg.watches.iter().map(|w| w.alias.clone()).collect(),
-        organize_in_place: crate::overview::organize_summary(&inner.cfg.watches).0,
-        organize_roots: crate::overview::organize_summary(&inner.cfg.watches).1,
+        watch_total: cfg.watches.len(),
+        watch_paths: cfg.watches.iter().map(|w| s(&w.path)).collect(),
+        watch_aliases: cfg.watches.iter().map(|w| w.alias.clone()).collect(),
+        organize_in_place: crate::overview::organize_summary(&cfg.watches).0,
+        organize_roots: crate::overview::organize_summary(&cfg.watches).1,
         update: crate::about::available(),
+        job: state
+            .job
+            .lock()
+            .map(|j| j.clone())
+            .unwrap_or_else(|e| e.into_inner().clone()),
     }
 }
 
@@ -201,10 +210,9 @@ pub async fn set_paused(app: AppHandle, paused: bool) -> CmdResult<StatusDto> {
 pub async fn list_ignored(app: AppHandle) -> CmdResult<Vec<String>> {
     blocking(move || {
         let state = app.state::<AppState>();
-        let inner = state.lock_inner();
-        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
-        Ok(mover
-            .store()
+        let reader = state.reader();
+        let store = reader.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        Ok(store
             .list_ignored()
             .map_err(|e| e.to_string())?
             .iter()
@@ -334,9 +342,9 @@ pub async fn search(
             return Ok(Vec::new());
         }
         let state = app.state::<AppState>();
-        let inner = state.lock_inner();
-        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
-        let hits = fts_search(mover.store(), &q, &search_opts(limit)).map_err(|e| e.to_string())?;
+        let store = state.read_store.lock().unwrap_or_else(|e| e.into_inner());
+        let store = store.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        let hits = fts_search(store, &q, &search_opts(limit)).map_err(|e| e.to_string())?;
         Ok(hits.into_iter().map(hit_dto).collect())
     })
     .await
@@ -406,10 +414,9 @@ pub async fn search_semantic(
             }
             None => {
                 let state = app.state::<AppState>();
-                let inner = state.lock_inner();
-                let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
-                let mut out =
-                    hybrid_search(mover.store(), None, &q, &opts).map_err(|e| e.to_string())?;
+                let store = state.read_store.lock().unwrap_or_else(|e| e.into_inner());
+                let store = store.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+                let mut out = hybrid_search(store, None, &q, &opts).map_err(|e| e.to_string())?;
                 out.note = state
                     .semantic
                     .lock()
@@ -552,12 +559,18 @@ pub async fn list_pending(app: AppHandle) -> CmdResult<Vec<PendingDto>> {
     blocking(move || {
         let state = app.state::<AppState>();
         let (items, mut asks) = {
-            let inner = state.lock_inner();
-            let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
-            let items = mover.store().list_pending().map_err(|e| e.to_string())?;
-            let dict = tidy_core::curate::ContextDict::load(&inner.cfg.curate.context).ok();
-            // (0.18.0) Choices for "어느 고객사?" (the cache's customers too).
+            let cfg = state.config();
+            let reader = state.reader();
+            let store = reader.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+            let items = store.list_pending().map_err(|e| e.to_string())?;
+            let dict = tidy_core::curate::ContextDict::load(&cfg.curate.context).ok();
+            // (0.18.0) Choices for "어느 고객사?" (the cache's customers too),
+            // worked out once per folder (0.18.1: thousands of questions).
             let mut asks = std::collections::HashMap::new();
+            let mut by_anchor: std::collections::HashMap<
+                std::path::PathBuf,
+                Vec<tidy_core::curate::sense::CustomerChoice>,
+            > = std::collections::HashMap::new();
             for p in &items {
                 if p.reason.as_deref() != Some(tidy_core::curate::sense::ASK_CUSTOMER_RULE) {
                     continue;
@@ -569,14 +582,17 @@ pub async fn list_pending(app: AppHandle) -> CmdResult<Vec<PendingDto>> {
                 else {
                     continue;
                 };
-                asks.insert(
-                    p.id,
-                    tidy_core::curate::sense::customer_choices(
-                        dict.as_ref(),
-                        Some(mover.store()),
-                        anchor,
-                    ),
-                );
+                let choices = by_anchor
+                    .entry(anchor.to_path_buf())
+                    .or_insert_with(|| {
+                        tidy_core::curate::sense::customer_choices(
+                            dict.as_ref(),
+                            Some(store),
+                            anchor,
+                        )
+                    })
+                    .clone();
+                asks.insert(p.id, choices);
             }
             (items, asks)
         };
@@ -727,9 +743,17 @@ pub async fn resolve_pending_batch(
         move || {
             let decision: Decision = decision.into();
             let batch = new_batch_id();
+            let job =
+                (ids.len() > 1).then(|| crate::job::begin(&app, "확인 대기 처리 중", ids.len()));
             Ok(ids
                 .iter()
-                .map(|&id| resolve_one(&app, id, &decision, &batch))
+                .enumerate()
+                .map(|(i, &id)| {
+                    if let Some(j) = &job {
+                        j.progress(i, ids.len());
+                    }
+                    resolve_one(&app, id, &decision, &batch)
+                })
                 .collect())
         }
     })
@@ -852,6 +876,7 @@ pub async fn undo_last(app: AppHandle) -> CmdResult<Option<UndoDto>> {
     blocking(move || {
         let state = app.state::<AppState>();
         let inner = state.lock_inner();
+        let _job = crate::job::begin(&app, "되돌리는 중", 0);
         let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
         let Some(report) = mover.undo_last().map_err(|e| e.to_string())? else {
             return Ok(None);
@@ -1578,10 +1603,10 @@ pub async fn list_learn(app: AppHandle) -> CmdResult<Vec<LearnDto>> {
         let state = app.state::<AppState>();
         let cfg = state.config();
         let rules = RuleSet::load(&cfg.classify.rules).unwrap_or_default();
-        let inner = state.lock_inner();
-        let mover = inner.mover.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+        let reader = state.reader();
+        let store = reader.as_ref().ok_or("DB가 열려 있지 않습니다")?;
         Ok(
-            learner::suggestions(mover.store(), &rules, cfg.classify.learn_threshold)
+            learner::suggestions(store, &rules, cfg.classify.learn_threshold)
                 .map_err(|e| e.to_string())?
                 .into_iter()
                 .map(|s| LearnDto {

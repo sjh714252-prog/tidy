@@ -2,10 +2,17 @@
 //! own database connection; UI commands use `Inner::mover` (a second
 //! connection) and share `expected` so moves made from the confirm popup
 //! are not picked up by the watcher as new files.
+//!
+//! Reading never waits for `inner`: a plan applied from the UI holds it for
+//! as long as the moves take (minutes for thousands of files). Search and
+//! the other read-only screens (status, queue, history, today) read the
+//! config from `cfg_view` and the database through their own connection
+//! (`read_store`, WAL lets it read while the mover writes). A long job shows
+//! itself in `job` (0.18.1).
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::thread::JoinHandle;
 
 use tidy_core::config::Config;
@@ -15,6 +22,12 @@ use tidy_core::store::Store;
 pub struct AppState {
     pub config_path: PathBuf,
     pub inner: Mutex<Inner>,
+    /// Copy of `Inner::cfg`, readable while `inner` is held by a long job.
+    cfg_view: RwLock<Config>,
+    /// Read-only use: the screens' own database connection (`None` = no DB).
+    pub read_store: Mutex<Option<Store>>,
+    /// The long job holding `inner` now (apply / undo…), for the windows.
+    pub job: Mutex<Option<crate::job::JobDto>>,
     pub expected: Arc<ExpectedMoves>,
     pub watch: Mutex<Option<WatchHandle>>,
     pub paused: AtomicBool,
@@ -59,6 +72,9 @@ impl AppState {
                 mover: None,
                 hotkey: None,
             }),
+            cfg_view: RwLock::new(Config::default()),
+            read_store: Mutex::new(None),
+            job: Mutex::new(None),
             expected,
             watch: Mutex::new(None),
             paused: AtomicBool::new(false),
@@ -106,17 +122,38 @@ impl AppState {
             slot.handle = handle;
             slot.off = off;
         }
+        let search = mover
+            .as_ref()
+            .and_then(|_| Store::open(&cfg.store.db_path()).ok());
+        *self.read_store.lock().unwrap_or_else(|e| e.into_inner()) = search;
+        *self.cfg_view.write().unwrap_or_else(|e| e.into_inner()) = cfg.clone();
         let mut inner = self.lock_inner();
         inner.cfg = cfg;
         inner.mover = mover;
+    }
+
+    /// Change the config in memory (both copies) without a full reload.
+    pub fn update_config(&self, f: impl Fn(&mut Config)) {
+        f(&mut self.cfg_view.write().unwrap_or_else(|e| e.into_inner()));
+        f(&mut self.lock_inner().cfg);
     }
 
     pub fn lock_inner(&self) -> MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// The read-only connection (never waits for a long job). Hold it only
+    /// for reads.
+    pub fn reader(&self) -> MutexGuard<'_, Option<Store>> {
+        self.read_store.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The current config. Does not wait for `inner` (a long apply).
     pub fn config(&self) -> Config {
-        self.lock_inner().cfg.clone()
+        self.cfg_view
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub fn set_error(&self, msg: String) {

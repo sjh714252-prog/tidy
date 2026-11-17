@@ -107,13 +107,12 @@ fn security_dto(app: &AppHandle, cfg: &Config) -> SecurityDto {
     let s = &cfg.security;
     let key = security::vault_key_status();
     let state = app.state::<AppState>();
-    let inner = state.lock_inner();
-    let (suspected, unencrypted, locked) = inner
-        .mover
+    let reader = state.reader();
+    let (suspected, unencrypted, locked) = reader
         .as_ref()
-        .map(|m| {
-            let (a, b) = m.store().pii_totals(None).unwrap_or((0, 0));
-            (a, b, m.store().active_encrypted().unwrap_or(0))
+        .map(|st| {
+            let (a, b) = st.pii_totals(None).unwrap_or((0, 0));
+            (a, b, st.active_encrypted().unwrap_or(0))
         })
         .unwrap_or((0, 0, 0));
     SecurityDto {
@@ -204,11 +203,10 @@ pub fn is_vault_zip(app: &AppHandle, path: &Path) -> bool {
         return false;
     }
     let state = app.state::<AppState>();
-    let inner = state.lock_inner();
-    let Some(m) = inner.mover.as_ref() else {
+    let reader = state.reader();
+    let Some(store) = reader.as_ref() else {
         return false;
     };
-    let store = m.store();
     store.get_file(path).ok().flatten().is_some_and(|f| f.vault)
         || store
             .active_move_to(path)

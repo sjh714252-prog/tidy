@@ -12,7 +12,8 @@ const pct = (x: number) => `${Math.round(x * 100)}%`;
 
 /**
  * Global-hotkey search (SPEC §5.6, §9.2). Keyboard only:
- * ↑/↓ select · Enter open · Ctrl+Enter open folder · Esc hide.
+ * ↑/↓ select · Enter open · Ctrl+Enter open folder · Esc stop / clear / hide.
+ * The ✕ button closes it; "중단" stops a search still running.
  */
 export function SearchWindow() {
   const {
@@ -37,6 +38,9 @@ export function SearchWindow() {
     customers,
     setCustomer,
     loadCustomers,
+    loadNas,
+    stop,
+    stopped,
   } = useSearch();
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLUListElement>(null);
@@ -49,10 +53,12 @@ export function SearchWindow() {
     focus();
     void refreshSemantic();
     void loadCustomers();
+    void loadNas();
     const un = onFocusSearch(() => {
       focus();
       void refreshSemantic();
       void loadCustomers();
+      void loadNas();
     });
     return () => {
       void un.then((f) => f());
@@ -67,7 +73,12 @@ export function SearchWindow() {
   const current = hits[selected];
   /** NAS results open through the PC's own path to the share (설정 › NAS). */
   const target = current ? (isNasHit(current) ? current.localPath : current.path) : null;
-  const hide = () => void hideCurrentWindow();
+  const busy = loading || semanticLoading || nasLoading;
+  /** Closing also stops what is still running (answers are dropped). */
+  const hide = () => {
+    stop();
+    void hideCurrentWindow();
+  };
   const open = async (folder: boolean) => {
     if (!current) return;
     if (!target) {
@@ -95,7 +106,8 @@ export function SearchWindow() {
       void open(e.ctrlKey || e.metaKey);
     } else if (e.key === "Escape") {
       e.preventDefault();
-      if (query) setQuery("");
+      if (busy) stop();
+      else if (query) setQuery("");
       else hide();
     }
   };
@@ -136,6 +148,16 @@ export function SearchWindow() {
             ))}
           </select>
         )}
+        <button
+          type="button"
+          className="search-close"
+          data-testid="search-close"
+          aria-label="닫기"
+          title="닫기 (Esc를 한 번 더)"
+          onClick={hide}
+        >
+          ✕
+        </button>
       </div>
       <div className="search-body">
         <ul className="results" ref={list}>
@@ -185,8 +207,10 @@ export function SearchWindow() {
               <div className="r-dir">{isNasHit(h) && h.localPath ? h.localPath.slice(0, h.localPath.length - h.name.length - 1) || h.dir : h.dir}</div>
             </li>
           ))}
-          {!hits.length && query.trim() && !loading && !nasLoading && (
-            <li className="empty">{error ? `오류: ${error}` : "결과 없음"}</li>
+          {!hits.length && query.trim() && !busy && (
+            <li className="empty" data-testid="search-empty">
+              {error ? `오류: ${error}` : stopped ? "검색을 멈췄습니다 — 검색어를 고치면 다시 찾습니다" : "결과 없음"}
+            </li>
           )}
         </ul>
         <aside className="preview">
@@ -235,7 +259,9 @@ export function SearchWindow() {
               </div>
             </>
           ) : (
-            <p className="muted">↑↓ 선택 · Enter 열기 · Ctrl+Enter 폴더 열기 · Esc 닫기</p>
+            <p className="muted">
+              ↑↓ 선택 · Enter 열기 · Ctrl+Enter 폴더 열기 · Esc {busy ? "검색 중단" : query ? "지우기" : "닫기"}
+            </p>
           )}
         </aside>
       </div>
@@ -244,6 +270,12 @@ export function SearchWindow() {
           {loading ? "검색 중…" : hits.length ? `${pcHits.length}건` : ""}
           {nasHits.length > 0 && ` · NAS ${nasHits.length}건`}
           {nasLoading && " · NAS 찾는 중…"}
+          {stopped && !busy && <span data-testid="search-stopped">{hits.length ? " · " : ""}검색 멈춤</span>}
+          {busy && (
+            <button type="button" className="link search-stop" data-testid="search-stop" onClick={stop} title="Esc">
+              중단
+            </button>
+          )}
           {nasErrors.length > 0 && (
             <span className="warn" title={nasErrors.join("\n")}>
               {" "}

@@ -636,9 +636,12 @@ pub fn load(store: &Store, id: i64) -> Result<Plan, PlanError> {
 // ── preview & apply ─────────────────────────────────────────────────────
 
 fn selected<'a>(plan: &'a Plan, ids: Option<&'a [u32]>) -> impl Iterator<Item = &'a PlannedMove> {
+    // A set: plans of 20,000 items with 20,000 ticked ones made `contains`
+    // on the slice quadratic (0.18.1).
+    let ids: Option<std::collections::HashSet<u32>> = ids.map(|i| i.iter().copied().collect());
     plan.moves
         .iter()
-        .filter(move |m| ids.is_none_or(|ids| ids.contains(&m.id)))
+        .filter(move |m| ids.as_ref().is_none_or(|ids| ids.contains(&m.id)))
 }
 
 /// Expand moves into per-file moves (a folder move moves every file in it,
@@ -853,6 +856,19 @@ pub fn apply(
     protected: &[PathBuf],
     index: Option<&IndexOptions>,
 ) -> Result<ApplyReport, PlanError> {
+    apply_with_progress(mover, plan, ids, protected, index, &|_, _| {})
+}
+
+/// [`apply`], calling `progress(done, total)` before each item (and once at
+/// the end) so a window can show how far a long apply is (0.18.1).
+pub fn apply_with_progress(
+    mover: &Mover,
+    plan: &Plan,
+    ids: Option<&[u32]>,
+    protected: &[PathBuf],
+    index: Option<&IndexOptions>,
+    progress: &dyn Fn(usize, usize),
+) -> Result<ApplyReport, PlanError> {
     if let Some(batch) = &plan.applied_batch {
         return Err(PlanError::AlreadyApplied {
             id: plan.id,
@@ -913,7 +929,10 @@ pub fn apply(
         Ok(MoveOutcome::AlreadyInPlace(p)) => report.skipped.push((p, "이미 그 자리".into())),
         Err(e) => report.errors.push((src.to_path_buf(), e)),
     };
-    for m in selected(plan, ids) {
+    let items: Vec<_> = selected(plan, ids).collect();
+    let total = items.len();
+    for (i, m) in items.into_iter().enumerate() {
+        progress(i, total);
         // Unclassified work-context items stay where they are.
         if m.from == m.to {
             continue;
@@ -1025,6 +1044,7 @@ pub fn apply(
     if plan.id > 0 && !report.moved.is_empty() {
         store.mark_plan_applied(plan.id, &batch_id)?;
     }
+    progress(total, total);
     Ok(report)
 }
 
