@@ -75,6 +75,7 @@ pub fn run() {
             let handle = app.handle().clone();
             watch::init(&handle);
             tray::create(&handle)?;
+            windows::spawn_ui_watchdog(&handle);
             let hotkey = handle.state::<AppState>().config().general.hotkey;
             windows::register_hotkey(&handle, &hotkey);
             let cfg = handle.state::<AppState>().config();

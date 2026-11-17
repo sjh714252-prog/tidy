@@ -59,7 +59,14 @@ pub fn toggle_search(app: &AppHandle) {
 }
 
 /// Confirm popup: shown without stealing focus from what the user is doing.
+/// Called from the watch thread too: the window work is handed to the main
+/// thread without waiting (0.18.5, see `tray::on_main`).
 pub fn show_confirm(app: &AppHandle) {
+    let app2 = app.clone();
+    crate::tray::on_main(app, move || show_confirm_now(&app2));
+}
+
+fn show_confirm_now(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("confirm") {
         if !w.is_visible().unwrap_or(false) {
             if let Ok(Some(m)) = w.current_monitor() {
@@ -94,4 +101,43 @@ pub fn register_hotkey(app: &AppHandle, hotkey: &str) {
         }
         Err(e) => state.set_hotkey_error(Some(format!("단축키 {hotkey} 등록 실패: {e}"))),
     }
+}
+
+/// (0.18.5) Logs when the main thread (tray clicks, menus, windows) stops
+/// answering, and for how long, so a frozen tray leaves a trace in
+/// `tidy.log` ("로그 폴더 열기").
+pub fn spawn_ui_watchdog(app: &AppHandle) {
+    use std::time::{Duration, Instant};
+    const EVERY: Duration = Duration::from_secs(10);
+    const LIMIT: Duration = Duration::from_secs(20);
+    let app = app.clone();
+    let _ = std::thread::Builder::new()
+        .name("tidy-ui-watchdog".into())
+        .spawn(move || loop {
+            std::thread::sleep(EVERY);
+            let (tx, rx) = std::sync::mpsc::channel::<()>();
+            let sent = Instant::now();
+            if app
+                .run_on_main_thread(move || {
+                    let _ = tx.send(());
+                })
+                .is_err()
+            {
+                return; // the app is shutting down
+            }
+            if rx.recv_timeout(LIMIT).is_ok() {
+                continue;
+            }
+            tracing::warn!(
+                "UI thread not answering for {}s (tray clicks and menus do nothing meanwhile)",
+                LIMIT.as_secs()
+            );
+            if rx.recv().is_err() {
+                return;
+            }
+            tracing::warn!(
+                "UI thread answering again after {}s",
+                sent.elapsed().as_secs()
+            );
+        });
 }

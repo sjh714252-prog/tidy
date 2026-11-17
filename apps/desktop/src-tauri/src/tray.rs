@@ -14,6 +14,7 @@ use crate::{watch, windows};
 const TRAY_ID: &str = "tidy-tray";
 
 /// Menu items whose text changes at runtime.
+#[derive(Clone)]
 pub struct TrayItems {
     pending: MenuItem<Wry>,
     pause: MenuItem<Wry>,
@@ -82,27 +83,50 @@ pub fn toggle_pause(app: &AppHandle) {
 pub fn set_paused(app: &AppHandle, paused: bool) {
     let state = app.state::<AppState>();
     state.paused.store(paused, Ordering::Relaxed);
-    if let Some(items) = app.try_state::<Mutex<TrayItems>>() {
-        let items = items.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = items.pause.set_text(if paused {
-            "감시 재개"
-        } else {
-            "일시정지"
-        });
-    }
-    if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        let _ = tray.set_tooltip(Some(if paused {
-            "Tidy (일시정지)"
-        } else {
-            "Tidy"
-        }));
-    }
+    let pause = items(app).map(|i| i.pause);
+    let tray = app.tray_by_id(TRAY_ID);
+    on_main(app, move || {
+        if let Some(p) = pause {
+            let _ = p.set_text(if paused {
+                "감시 재개"
+            } else {
+                "일시정지"
+            });
+        }
+        if let Some(t) = tray {
+            let _ = t.set_tooltip(Some(if paused {
+                "Tidy (일시정지)"
+            } else {
+                "Tidy"
+            }));
+        }
+    });
     watch::restart(app);
 }
 
 pub fn set_pending(app: &AppHandle, count: u64) {
-    if let Some(items) = app.try_state::<Mutex<TrayItems>>() {
-        let items = items.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = items.pending.set_text(format!("확인 대기 {count}건"));
+    if let Some(i) = items(app) {
+        on_main(app, move || {
+            let _ = i.pending.set_text(format!("확인 대기 {count}건"));
+        });
+    }
+}
+
+/// A copy of the menu handles; the lock is never held while the menu is
+/// changed (0.18.5: holding it while another thread waited for the main
+/// thread froze the tray — no left click, no right-click menu).
+fn items(app: &AppHandle) -> Option<TrayItems> {
+    let items = app.try_state::<Mutex<TrayItems>>()?;
+    let items = items.lock().unwrap_or_else(|e| e.into_inner());
+    Some(items.clone())
+}
+
+/// Run a tray/menu change on the main thread without waiting for it. Off
+/// the main thread, Tauri's menu setters block until the main thread runs
+/// them; a caller that holds a lock (or the main thread itself, still in
+/// `setup`) could then wait on each other forever.
+pub fn on_main(app: &AppHandle, f: impl FnOnce() + Send + 'static) {
+    if let Err(e) = app.run_on_main_thread(f) {
+        tracing::warn!("tray update not sent: {e}");
     }
 }
