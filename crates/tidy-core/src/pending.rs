@@ -175,6 +175,41 @@ pub fn duplicate_at_dest(src: &Path, dest_dir: &Path, new_name: Option<&str>) ->
     same.then_some(existing)
 }
 
+/// (0.18.2) A queued file that was deleted or moved away outside Tidy:
+/// it is not there, but the place it was in can be seen — its folder still
+/// exists, or one of `roots` (watch folders, organize roots) that holds it
+/// does. A file on a NAS or drive that is just unreachable right now is
+/// not "gone" (its folder and root are missing too), so it stays queued.
+pub fn is_gone(path: &Path, roots: &[PathBuf]) -> bool {
+    if path.is_file() || path.exists() {
+        return false;
+    }
+    if path.parent().is_some_and(|d| d.is_dir()) {
+        return true;
+    }
+    roots
+        .iter()
+        .filter(|r| !r.as_os_str().is_empty() && path.starts_with(r))
+        .any(|r| r.is_dir())
+}
+
+/// (0.18.2) Drop queue entries whose file is gone ([`is_gone`]) — the user
+/// deleted it in Explorer, so there is nothing left to decide. Files are
+/// not touched; only the queue rows go. Returns the paths dropped.
+pub fn prune_gone(
+    store: &crate::store::Store,
+    roots: &[PathBuf],
+) -> Result<Vec<PathBuf>, PendingError> {
+    let mut out = Vec::new();
+    for p in store.list_pending()? {
+        if is_gone(&p.path, roots) {
+            store.remove_pending_id(p.id)?;
+            out.push(p.path);
+        }
+    }
+    Ok(out)
+}
+
 /// Apply `decision` to pending entry `id`. The entry is removed from the
 /// queue unless the move fails (then it stays for another try).
 pub fn resolve(
@@ -443,6 +478,37 @@ mod tests {
         assert!(file.exists());
         assert!(m.store().is_ignored(&file).unwrap());
         assert_eq!(m.store().pending_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn prune_gone_drops_deleted_files_but_keeps_unreachable_ones() {
+        let (dir, m, file) = setup();
+        let deleted = dir.path().join("압축 파일").join("1105.zip");
+        std::fs::create_dir_all(deleted.parent().unwrap()).unwrap();
+        std::fs::write(&deleted, b"x").unwrap();
+        // Whole sub-folder deleted, but the watch folder is there.
+        let folder_gone = dir.path().join("지운 폴더").join("a.txt");
+        // A NAS that is offline: neither the folder nor its root exist.
+        let offline = PathBuf::from("/없는-nas/공유/b.txt");
+        for p in [&file, &deleted, &folder_gone, &offline] {
+            m.store().upsert_pending(p, None, None).unwrap();
+        }
+        std::fs::remove_file(&deleted).unwrap();
+        let roots = vec![dir.path().to_path_buf(), PathBuf::from("/없는-nas/공유")];
+        let mut dropped = prune_gone(m.store(), &roots).unwrap();
+        dropped.sort();
+        let mut want = vec![deleted.clone(), folder_gone.clone()];
+        want.sort();
+        assert_eq!(dropped, want);
+        let left: Vec<_> = m
+            .store()
+            .list_pending()
+            .unwrap()
+            .into_iter()
+            .map(|p| p.path)
+            .collect();
+        assert!(left.contains(&file) && left.contains(&offline) && left.len() == 2);
+        assert!(file.is_file(), "files are never touched");
     }
 
     #[test]

@@ -1375,6 +1375,10 @@ fn cmd_pending(config: Option<PathBuf>, args: PendingArgs) -> Result<()> {
         return Ok(());
     }
     let store = Store::open(&cfg.store.db_path())?;
+    let gone = tidy_core::pending::prune_gone(&store, &cfg.queue_roots())?;
+    if !gone.is_empty() {
+        println!("dropped {} entries whose file was deleted", gone.len());
+    }
     let items = store.list_pending()?;
     if items.is_empty() {
         println!("no pending files");

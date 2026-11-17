@@ -558,10 +558,21 @@ pub struct AskCustomerDto {
 pub async fn list_pending(app: AppHandle) -> CmdResult<Vec<PendingDto>> {
     blocking(move || {
         let state = app.state::<AppState>();
+        let mut pruned = false;
         let (items, mut asks) = {
             let cfg = state.config();
             let reader = state.reader();
             let store = reader.as_ref().ok_or("DB가 열려 있지 않습니다")?;
+            // (0.18.2) Files deleted in Explorer leave the queue on their own
+            // (an unreachable NAS does not count as deleted).
+            match tidy_core::pending::prune_gone(store, &cfg.queue_roots()) {
+                Ok(gone) if !gone.is_empty() => {
+                    tracing::info!("확인 대기에서 없는 파일 {}개 뺌", gone.len());
+                    pruned = true;
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!("확인 대기의 없는 파일 정리 실패: {e}"),
+            }
             let items = store.list_pending().map_err(|e| e.to_string())?;
             let dict = tidy_core::curate::ContextDict::load(&cfg.curate.context).ok();
             // (0.18.0) Choices for "어느 고객사?" (the cache's customers too),
@@ -596,6 +607,9 @@ pub async fn list_pending(app: AppHandle) -> CmdResult<Vec<PendingDto>> {
             }
             (items, asks)
         };
+        if pruned {
+            watch::pending_changed(&app, false);
+        }
         // (M14) The duplicate check may hash files: not under the app lock.
         Ok(items
             .into_iter()
