@@ -1,3 +1,4 @@
+import { useJob } from "./job";
 import { create } from "zustand";
 import * as ipc from "../ipc/commands";
 import type { Status } from "../ipc/types";
@@ -15,7 +16,10 @@ export const useStatus = create<StatusState>((set) => ({
   error: null,
   refresh: async () => {
     try {
-      set({ status: await ipc.getStatus(), error: null });
+      const status = await ipc.getStatus();
+      set({ status, error: null });
+      // (0.18.1) Also catches a job whose start/end event was missed.
+      useJob.getState().set(status.job ?? null);
     } catch (e) {
       set({ error: String(e) });
     }

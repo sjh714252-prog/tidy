@@ -8,6 +8,7 @@ mod commands;
 mod context_cmds;
 #[cfg(debug_assertions)]
 mod devbridge;
+mod job;
 mod legacy;
 mod nas;
 mod ocr;
@@ -205,6 +206,7 @@ pub fn run() {
             report_cmds::run_command,
             report_cmds::preview_plan,
             report_cmds::apply_plan,
+            job::current_job,
             report_cmds::list_plans,
             report_cmds::open_plan,
             report_cmds::discard_plan,

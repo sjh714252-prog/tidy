@@ -37,6 +37,8 @@ export interface Status {
   organizeRoots: string[];
   /** (M11) Newer release found by the last update check. */
   update: UpdateInfo | null;
+  /** (0.18.1) A long job running now (apply / undo…). */
+  job: JobInfo | null;
 }
 
 /** (M11) Latest release vs. this version (core `update::UpdateInfo`). */
@@ -1071,4 +1073,15 @@ export interface OrganizeResult {
   moved: number;
   skipped: number;
   errors: string[];
+}
+
+/** (0.18.1) The long job running now (src-tauri/src/job.rs). */
+export interface JobInfo {
+  /** "미리보기 적용 중" */
+  what: string;
+  done: number;
+  /** 0 = not counted. */
+  total: number;
+  /** Unix seconds. */
+  started: number;
 }

@@ -98,15 +98,12 @@ pub fn emit_duplicate(app: &AppHandle, path: &Path, existing: &Path) {
 /// unless quiet mode is on.
 pub fn pending_changed(app: &AppHandle, popup: bool) {
     let state = app.state::<AppState>();
-    let (count, quiet) = {
-        let inner = state.lock_inner();
-        let count = inner
-            .mover
-            .as_ref()
-            .and_then(|m| m.store().pending_count().ok())
-            .unwrap_or(0);
-        (count, inner.cfg.general.quiet_mode)
-    };
+    let quiet = state.config().general.quiet_mode;
+    let count = state
+        .reader()
+        .as_ref()
+        .and_then(|st| st.pending_count().ok())
+        .unwrap_or(0);
     tray::set_pending(app, count);
     let _ = app.emit(EV_PENDING, count);
     if popup && !quiet && count > 0 {
