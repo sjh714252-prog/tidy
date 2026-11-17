@@ -86,9 +86,20 @@ fn names_say_where_files_go_and_undo_restores() {
         .handle(&put(&desk, "jre-8u121-linux-x64.zip"), &batch)
         .unwrap();
     assert!(
-        matches!(&a, Action::Moved { dst, rule, .. } if *dst == org.join("설치파일/Java/Linux/jre-8u121-linux-x64.zip") && rule == "Java (Linux) 설치 파일"),
+        matches!(&a, Action::Moved { dst, rule, .. } if *dst == org.join("설치파일/Java/Linux/jre-8u121-linux-x64.zip") && rule == "Java (Linux · x64) 설치 파일"),
         "{a:?}"
     );
+    // (0.18.3) A vendor before the name, builds for two CPUs: one folder.
+    for n in [
+        "amazon-corretto-8-aarch64-linux-jdk.zip",
+        "amazon-corretto-8-x64-linux-jdk.zip",
+    ] {
+        let a = e.handle(&put(&desk, n), &batch).unwrap();
+        assert!(
+            matches!(&a, Action::Moved { dst, rule, .. } if *dst == org.join("설치파일/Java/Linux").join(n) && rule.starts_with("Java (Linux · ")),
+            "{a:?}"
+        );
+    }
 
     // An ordinary zip still goes by the rules.
     let a = e.handle(&put(&desk, "사진 모음.zip"), &batch).unwrap();
@@ -141,11 +152,12 @@ fn names_say_where_files_go_and_undo_restores() {
 
     // Undo the watch batch: everything back on the desktop.
     let u = e.mover().undo_batch(&batch).unwrap();
-    assert_eq!(u.restored.len(), 5, "{u:?}");
+    assert_eq!(u.restored.len(), 7, "{u:?}");
     for n in [
         "현대홈쇼핑_13일.zip",
         "KTRCS_MANUAL_v2.0.zip",
         "jre-8u121-linux-x64.zip",
+        "amazon-corretto-8-x64-linux-jdk.zip",
     ] {
         assert!(desk.join(n).exists(), "{n}");
     }
@@ -210,6 +222,10 @@ fn rebuild_reads_names_too() {
     w("압축파일/KTRCS_MANUAL_v2.0.zip");
     w("압축파일/jre-8u121-linux-x64.zip");
     w("압축파일/사진 모음.zip");
+    // (0.18.3) Earlier placed apart: by the zip rule and by the AI's topic.
+    w("압축파일/amazon-corretto-8-aarch64-linux-jdk.zip");
+    w("기타/개발/amazon-corretto-8-x64-linux-jdk.zip");
+    w("기타/개발/서버 점검 메모.txt");
 
     let mut cfg = tidy_core::Config::default();
     cfg.curate.context = tmp.path().join("context.toml");
@@ -238,7 +254,7 @@ fn rebuild_reads_names_too() {
         let s = got.iter().find(|l| l.contains(n)).unwrap().clone();
         s
     };
-    assert_eq!(got.len(), 4, "{got:#?}\n{}", plan.summary);
+    assert_eq!(got.len(), 6, "{got:#?}\n{}", plan.summary);
     let camp = day("CAMP");
     let plain = day("현대홈쇼핑_0613.zip");
     assert!(
@@ -257,7 +273,16 @@ fn rebuild_reads_names_too() {
         &"압축파일/jre-8u121-linux-x64.zip -> 설치파일/Java/Linux/jre-8u121-linux-x64.zip"
             .to_string()
     ));
-    assert_eq!(r.by_name, 3, "{}", plan.summary);
+    for (from, n) in [
+        ("압축파일", "amazon-corretto-8-aarch64-linux-jdk.zip"),
+        ("기타/개발", "amazon-corretto-8-x64-linux-jdk.zip"),
+    ] {
+        assert!(
+            got.contains(&format!("{from}/{n} -> 설치파일/Java/Linux/{n}")),
+            "{got:#?}"
+        );
+    }
+    assert_eq!(r.by_name, 5, "{}", plan.summary);
     assert!(
         plan.summary.contains("고객사를 알 수 없는 로그 1개"),
         "{}",

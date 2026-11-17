@@ -12,7 +12,9 @@
 //! - **매뉴얼**: `KTRCS_MANUAL_v2.0.zip` → `서비스/RCS/매뉴얼/` (a
 //!   customer's manual → `{고객사}/매뉴얼/`).
 //! - **실행 환경·설치 파일**: `jre-8u121-linux-x64.zip` →
-//!   `설치파일/Java/Linux/`.
+//!   `설치파일/Java/Linux/`. (0.18.3) A vendor before the name
+//!   (`amazon-corretto-8-aarch64-linux-jdk.zip`) and the CPU (x64, ARM64)
+//!   are read too; builds for other CPUs share the OS folder.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -69,7 +71,23 @@ const RUNTIMES: &[(&str, &[&str])] = &[
     (
         "Java",
         &[
-            "jre", "jdk", "openjdk", "java", "zulu", "temurin", "corretto", "ojdk",
+            "jre",
+            "jdk",
+            "openjdk",
+            "java",
+            "zulu",
+            "temurin",
+            "corretto",
+            "ojdk",
+            "liberica",
+            "semeru",
+            "sapmachine",
+            "dragonwell",
+            "graalvm",
+            "jbr",
+            "kona",
+            "adoptopenjdk",
+            "openlogic",
         ],
     ),
     ("Node.js", &["node", "nodejs"]),
@@ -87,16 +105,79 @@ const RUNTIMES: &[(&str, &[&str])] = &[
     ("Go", &["go"]),
     (".NET", &["dotnet"]),
 ];
+/// (0.18.3) Runtime names that only ever mean a runtime (a distribution
+/// name, never a plain word): a version anywhere in the name is enough
+/// (`amazon-corretto-jdk_11.0.21_x64.msi`).
+const DISTROS: &[&str] = &[
+    "openjdk",
+    "zulu",
+    "temurin",
+    "corretto",
+    "liberica",
+    "semeru",
+    "sapmachine",
+    "dragonwell",
+    "graalvm",
+    "adoptopenjdk",
+    "openlogic",
+];
+/// (0.18.3) Vendor words that may come before the runtime's name
+/// (`amazon-corretto-…`, `microsoft-jdk-…`, `server-jre-…`).
+const VENDORS: &[&str] = &[
+    "amazon",
+    "aws",
+    "eclipse",
+    "adoptium",
+    "microsoft",
+    "msft",
+    "bellsoft",
+    "azul",
+    "ibm",
+    "sap",
+    "alibaba",
+    "oracle",
+    "redhat",
+    "openlogic",
+    "tencent",
+    "jetbrains",
+    "server",
+    "apache",
+];
+/// Words between a vendor / runtime name and its version that do not
+/// change what it is (`ibm-semeru-open-jdk_17…`, `zulu…-ca-jdk8…`).
+const RUNTIME_FILLERS: &[&str] = &["open", "jdk", "jre", "ca", "ce", "ee", "hotspot", "fx"];
+/// (0.18.3) CPU kinds as shown, with the spellings in file names. Longer
+/// spellings first (`x86_64` before `x86`).
+const CPUS: &[(&str, &[&str])] = &[
+    (
+        "x64",
+        &["x86_64", "x86-64", "amd64", "x64", "x86x64", "win64"],
+    ),
+    ("ARM64", &["aarch64", "arm64", "armv8", "arm64v8"]),
+    (
+        "ARM32",
+        &[
+            "aarch32", "armhf", "armv7", "armv7l", "arm32", "armel", "arm",
+        ],
+    ),
+    ("x86", &["i386", "i586", "i686", "x86", "x32", "win32"]),
+    ("ppc64le", &["ppc64le"]),
+    ("ppc64", &["ppc64"]),
+    ("s390x", &["s390x"]),
+    ("RISC-V", &["riscv64"]),
+];
 const OSES: &[(&str, &[&str])] = &[
     (
         "Linux",
-        &["linux", "el7", "el8", "el9", "rhel", "centos", "ubuntu"],
+        &[
+            "linux", "el7", "el8", "el9", "rhel", "centos", "ubuntu", "alpine", "musl", "debian",
+        ],
     ),
     (
         "Windows",
         &["windows", "win", "win32", "win64", "x64-windows"],
     ),
-    ("macOS", &["mac", "macos", "osx", "darwin"]),
+    ("macOS", &["mac", "macos", "macosx", "osx", "darwin"]),
     ("Solaris", &["solaris", "sunos"]),
     ("AIX", &["aix"]),
 ];
@@ -120,6 +201,9 @@ pub enum Shape {
     Runtime {
         name: &'static str,
         os: Option<&'static str>,
+        /// (0.18.3) CPU kind ("x64", "ARM64"): shown, and used as a
+        /// folder below the OS only when the user already made one.
+        cpu: Option<&'static str>,
     },
 }
 
@@ -135,8 +219,12 @@ impl Shape {
             Shape::Log { date, label, .. } => format!("{label} {}", date.format("%Y-%m-%d")),
             Shape::Manual { service: Some(s) } => format!("{s} {MANUAL_KIND}"),
             Shape::Manual { service: None } => MANUAL_KIND.to_string(),
-            Shape::Runtime { name, os: Some(o) } => format!("{name} ({o}) 설치 파일"),
-            Shape::Runtime { name, os: None } => format!("{name} 설치 파일"),
+            Shape::Runtime { name, os, cpu } => {
+                match [*os, *cpu].into_iter().flatten().collect::<Vec<_>>() {
+                    v if v.is_empty() => format!("{name} 설치 파일"),
+                    v => format!("{name} ({}) 설치 파일", v.join(" · ")),
+                }
+            }
         }
     }
 }
@@ -414,6 +502,101 @@ fn modified_date(path: &Path) -> NaiveDate {
         .unwrap_or_else(|_| Local::now().date_naive())
 }
 
+/// The runtime / installer a name shows (step 1 of [`shape`]).
+fn runtime_in(lower: &[String], ext0: &str, archive: bool) -> Option<Shape> {
+    let installer = archive
+        || matches!(
+            ext0,
+            "exe" | "msi" | "rpm" | "deb" | "dmg" | "pkg" | "bin" | "sh"
+        );
+    if !installer {
+        return None;
+    }
+    // Vendor words first (at most two), then the runtime's name.
+    let at = lower
+        .iter()
+        .take(2)
+        .take_while(|w| VENDORS.contains(&w.as_str()))
+        .count();
+    let first = lower.get(at)?;
+    // The name without its version: `OpenJDK8U` → `openjdk`, `zulu8` →
+    // `zulu` (a `u` only after digits — zulu, semeru end in one).
+    let num = |c: char| c.is_ascii_digit() || c == '.';
+    let mut base = first.trim_end_matches(num);
+    if let Some(b) = base
+        .strip_suffix('u')
+        .filter(|b| b.ends_with(|c: char| c.is_ascii_digit()))
+    {
+        base = b.trim_end_matches(num);
+    }
+    let two = lower.get(at + 1).map(|s| format!("{first}-{s}"));
+    let mut words_used = 1;
+    let mut word = "";
+    let (rt, _) = RUNTIMES.iter().find(|(_, ws)| {
+        ws.iter().any(|w| {
+            if two.as_deref() == Some(*w) {
+                words_used = 2;
+                word = w;
+                true
+            } else if *w == first || *w == base {
+                word = w;
+                true
+            } else {
+                false
+            }
+        })
+    })?;
+    // A version right there: in the word (`go1.21`, `OpenJDK8U`) or the
+    // next one (`jre-8u121`, `node-v18`, `corretto-jdk-11.0.21`) — not
+    // `go_live_2026.zip`. A distribution name (corretto, temurin): a
+    // version anywhere after it.
+    let versioned = |w: &str| {
+        let w = w.trim_start_matches('v');
+        w.chars().next().is_some_and(|c| c.is_ascii_digit())
+    };
+    let rest = &lower[at + words_used..];
+    let has_digit = first.chars().any(|c| c.is_ascii_digit())
+        || rest
+            .iter()
+            .find(|w| !RUNTIME_FILLERS.contains(&w.as_str()))
+            .is_some_and(|w| versioned(w))
+        || (DISTROS.contains(&word) && rest.iter().any(|w| versioned(w)));
+    if !has_digit {
+        return None;
+    }
+    let os = OSES
+        .iter()
+        .find(|(_, keys)| lower.iter().any(|w| keys.contains(&w.as_str())))
+        .map(|(o, _)| *o)
+        .or(match ext0 {
+            "exe" | "msi" => Some("Windows"),
+            "rpm" | "deb" => Some("Linux"),
+            "dmg" | "pkg" => Some("macOS"),
+            _ => None,
+        });
+    Some(Shape::Runtime {
+        name: rt,
+        os,
+        cpu: cpu_in(lower),
+    })
+}
+
+/// The CPU kind a name's words show (`x86_64` is split into two words).
+fn cpu_in(lower: &[String]) -> Option<&'static str> {
+    let joined: Vec<String> = lower
+        .windows(2)
+        .map(|w| format!("{}_{}", w[0], w[1]))
+        .collect();
+    CPUS.iter()
+        .find(|(_, keys)| {
+            keys.iter().any(|k| {
+                lower.iter().any(|w| w == k)
+                    || (k.contains(['_', '-']) && joined.iter().any(|j| *j == k.replace('-', "_")))
+            })
+        })
+        .map(|(c, _)| *c)
+}
+
 /// What `path` is. `customer`: the customer the caller already found for
 /// it (its spellings help tell "customer + date" names from others).
 /// `entries`: a zip's list when the caller has it (else read here).
@@ -430,47 +613,10 @@ pub fn shape(
     let archive = exts.first().is_some_and(|e| ARCHIVES.contains(&e.as_str()));
     let ext0 = exts.first().cloned().unwrap_or_default();
 
-    // 1. Installers and runtimes: the first word names one.
-    if let Some(first) = lower.first() {
-        let base = first.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.' || c == 'u');
-        let two = lower.get(1).map(|s| format!("{first}-{s}"));
-        let mut words_used = 1;
-        let hit = RUNTIMES.iter().find(|(_, ws)| {
-            ws.iter().any(|w| {
-                if two.as_deref() == Some(*w) {
-                    words_used = 2;
-                    true
-                } else {
-                    *w == first || *w == base
-                }
-            })
-        });
-        // A version right there: in the word (`go1.21`, `OpenJDK8U`) or
-        // the next one (`jre-8u121`, `node-v18`) — not `go_live_2026.zip`.
-        let versioned = |w: &str| {
-            let w = w.trim_start_matches('v');
-            w.chars().next().is_some_and(|c| c.is_ascii_digit())
-        };
-        let has_digit = first.chars().any(|c| c.is_ascii_digit())
-            || lower.get(words_used).is_some_and(|w| versioned(w));
-        let installer = archive
-            || matches!(
-                ext0.as_str(),
-                "exe" | "msi" | "rpm" | "deb" | "dmg" | "pkg" | "bin" | "sh"
-            );
-        if let (Some((rt, _)), true, true) = (hit, has_digit, installer) {
-            let os = OSES
-                .iter()
-                .find(|(_, keys)| lower.iter().any(|w| keys.contains(&w.as_str())))
-                .map(|(o, _)| *o)
-                .or(match ext0.as_str() {
-                    "exe" | "msi" => Some("Windows"),
-                    "rpm" | "deb" => Some("Linux"),
-                    "dmg" | "pkg" => Some("macOS"),
-                    _ => None,
-                });
-            return Some(Shape::Runtime { name: rt, os });
-        }
+    // 1. Installers and runtimes: the first word names one — or (0.18.3)
+    //    the first after vendor words (`amazon-corretto-8-…`).
+    if let Some(rt) = runtime_in(&lower, &ext0, archive) {
+        return Some(rt);
     }
 
     // 2. Manuals.
@@ -641,14 +787,38 @@ pub fn dest(anchor: &Path, s: &Shape, customer: Option<&str>) -> Option<(PathBuf
                 true,
             ))
         }
-        (Shape::Runtime { name, os }, _) => {
+        (Shape::Runtime { name, os, cpu }, _) => {
             let mut p = reuse(anchor.join(SETUP_DIR)).join(clean(name));
             if let Some(o) = os {
                 p.push(o);
             }
-            Some((reuse(p), true))
+            let mut p = reuse(p);
+            // (0.18.3) Builds for each CPU share the OS folder (no folder
+            // of one or two files, §14.19) — unless the user made one.
+            if let Some(dir) = cpu.and_then(|c| cpu_dir(&p, c)) {
+                p.push(dir);
+            }
+            Some((p, true))
         }
     }
+}
+
+/// An existing sub-folder of `dir` named for CPU kind `cpu` (`x64`,
+/// `amd64`, `ARM64`, `aarch64` …, case and spaces ignored).
+fn cpu_dir(dir: &Path, cpu: &str) -> Option<String> {
+    let keys: Vec<String> = CPUS
+        .iter()
+        .find(|(c, _)| *c == cpu)
+        .map(|(c, ks)| {
+            std::iter::once(*c)
+                .chain(ks.iter().copied())
+                .map(norm)
+                .collect()
+        })
+        .unwrap_or_default();
+    super::existing::sub_dirs(dir)
+        .into_iter()
+        .find(|d| keys.contains(&norm(d)))
 }
 
 /// For a log without a customer: the folder below the customer's
@@ -973,28 +1143,46 @@ mod tests {
             s,
             Shape::Runtime {
                 name: "Java",
-                os: Some("Linux")
+                os: Some("Linux"),
+                cpu: Some("x64"),
             }
         );
         assert_eq!(
             dest(t.path(), &s, None).unwrap().0,
             t.path().join("설치파일").join("Java").join("Linux")
         );
-        for (n, rt, os) in [
-            ("jdk-11.0.2_windows-x64_bin.zip", "Java", Some("Windows")),
+        assert_eq!(s.describe(), "Java (Linux · x64) 설치 파일");
+        for (n, rt, os, cpu) in [
+            (
+                "jdk-11.0.2_windows-x64_bin.zip",
+                "Java",
+                Some("Windows"),
+                Some("x64"),
+            ),
             (
                 "OpenJDK8U-jdk_x64_mac_hotspot_8u412.tar.gz",
                 "Java",
                 Some("macOS"),
+                Some("x64"),
             ),
-            ("node-v18.17.0-x64.msi", "Node.js", Some("Windows")),
-            ("apache-tomcat-9.0.85.tar.gz", "Tomcat", None),
-            ("go1.21.5.linux-amd64.tar.gz", "Go", Some("Linux")),
+            (
+                "node-v18.17.0-x64.msi",
+                "Node.js",
+                Some("Windows"),
+                Some("x64"),
+            ),
+            ("apache-tomcat-9.0.85.tar.gz", "Tomcat", None, None),
+            (
+                "go1.21.5.linux-amd64.tar.gz",
+                "Go",
+                Some("Linux"),
+                Some("x64"),
+            ),
         ] {
             let q = at(t.path(), n, b"x");
             assert_eq!(
                 shape(&q, &c, None, Some(&[])),
-                Some(Shape::Runtime { name: rt, os }),
+                Some(Shape::Runtime { name: rt, os, cpu }),
                 "{n}"
             );
         }
@@ -1003,6 +1191,157 @@ mod tests {
             "java 교육 자료.zip",
             "nodemon 설정.txt",
             "github_backup.zip",
+        ] {
+            let q = at(t.path(), n, b"x");
+            assert!(
+                !matches!(shape(&q, &c, None, Some(&[])), Some(Shape::Runtime { .. })),
+                "{n}"
+            );
+        }
+    }
+
+    /// (0.18.3) Vendor names before the runtime and CPU kinds: the same
+    /// Java build for two CPUs lands in one OS folder.
+    #[test]
+    fn java_builds_by_vendor_and_cpu() {
+        let t = tempfile::tempdir().unwrap();
+        let c = clues();
+        let linux = t.path().join("설치파일").join("Java").join("Linux");
+        for (n, os, cpu) in [
+            (
+                "amazon-corretto-8-aarch64-linux-jdk.zip",
+                Some("Linux"),
+                Some("ARM64"),
+            ),
+            (
+                "amazon-corretto-8-x64-linux-jdk.zip",
+                Some("Linux"),
+                Some("x64"),
+            ),
+            (
+                "amazon-corretto-17.0.9.8.1-linux-x64.tar.gz",
+                Some("Linux"),
+                Some("x64"),
+            ),
+            (
+                "amazon-corretto-11-x64-windows-jdk.msi",
+                Some("Windows"),
+                Some("x64"),
+            ),
+            (
+                "amazon-corretto-jdk_11.0.21.9-1_amd64.deb",
+                Some("Linux"),
+                Some("x64"),
+            ),
+            (
+                "OpenJDK17U-jdk_aarch64_linux_hotspot_17.0.9_9.tar.gz",
+                Some("Linux"),
+                Some("ARM64"),
+            ),
+            (
+                "OpenJDK11U-jre_x86-32_windows_hotspot_11.0.21_9.zip",
+                Some("Windows"),
+                Some("x86"),
+            ),
+            (
+                "microsoft-jdk-17.0.9-windows-aarch64.zip",
+                Some("Windows"),
+                Some("ARM64"),
+            ),
+            (
+                "microsoft-jdk-21.0.1-macOS-x64.pkg",
+                Some("macOS"),
+                Some("x64"),
+            ),
+            (
+                "zulu8.74.0.17-ca-jdk8.0.392-linux_x64.tar.gz",
+                Some("Linux"),
+                Some("x64"),
+            ),
+            (
+                "zulu17.46.19-ca-jdk17.0.9-linux_aarch64.zip",
+                Some("Linux"),
+                Some("ARM64"),
+            ),
+            (
+                "bellsoft-jdk17.0.9+11-linux-aarch64.tar.gz",
+                Some("Linux"),
+                Some("ARM64"),
+            ),
+            (
+                "bellsoft-jre8u392+9-windows-i586.msi",
+                Some("Windows"),
+                Some("x86"),
+            ),
+            (
+                "ibm-semeru-open-jdk_x64_linux_17.0.9_9_openj9-0.41.0.tar.gz",
+                Some("Linux"),
+                Some("x64"),
+            ),
+            (
+                "graalvm-community-jdk-21.0.1_linux-x64_bin.tar.gz",
+                Some("Linux"),
+                Some("x64"),
+            ),
+            (
+                "server-jre-8u202-linux-x64.tar.gz",
+                Some("Linux"),
+                Some("x64"),
+            ),
+            (
+                "jdk-8u202-linux-arm64-vfp-hflt.tar.gz",
+                Some("Linux"),
+                Some("ARM64"),
+            ),
+            ("jdk-8u202-linux-i586.rpm", Some("Linux"), Some("x86")),
+            (
+                "jdk-17.0.9_linux-x86_64_bin.tar.gz",
+                Some("Linux"),
+                Some("x64"),
+            ),
+            (
+                "jre-8u391-linux-ppc64le.tar.gz",
+                Some("Linux"),
+                Some("ppc64le"),
+            ),
+            (
+                "OpenJDK21U-jdk_s390x_linux_hotspot_21.0.1_12.tar.gz",
+                Some("Linux"),
+                Some("s390x"),
+            ),
+        ] {
+            let q = at(t.path(), n, b"x");
+            let s = shape(&q, &c, None, Some(&[]));
+            assert_eq!(
+                s,
+                Some(Shape::Runtime {
+                    name: "Java",
+                    os,
+                    cpu
+                }),
+                "{n}"
+            );
+            if os == Some("Linux") {
+                assert_eq!(dest(t.path(), &s.unwrap(), None).unwrap().0, linux, "{n}");
+            }
+        }
+        // A CPU folder the user made is used (any spelling of that CPU).
+        std::fs::create_dir_all(linux.join("aarch64")).unwrap();
+        let q = at(t.path(), "amazon-corretto-8-aarch64-linux-jdk.zip", b"x");
+        let s = shape(&q, &c, None, Some(&[])).unwrap();
+        assert_eq!(dest(t.path(), &s, None).unwrap().0, linux.join("aarch64"));
+        let q = at(t.path(), "amazon-corretto-8-x64-linux-jdk.zip", b"x");
+        let s = shape(&q, &c, None, Some(&[])).unwrap();
+        assert_eq!(dest(t.path(), &s, None).unwrap().0, linux);
+        assert_eq!(s.describe(), "Java (Linux · x64) 설치 파일");
+        // Vendor words alone, or a vendor before a plain word: not a runtime.
+        for n in [
+            "amazon 주문내역 2026.zip",
+            "microsoft-teams-backup.zip",
+            "server_backup_20261101.zip",
+            "oracle-java-교육자료.zip",
+            "corretto 소개.pdf",
+            "armory-2.0.zip",
         ] {
             let q = at(t.path(), n, b"x");
             assert!(
