@@ -17,6 +17,7 @@ export function splitReason(reason: string | null): { question: string | null; r
 /** "새 고객사 폴더" · "새 이슈" · "새 주제" · "확신 낮음" (SPEC §14.8 4). */
 export function proposalKind(p: PendingItem): string | null {
   if (p.askCustomer) return "고객사 확인";
+  if (p.folderFiles != null) return `폴더째 · 파일 ${p.folderFiles}개`;
   if (p.source !== "ai") return p.rule ? `규칙: ${p.rule}` : null;
   if (p.confidence != null && p.confidence < 0.8) return "확신 낮음";
   const q = splitReason(p.reason).question ?? "";
@@ -159,6 +160,7 @@ export function PendingRow({
       <input type="checkbox" aria-label="선택" checked={checked} onChange={onCheck} />
       <div className="cell">
         <span className="name" data-testid="pending-name">
+          {p.folderFiles != null && <span title="폴더">📁 </span>}
           {p.name} <span className="sub">{p.size != null ? formatSize(p.size) : ""}</span>
           {!p.exists && <span className="sub"> · 파일 없음</span>}
         </span>
@@ -239,6 +241,7 @@ export function PendingCard({
         {onCheck && <input type="checkbox" aria-label="선택" checked={!!checked} onChange={onCheck} />}
         <div className="ic-main">
           <span className="name" title={p.path} data-testid="pending-name">
+            {p.folderFiles != null && <span title="폴더">📁 </span>}
             {p.name}
           </span>
           <span className="sub-path" style={{ display: "flex", gap: 4, minWidth: 0 }}>

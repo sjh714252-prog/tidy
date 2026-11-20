@@ -152,6 +152,26 @@ pub fn run_watch(
     if opts.index {
         engine = engine.with_index(IndexOptions::from_config(cfg));
     }
+    {
+        // (0.19.0, SPEC §14.29) Folders the user made move whole (asked);
+        // files just made to write in are never moved on their own.
+        let scanner = crate::curate::Curator::from_config(cfg)
+            .or_else(|_| {
+                crate::curate::Curator::new(
+                    crate::curate::ContextDict::default(),
+                    cfg.curate.clone(),
+                    false,
+                )
+            })
+            .ok();
+        if let Some(scanner) = scanner {
+            engine = engine.with_guards(crate::engine::WatchGuards {
+                scanner: Arc::new(scanner),
+                protected: cfg.report.protected.clone(),
+                organize_roots: crate::report::backlog::organize_roots(&cfg.watches),
+            });
+        }
+    }
     if cfg.curate.name_sense {
         // No dictionary yet: built-in services and the folders still help.
         engine = engine.with_sense_file(cfg.curate.context.clone());
@@ -211,6 +231,7 @@ pub fn run_watch(
         expected,
     )?;
 
+    let mut existing_units: Vec<PathBuf> = Vec::new();
     if opts.process_existing {
         let batch = new_batch_id();
         for root in &cfg.watches {
@@ -219,6 +240,14 @@ pub fn run_watch(
             }
             for path in existing_files(root, &filter) {
                 let res = engine.handle(&path, &batch);
+                if let Ok(Action::Skipped { reason, .. }) = &res {
+                    if *reason == crate::engine::IN_FOLDER {
+                        if let Some(unit) = engine.bundle_unit(&path) {
+                            existing_units.push(unit);
+                        }
+                        continue;
+                    }
+                }
                 on_event(WatchEvent::Handled(&path, &res));
             }
         }
@@ -230,6 +259,14 @@ pub fn run_watch(
     }
 
     let mut retries: HashMap<PathBuf, u32> = HashMap::new();
+    // (0.19.0) Folders the user is filling: proposed whole once quiet.
+    let settle = Duration::from_secs(cfg.curate.folder_settle_secs);
+    let mut folders: HashMap<PathBuf, std::time::Instant> = HashMap::new();
+    for u in existing_units {
+        // Judged right away: a folder already quiet is proposed now.
+        let now = std::time::Instant::now();
+        folders.insert(u, now.checked_sub(settle).unwrap_or(now));
+    }
     let mut deferred: Vec<PathBuf> = Vec::new();
     // Each path is retried once, so a file the AI always fails on cannot
     // cost a request after every success.
@@ -270,12 +307,44 @@ pub fn run_watch(
             // Moves to/from that share that were cut off can be resolved now.
             recover(engine.mover(), &mut on_event);
         }
+        let due: Vec<PathBuf> = folders
+            .iter()
+            .filter(|(_, t)| t.elapsed() >= settle)
+            .map(|(p, _)| p.clone())
+            .collect();
+        for unit in due {
+            match engine.propose_folder(&unit) {
+                Ok(crate::engine::FolderStep::Wait) => {
+                    folders.insert(unit, std::time::Instant::now());
+                }
+                Ok(crate::engine::FolderStep::Done(a)) => {
+                    folders.remove(&unit);
+                    if let Some(a) = a {
+                        let res = Ok(a);
+                        on_event(WatchEvent::Handled(&unit, &res));
+                    }
+                }
+                Err(e) => {
+                    folders.remove(&unit);
+                    tracing::warn!(path = %unit.display(), "folder proposal failed: {e}");
+                }
+            }
+        }
         let ev = match next {
             Ok(ev) => ev,
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => break,
         };
         let res = engine.handle(&ev.path, &new_batch_id());
+        if let Ok(Action::Skipped { reason, .. }) = &res {
+            if *reason == crate::engine::IN_FOLDER {
+                if let Some(unit) = engine.bundle_unit(&ev.path) {
+                    folders.insert(unit, std::time::Instant::now());
+                }
+                retries.remove(&ev.path);
+                continue;
+            }
+        }
         match &res {
             Err(e) if e.is_transient() => {
                 let n = retries.entry(ev.path.clone()).or_default();

@@ -12,6 +12,7 @@ pub mod command;
 pub mod config;
 pub mod curate;
 pub mod engine;
+pub mod fresh;
 pub mod index;
 pub mod mover;
 pub mod netio;

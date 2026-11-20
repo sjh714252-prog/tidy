@@ -81,13 +81,20 @@ pub fn is_kind_name(dict: Option<&ContextDict>, name: &str) -> bool {
         })
 }
 
+/// (0.19.0) The customer's folder under `anchor` (an existing one under a
+/// slightly different spelling reused) and whether it exists.
+pub fn customer_dir(anchor: &Path, customer: &str) -> (std::path::PathBuf, bool) {
+    let cust = super::existing::reuse_existing(&anchor.join(super::clean(customer)), anchor, 0);
+    let exists = cust.is_dir();
+    (cust, exists)
+}
+
 /// `{customer}/{kind}` under `anchor`, reusing a customer / kind folder
 /// that is already there under a slightly different spelling. The bool
 /// says whether the customer folder exists (a new customer folder is
 /// asked about, never made silently — SPEC §14.3).
 pub fn customer_kind_dir(anchor: &Path, customer: &str, kind: &str) -> (std::path::PathBuf, bool) {
-    let cust = super::existing::reuse_existing(&anchor.join(super::clean(customer)), anchor, 0);
-    let exists = cust.is_dir();
+    let (cust, exists) = customer_dir(anchor, customer);
     let dest = super::existing::reuse_existing(&cust.join(super::clean(kind)), anchor, 0);
     (dest, exists)
 }

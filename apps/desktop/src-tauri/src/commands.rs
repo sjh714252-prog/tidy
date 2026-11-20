@@ -542,6 +542,9 @@ pub struct PendingDto {
     /// (0.18.0, SPEC §14.24) "어느 고객사 로그인가요?": the customers to
     /// pick from (the answer goes to `{고객사}/로그/{날짜} 로그`).
     pub ask_customer: Option<AskCustomerDto>,
+    /// (0.19.0, SPEC §14.29) A folder the user made, moved whole: how many
+    /// files are inside.
+    pub folder_files: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -616,6 +619,37 @@ pub async fn list_pending(app: AppHandle) -> CmdResult<Vec<PendingDto>> {
             .map(|p| {
                 let meta = std::fs::metadata(&p.path).ok();
                 let (name, dir) = name_and_dir(&p.path);
+                let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
+                let folder_reason = || {
+                    p.reason.as_deref().map(|r| {
+                        r.strip_prefix(tidy_core::engine::FOLDER_RULE)
+                            .map(|x| x.trim_start_matches([' ', '—']).to_string())
+                            .unwrap_or_else(|| r.to_string())
+                    })
+                };
+                if is_dir {
+                    let files = tidy_core::pending::count_files(&p.path, 100_000) as u64;
+                    return PendingDto {
+                        id: p.id,
+                        path: s(&p.path),
+                        name,
+                        dir,
+                        suggested_dest: p.suggested_dest.as_deref().map(s),
+                        source: p.source.as_str(),
+                        rule: Some(tidy_core::engine::FOLDER_RULE.to_string()),
+                        reason: folder_reason(),
+                        confidence: p.confidence,
+                        suggested_name: None,
+                        created_at: p.created_at,
+                        exists: true,
+                        size: None,
+                        encrypt: false,
+                        pii: None,
+                        duplicate_of: None,
+                        ask_customer: None,
+                        folder_files: Some(files),
+                    };
+                }
                 PendingDto {
                     id: p.id,
                     path: s(&p.path),
@@ -652,6 +686,7 @@ pub async fn list_pending(app: AppHandle) -> CmdResult<Vec<PendingDto>> {
                         prefix: tidy_core::curate::sense::name_prefix(&p.path),
                         choices,
                     }),
+                    folder_files: None,
                 }
             })
             .collect())

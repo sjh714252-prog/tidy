@@ -137,7 +137,57 @@ pub struct Engine {
     /// (0.18.0, SPEC §14.24) Reading what a file is from its name and
     /// contents (`[curate] name_sense`): the dictionary it matches against.
     sense: Option<std::sync::Arc<SenseDict>>,
+    /// (0.19.0, SPEC §14.29) Watching: folders the user made are moved
+    /// whole (asked), and files just made to write in are never moved on
+    /// their own. `None` (`tidy classify`, tests): file by file as before.
+    guards: Option<WatchGuards>,
+    /// (0.19.0) Files seen empty while watching ("새로 만들기"): once they
+    /// have content they are asked about, not moved.
+    born_empty: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
+    /// (0.19.0) Why the file being handled must be asked about instead of
+    /// moved (set for one [`Engine::handle`] call).
+    ask: std::sync::Mutex<Option<&'static str>>,
 }
+
+/// (0.19.0, SPEC §14.29) What watching needs to judge a folder the user
+/// made: the same checks as the work-context preview (excluded, protected,
+/// rule destinations and organize roots, Tidy-made, still changing).
+pub struct WatchGuards {
+    /// Judges folders ([`crate::curate::Curator::judge_folder`]); also the
+    /// dictionary for customer names. Needs no AI.
+    pub scanner: std::sync::Arc<crate::curate::Curator>,
+    /// `[report] protected`.
+    pub protected: Vec<PathBuf>,
+    /// Every "모으기" root (organized results, never folder items).
+    pub organize_roots: Vec<PathBuf>,
+}
+
+/// (0.19.0) [`Engine::propose_folder`]'s answer.
+#[derive(Debug)]
+pub enum FolderStep {
+    /// Still being filled / copied: ask again later.
+    Wait,
+    /// Judged: queued (`Some(Pending)`), or left alone (`None`).
+    Done(Option<Action>),
+}
+
+/// Where [`Engine::folder_dest`] puts a folder, and why.
+struct FolderPick {
+    parent: PathBuf,
+    why: String,
+    source: PendingSource,
+    confidence: Option<f64>,
+}
+
+/// (0.19.0) Skip reason of a file inside a folder the user made: the
+/// watch loop then proposes the folder as a whole ([`Engine::bundle_unit`]).
+pub const IN_FOLDER: &str = "inside a folder; the folder is moved as one";
+/// (0.19.0) Skip reason of an empty file (just made, nothing written yet).
+pub const EMPTY_FILE: &str = "empty file (just made?); left until it has content";
+/// (0.19.0) Rule label of a whole-folder proposal.
+pub const FOLDER_RULE: &str = "폴더째 옮기기";
+/// (0.19.0) Why a just-made file is asked about.
+pub const NEW_FILE_ASK: &str = "새로 만든 파일이라 옮기기 전에 묻습니다";
 
 /// (0.18.0) The dictionary [`Engine::sense_step`] reads, re-read when its
 /// file changes (an "어느 고객사?" answer adds an alias while watching).
@@ -184,7 +234,17 @@ impl Engine {
             security: SecurityPolicy::default(),
             curator: None,
             sense: None,
+            guards: None,
+            born_empty: Default::default(),
+            ask: Default::default(),
         }
+    }
+
+    /// (0.19.0, SPEC §14.29) Watch-time protections: user folders whole,
+    /// just-made files asked about.
+    pub fn with_guards(mut self, g: WatchGuards) -> Self {
+        self.guards = Some(g);
+        self
     }
 
     /// (0.18.0, SPEC §14.24) Place log bundles, manuals and runtimes by
@@ -258,7 +318,10 @@ impl Engine {
     /// Index failures are logged and never turn a successful move into an
     /// error.
     pub fn handle(&self, path: &Path, batch_id: &str) -> Result<Action, EngineError> {
-        let action = self.decide_and_act(path, batch_id)?;
+        *self.ask.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let action = self.decide_and_act(path, batch_id);
+        *self.ask.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let action = action?;
         if let Some(opts) = &self.index {
             reindex_for(self.mover.store(), &action, opts);
         }
@@ -281,6 +344,19 @@ impl Engine {
         }
         if self.placed_by_us(path)? {
             return skipped("placed here by Tidy; left in place");
+        }
+        if self.guards.is_some() {
+            // (0.19.0, SPEC §14.29) A folder the user made holds one piece
+            // of work: never pulled apart file by file.
+            if self.bundle_unit(path).is_some() {
+                return skipped(IN_FOLDER);
+            }
+            if let Some(why) = self.fresh(path) {
+                if why == EMPTY_FILE {
+                    return skipped(EMPTY_FILE);
+                }
+                *self.ask.lock().unwrap_or_else(|e| e.into_inner()) = Some(why);
+            }
         }
         let facts = FileFacts::from_path(path).map_err(|source| EngineError::Io {
             path: path.to_path_buf(),
@@ -309,7 +385,8 @@ impl Engine {
                     if self.was_undone(path)? {
                         return skipped("restored by undo; left in place");
                     }
-                    return self.secure(path, vault, VAULT_RULE, Some(f), false, batch_id);
+                    let ask = self.asking().is_some();
+                    return self.secure(path, vault, VAULT_RULE, Some(f), ask, batch_id);
                 }
             }
         }
@@ -381,7 +458,8 @@ impl Engine {
         }
         if encrypt {
             let shown = finding.filter(PiiFinding::is_pii);
-            return self.secure(path, c.dest_dir, &c.rule_name, shown, c.confirm, batch_id);
+            let confirm = c.confirm || self.asking().is_some();
+            return self.secure(path, c.dest_dir, &c.rule_name, shown, confirm, batch_id);
         }
 
         if c.confirm {
@@ -897,6 +975,244 @@ impl Engine {
         })
     }
 
+    fn asking(&self) -> Option<&'static str> {
+        *self.ask.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// (0.19.0, SPEC §14.29) The folder directly in the watch folder that
+    /// holds `path` when `path` is inside one (`바탕 화면/전송자격 …/a.pdf`
+    /// → `바탕 화면/전송자격 …`). `None` for files right in the watch folder,
+    /// outside every watch folder, or when watch guards are off.
+    pub fn bundle_unit(&self, path: &Path) -> Option<PathBuf> {
+        self.guards.as_ref()?;
+        let root = self.anchors.watch_root_for(path)?;
+        let rel = path.strip_prefix(root).ok()?;
+        let mut parts = rel.components();
+        let first = parts.next()?;
+        parts.next()?;
+        Some(root.join(first))
+    }
+
+    /// (0.19.0, SPEC §14.29) Was `path` just made by the user to write in?
+    /// [`EMPTY_FILE`]: empty, leave it. [`NEW_FILE_ASK`]: has content now,
+    /// ask before moving. `None`: an ordinary file.
+    fn fresh(&self, path: &Path) -> Option<&'static str> {
+        let meta = std::fs::metadata(path).ok()?;
+        let mut born = self.born_empty.lock().unwrap_or_else(|e| e.into_inner());
+        if meta.len() == 0 {
+            if born.len() > 10_000 {
+                born.clear();
+            }
+            born.insert(path.to_path_buf());
+            return Some(EMPTY_FILE);
+        }
+        let name = path.file_name()?.to_string_lossy();
+        let local = self
+            .anchors
+            .watch_root_for(path)
+            .is_some_and(|_| !crate::paths::looks_like_network(path));
+        if born.contains(path)
+            || crate::fresh::is_blank_template(&name)
+            || (local && crate::fresh::authored_recently(path, &meta, std::time::SystemTime::now()))
+        {
+            return Some(NEW_FILE_ASK);
+        }
+        None
+    }
+
+    /// (0.19.0, SPEC §14.29) A folder the user made in a watch folder and
+    /// filled, once nothing inside changed for `[curate] folder_settle_secs`:
+    /// one 확인 대기 item "폴더째 옮기기" (never moved on its own), with a
+    /// suggested place — a same-named folder there already, the work
+    /// context (AI), a customer name in the folder / file names, the rule
+    /// all its files agree on, else `기타`. Its files' own queue items go.
+    pub fn propose_folder(&self, unit: &Path) -> Result<FolderStep, EngineError> {
+        use crate::curate::FolderVerdict;
+        let Some(g) = &self.guards else {
+            return Ok(FolderStep::Done(None));
+        };
+        let Some(root) = self.anchors.watch_root_for(unit).map(Path::to_path_buf) else {
+            return Ok(FolderStep::Done(None));
+        };
+        if !std::fs::symlink_metadata(unit).is_ok_and(|m| m.is_dir()) {
+            return Ok(FolderStep::Done(None)); // gone, or a link
+        }
+        let store = self.mover.store();
+        if store.is_ignored(unit)? {
+            return Ok(FolderStep::Done(None));
+        }
+        let anchor = self.anchors.for_path(unit).unwrap_or(&root).to_path_buf();
+        let mut skip = self.rules.dest_roots_for(std::slice::from_ref(&anchor));
+        skip.extend(g.organize_roots.iter().cloned());
+        let u = match g.scanner.judge_folder(
+            unit,
+            &root,
+            &anchor,
+            &self.filter,
+            &g.protected,
+            &skip,
+            Some(store),
+            std::time::SystemTime::now(),
+        ) {
+            FolderVerdict::Unit(u) => *u,
+            FolderVerdict::Unsettled => return Ok(FolderStep::Wait),
+            FolderVerdict::Kept(why) => {
+                tracing::info!(path = %unit.display(), %why, "folder left as it is");
+                return Ok(FolderStep::Done(None));
+            }
+            FolderVerdict::Leftover | FolderVerdict::Hidden => return Ok(FolderStep::Done(None)),
+        };
+        let pick = self.folder_dest(&u, &anchor)?;
+        if self.dry_run {
+            return Ok(FolderStep::Done(Some(Action::WouldMove {
+                path: unit.to_path_buf(),
+                rule: FOLDER_RULE.into(),
+                dest_dir: pick.parent,
+                confirm: true,
+                encrypt: false,
+            })));
+        }
+        for p in store.list_pending()? {
+            if p.path != unit && p.path.starts_with(unit) {
+                store.remove_pending_id(p.id)?;
+            }
+        }
+        let reason = format!(
+            "{FOLDER_RULE} — 직접 만든 폴더라 안의 파일 {}개를 흩지 않고 함께 옮깁니다. {}",
+            u.files, pick.why
+        );
+        store.upsert_pending_entry(&NewPending {
+            path: unit,
+            suggested_dest: Some(&pick.parent),
+            reason: Some(&reason),
+            source: pick.source,
+            confidence: pick.confidence,
+            suggested_name: None,
+            encrypt: false,
+            pii: None,
+        })?;
+        Ok(FolderStep::Done(Some(Action::Pending {
+            path: unit.to_path_buf(),
+            rule: FOLDER_RULE.into(),
+            suggested: pick.parent,
+            source: pick.source,
+            confidence: pick.confidence,
+            reason: Some(reason),
+            encrypt: false,
+            pii: None,
+        })))
+    }
+
+    /// Where a folder item would go (the folder it goes INTO, keeping its
+    /// name) and why. Never fails on the AI: it falls back to names / rules.
+    fn folder_dest(
+        &self,
+        u: &crate::curate::FolderUnit,
+        anchor: &Path,
+    ) -> Result<FolderPick, EngineError> {
+        let store = self.mover.store();
+        let rule_pick = |parent: PathBuf, why: String| FolderPick {
+            parent,
+            why,
+            source: PendingSource::Rule,
+            confidence: None,
+        };
+        // 1. A folder of that name is already in the organize root: join it.
+        let same = anchor.join(&u.name);
+        if same.is_dir() && same != u.path && !u.path.starts_with(&same) {
+            return Ok(rule_pick(
+                anchor.to_path_buf(),
+                "정리 위치에 같은 이름의 폴더가 있어 그 안에 합칩니다.".into(),
+            ));
+        }
+        // 2. The work context (AI), when it is on.
+        if let (Some(cur), Some(ai)) = (&self.curator, &self.ai) {
+            let input = crate::curate::CurateInput::from_unit(u.clone());
+            match cur.place(ai, store, &input, anchor) {
+                Ok(Some(p)) if cur.is_classified(&p.curation) => {
+                    let new = cur.dest_for(&p.curation, p.date, anchor, Some(&u.name));
+                    if let Some(parent) = new.parent().filter(|d| d.starts_with(anchor)) {
+                        return Ok(FolderPick {
+                            parent: parent.to_path_buf(),
+                            why: format!("AI 판단: {}", p.curation.reason),
+                            source: PendingSource::Ai,
+                            confidence: Some(p.curation.confidence),
+                        });
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(path = %u.path.display(), "folder placement by AI failed: {e}")
+                }
+            }
+        }
+        // 3. A customer's name in the folder's name, else in its files' names.
+        if let Some(g) = &self.guards {
+            let hint = std::iter::once(u.name.as_str())
+                .chain(u.samples.iter().map(String::as_str))
+                .find_map(|n| {
+                    let n = n.rsplit(['/', '\\']).next().unwrap_or(n);
+                    g.scanner.customer_hint(n, Some(store))
+                });
+            if let Some(c) = hint {
+                let (dir, known) = crate::curate::kinds::customer_dir(anchor, &c);
+                let why = if known {
+                    format!("이름에 고객사 '{c}'가 보여 그 고객사 폴더로.")
+                } else {
+                    format!("이름에 고객사 '{c}'가 보입니다 — 새 고객사 폴더를 만듭니다.")
+                };
+                return Ok(rule_pick(dir, why));
+            }
+        }
+        // 4. Every file inside matches the same rule: that rule's folder.
+        let mut agreed: Option<(PathBuf, String)> = None;
+        let mut all = true;
+        for e in walkdir::WalkDir::new(&u.path)
+            .min_depth(1)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_type().is_file())
+            .take(200)
+        {
+            let c = FileFacts::from_path(e.path())
+                .ok()
+                .and_then(|f| self.rules.classify_in(&f, Some(anchor)));
+            match (c, &agreed) {
+                (Some(c), None) => agreed = Some((c.dest_dir, c.rule_name)),
+                (Some(c), Some((d, _))) if *d == c.dest_dir => {}
+                _ => {
+                    all = false;
+                    break;
+                }
+            }
+        }
+        if let (true, Some((dir, rule))) = (all, agreed) {
+            return Ok(rule_pick(
+                dir,
+                format!("안의 파일이 모두 '{rule}' 규칙에 맞아 그 폴더로."),
+            ));
+        }
+        // 5. Unknown work: under `기타` (the layout of files without a customer).
+        let other = self
+            .guards
+            .as_ref()
+            .and_then(|g| {
+                g.scanner
+                    .cfg()
+                    .other_template
+                    .split(['/', '\\'])
+                    .next()
+                    .map(str::trim)
+                    .filter(|f| !f.is_empty() && !f.contains('{'))
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "기타".into());
+        Ok(rule_pick(
+            anchor.join(other),
+            "어느 고객사·종류인지 몰라 기타 아래로 — [다른 곳…]으로 바꿀 수 있습니다.".into(),
+        ))
+    }
+
     /// `path` lies below a sub-folder of its watch folder (not directly in
     /// it). Files outside every watch folder (`tidy classify`) are not.
     pub fn in_sub_folder(&self, path: &Path) -> bool {
@@ -947,6 +1263,38 @@ impl Engine {
         confidence: Option<f64>,
         encrypt: bool,
     ) -> Result<Action, EngineError> {
+        if let Some(why) = self.asking() {
+            // (0.19.0, SPEC §14.29) Just made by the user: asked, not moved.
+            let source = if by == DecidedBy::Ai {
+                PendingSource::Ai
+            } else {
+                PendingSource::Rule
+            };
+            let reason = match source {
+                PendingSource::Rule => format!("{rule} · 새로 만든 파일"),
+                PendingSource::Ai => format!("{why} — {rule}"),
+            };
+            self.mover.store().upsert_pending_entry(&NewPending {
+                path,
+                suggested_dest: Some(&dest_dir),
+                reason: Some(&reason),
+                source,
+                confidence,
+                suggested_name: None,
+                encrypt,
+                pii: None,
+            })?;
+            return Ok(Action::Pending {
+                path: path.to_path_buf(),
+                rule: rule.to_string(),
+                suggested: dest_dir,
+                source,
+                confidence,
+                reason: Some(why.to_string()),
+                encrypt,
+                pii: None,
+            });
+        }
         let out = self.mover.move_file(&MoveRequest {
             src: path.to_path_buf(),
             dest_dir,

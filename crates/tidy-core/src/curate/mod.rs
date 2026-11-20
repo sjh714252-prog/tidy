@@ -345,6 +345,21 @@ pub struct FolderScan {
     pub kept: Vec<KeptFolder>,
 }
 
+/// (0.19.0) What [`Curator::judge_folder`] says about one sub-folder.
+#[derive(Debug)]
+pub enum FolderVerdict {
+    /// A folder item, settled.
+    Unit(Box<FolderUnit>),
+    /// Still changing (being copied / unpacked / filled).
+    Unsettled,
+    /// (0.12.3) Left over from earlier in-place organizing.
+    Leftover,
+    /// Left alone, with why.
+    Kept(String),
+    /// Hidden or a Tidy scratch folder: not mentioned at all.
+    Hidden,
+}
+
 /// (0.13.1) A sub-folder a work-context run leaves alone, and why.
 #[derive(Debug, Clone, Serialize)]
 pub struct KeptFolder {
@@ -663,76 +678,114 @@ impl Curator {
         }
         dirs.sort();
         for d in dirs {
-            let name = d
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            if name.starts_with('.') || name.contains(TMP_MARKER) {
-                continue;
-            }
-            let mut keep = |d: PathBuf, reason: String| {
-                tracing::debug!(path = %d.display(), %reason, "folder left as it is");
-                out.kept.push(KeptFolder { path: d, reason });
-            };
-            if filter.in_excluded_dir(&d) {
-                keep(d, "감시 폴더 설정의 '제외 폴더'에 들어 있음".into());
-                continue;
-            }
-            if filter.is_ignored(&d) {
-                keep(d, "무시 패턴(설정 › 고급)에 맞음".into());
-                continue;
-            }
-            if let Some(p) = protected
-                .iter()
-                .find(|p| d.starts_with(p) || p.starts_with(&d))
-            {
-                keep(d, format!("'건드리지 말 폴더'와 겹침: {}", p.display()));
-                continue;
-            }
-            if let Some(p) = skip.iter().find(|p| d.starts_with(p) || p.starts_with(&d)) {
-                keep(
-                    d,
-                    format!("정리 위치 또는 규칙 목적지와 겹침: {}", p.display()),
-                );
-                continue;
-            }
-            if names.iter().any(|n| n == &name) {
-                keep(d, "제자리 정리의 결과 폴더(고객사·기타 이름)".into());
-                continue;
-            }
-            if store.is_some_and(|s| s.has_moves_into(&d).unwrap_or(false)) {
-                if in_place {
-                    keep(d, "제자리 정리로 Tidy가 만든 폴더".into());
-                } else {
-                    out.leftovers.push(d);
+            match self.judge_folder_with(
+                &d, root, in_place, &names, filter, protected, skip, store, now,
+            ) {
+                FolderVerdict::Unit(u) => out.units.push(*u),
+                FolderVerdict::Unsettled => out.unsettled.push(d),
+                FolderVerdict::Leftover => out.leftovers.push(d),
+                FolderVerdict::Kept(reason) => {
+                    tracing::debug!(path = %d.display(), %reason, "folder left as it is");
+                    out.kept.push(KeptFolder { path: d, reason });
                 }
-                continue;
+                FolderVerdict::Hidden => {}
             }
-            let doc = if self.send_content { 300 } else { 0 };
-            let u = match FolderUnit::scan(&d, root, filter, doc) {
-                Ok(u) => u,
-                Err(e) => {
-                    keep(d, format!("읽을 수 없음: {e}"));
-                    continue;
-                }
-            };
-            if u.files == 0 {
-                // (0.14.0) A truly empty one can go with "빈 폴더 정리".
-                let why = if crate::mover::empty_tree(&d).is_some() {
-                    "빈 폴더(파일 없음) — 홈의 [빈 폴더 정리]로 치울 수 있음"
-                } else {
-                    "정리할 파일이 없음(바로가기·숨김·무시되는 파일만)"
-                };
-                keep(d, why.into());
-                continue;
-            }
-            if !u.is_settled(self.settle(), now) {
-                out.unsettled.push(d);
-                continue;
-            }
-            out.units.push(u);
         }
         out
+    }
+
+    /// (0.19.0, SPEC §14.29) [`Curator::scan_folders`]'s verdict on ONE
+    /// sub-folder `d` of `root` — what watching asks about a folder the
+    /// user made and filled, without scanning every other folder again.
+    #[allow(clippy::too_many_arguments)]
+    pub fn judge_folder(
+        &self,
+        d: &Path,
+        root: &Path,
+        anchor: &Path,
+        filter: &IgnoreFilter,
+        protected: &[PathBuf],
+        skip: &[PathBuf],
+        store: Option<&Store>,
+        now: std::time::SystemTime,
+    ) -> FolderVerdict {
+        let in_place = same_path(root, anchor);
+        let names = if in_place {
+            self.output_names(store)
+        } else {
+            Vec::new()
+        };
+        self.judge_folder_with(
+            d, root, in_place, &names, filter, protected, skip, store, now,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn judge_folder_with(
+        &self,
+        d: &Path,
+        root: &Path,
+        in_place: bool,
+        names: &[String],
+        filter: &IgnoreFilter,
+        protected: &[PathBuf],
+        skip: &[PathBuf],
+        store: Option<&Store>,
+        now: std::time::SystemTime,
+    ) -> FolderVerdict {
+        let name = d
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if name.starts_with('.') || name.contains(TMP_MARKER) {
+            return FolderVerdict::Hidden;
+        }
+        let keep = |reason: String| FolderVerdict::Kept(reason);
+        if filter.in_excluded_dir(d) {
+            return keep("감시 폴더 설정의 '제외 폴더'에 들어 있음".into());
+        }
+        if filter.is_ignored(d) {
+            return keep("무시 패턴(설정 › 고급)에 맞음".into());
+        }
+        if let Some(p) = protected
+            .iter()
+            .find(|p| d.starts_with(p) || p.starts_with(d))
+        {
+            return keep(format!("'건드리지 말 폴더'와 겹침: {}", p.display()));
+        }
+        if let Some(p) = skip.iter().find(|p| d.starts_with(p) || p.starts_with(d)) {
+            return keep(format!(
+                "정리 위치 또는 규칙 목적지와 겹침: {}",
+                p.display()
+            ));
+        }
+        if names.iter().any(|n| n == &name) {
+            return keep("제자리 정리의 결과 폴더(고객사·기타 이름)".into());
+        }
+        if store.is_some_and(|s| s.has_moves_into(d).unwrap_or(false)) {
+            if in_place {
+                return keep("제자리 정리로 Tidy가 만든 폴더".into());
+            }
+            return FolderVerdict::Leftover;
+        }
+        let doc = if self.send_content { 300 } else { 0 };
+        let u = match FolderUnit::scan(d, root, filter, doc) {
+            Ok(u) => u,
+            Err(e) => return keep(format!("읽을 수 없음: {e}")),
+        };
+        if u.files == 0 {
+            // (0.14.0) A truly empty one can go with "빈 폴더 정리".
+            let why = if crate::mover::empty_tree(d).is_some() {
+                "빈 폴더(파일 없음) — 홈의 [빈 폴더 정리]로 치울 수 있음"
+            } else {
+                "정리할 파일이 없음(바로가기·숨김·무시되는 파일만)"
+            };
+            return keep(why.into());
+        }
+        if !u.is_settled(self.settle(), now) {
+            return FolderVerdict::Unsettled;
+        }
+        FolderVerdict::Unit(Box::new(u))
     }
 
     /// (M12) Everything a work-context run looks at in `root`: files
