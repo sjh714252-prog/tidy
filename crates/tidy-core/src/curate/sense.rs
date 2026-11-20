@@ -36,7 +36,7 @@ pub const SETUP_DIR: &str = "설치파일";
 /// Rule name of the "어느 고객사 로그인가요?" question in 확인 대기.
 pub const ASK_CUSTOMER_RULE: &str = "로그 · 어느 고객사?";
 
-const ARCHIVES: &[&str] = &[
+pub(crate) const ARCHIVES: &[&str] = &[
     "zip", "7z", "rar", "tar", "gz", "tgz", "bz2", "xz", "egg", "alz",
 ];
 const LOG_EXTS: &[&str] = &["log", "out"];
@@ -313,6 +313,22 @@ impl Clues {
         best.map(|(i, _)| self.customers[i].0.clone())
     }
 
+    /// (0.20.0) The customer `text` (a document's contents) names — only
+    /// when exactly one does.
+    pub fn only_customer_in(&self, text: &str) -> Option<String> {
+        let hay = norm(text);
+        let mut found: Option<usize> = None;
+        for (i, (_, keys)) in self.customers.iter().enumerate() {
+            if keys.iter().any(|k| usable(k) && hay.contains(k.as_str())) {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(i);
+            }
+        }
+        found.map(|i| self.customers[i].0.clone())
+    }
+
     /// The one customer the entries name (none, or several → `None`).
     pub fn customer_in_list(&self, entries: &[String]) -> Option<String> {
         let mut found: Option<String> = None;
@@ -330,7 +346,7 @@ impl Clues {
 
 /// Extensions from the end (`a.log.zip` → ["zip", "log"]) and the stem
 /// without them.
-fn split_exts(name: &str) -> (String, Vec<String>) {
+pub(crate) fn split_exts(name: &str) -> (String, Vec<String>) {
     let mut stem = name.to_string();
     let mut exts = Vec::new();
     for _ in 0..3 {
@@ -369,7 +385,7 @@ fn split_exts(name: &str) -> (String, Vec<String>) {
     (stem, exts)
 }
 
-fn words(stem: &str) -> Vec<String> {
+pub(crate) fn words(stem: &str) -> Vec<String> {
     stem.split(|c: char| !c.is_alphanumeric() && c != '.')
         .flat_map(|w| {
             // "v2.0" stays one word; "a.b" names split.
@@ -443,13 +459,13 @@ fn date_in(stem: &str, near: NaiveDate) -> Option<NaiveDate> {
     None
 }
 
-fn is_date_word(w: &str) -> bool {
+pub(crate) fn is_date_word(w: &str) -> bool {
     let digits = w.chars().filter(char::is_ascii_digit).count();
     (w.ends_with('일') || w.ends_with('월')) && digits > 0 && digits + 1 == w.chars().count()
         || (digits >= 4 && w.chars().all(|c| c.is_ascii_digit()))
 }
 
-fn is_version(w: &str) -> bool {
+pub(crate) fn is_version(w: &str) -> bool {
     let w = w.trim_start_matches(['v', 'V']);
     let w = w.strip_prefix("er").unwrap_or(w);
     !w.is_empty()
@@ -470,6 +486,62 @@ pub fn zip_entries(path: &Path, max: usize) -> Vec<String> {
         return Vec::new();
     };
     z.file_names().take(max).map(str::to_string).collect()
+}
+
+/// Text-like files inside a zip whose contents [`zip_text`] reads.
+const INNER_TEXT: &[&str] = &[
+    "txt", "csv", "tsv", "log", "md", "json", "xml", "docx", "xlsx", "xlsm", "xls", "ods",
+];
+/// Inner files read, bytes read per file, characters kept in all.
+const INNER_FILES: usize = 6;
+const INNER_BYTES: u64 = 8 * 1024 * 1024;
+const INNER_CHARS: usize = 40_000;
+
+/// (0.20.0, SPEC §14.30) What the documents inside a zip say: the text of
+/// up to six small text / Office files in it (smallest name-ordered first,
+/// at most 8 MB each, 40,000 characters in all). Read in memory only —
+/// nothing is unpacked to disk. Other archives, encrypted entries: empty.
+pub fn zip_text(path: &Path) -> String {
+    if crate::paths::ext_lower(path) != "zip" {
+        return String::new();
+    }
+    let Ok(f) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let Ok(mut z) = zip::ZipArchive::new(std::io::BufReader::new(f)) else {
+        return String::new();
+    };
+    let mut picks: Vec<(usize, String)> = Vec::new();
+    for i in 0..z.len().min(5000) {
+        let Ok(e) = z.by_index_raw(i) else { continue };
+        let name = e.name().to_string();
+        let ext = crate::paths::ext_lower(Path::new(&name));
+        if e.is_dir()
+            || e.encrypted()
+            || e.size() > INNER_BYTES
+            || !INNER_TEXT.contains(&ext.as_str())
+        {
+            continue;
+        }
+        picks.push((i, name));
+    }
+    picks.sort_by(|a, b| a.1.cmp(&b.1));
+    let mut out = String::new();
+    for (i, name) in picks.into_iter().take(INNER_FILES) {
+        let Ok(e) = z.by_index(i) else { continue };
+        let mut buf = Vec::new();
+        if e.take(INNER_BYTES).read_to_end(&mut buf).is_err() {
+            continue;
+        }
+        if let Some(t) = crate::index::extract::extract_bytes(&name, buf) {
+            out.push_str(&t);
+            out.push('\n');
+        }
+        if out.chars().count() >= INNER_CHARS {
+            break;
+        }
+    }
+    out.chars().take(INNER_CHARS).collect()
 }
 
 /// The first `max` bytes of a text file, lossily decoded.
@@ -858,16 +930,18 @@ pub fn name_prefix(path: &Path) -> Option<String> {
 }
 
 /// A top folder of an organize root that holds a customer's material:
-/// it has a dated issue folder or a `로그` / `매뉴얼` folder.
-fn customer_like(dir: &Path) -> bool {
+/// it has a dated issue folder or a `로그` / `매뉴얼` folder — or (0.20.0,
+/// §14.30) the `압축파일` folder an archive group made.
+pub fn customer_like(dir: &Path) -> bool {
     super::existing::sub_dirs(dir).iter().any(|n| {
         super::existing::split_dated(n).is_some()
             || norm(n) == norm(LOG_KIND)
             || norm(n) == norm(MANUAL_KIND)
+            || norm(n) == norm(super::group::ARCHIVE_KIND)
     })
 }
 
-fn layout_top(name: &str) -> bool {
+pub(crate) fn layout_top(name: &str) -> bool {
     let k = norm(name);
     k.is_empty()
         || [SERVICE_DIR, SETUP_DIR, "기타", LOG_KIND, MANUAL_KIND]
