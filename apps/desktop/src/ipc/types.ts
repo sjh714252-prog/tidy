@@ -269,6 +269,8 @@ export interface PendingItem {
   duplicateOf: string | null;
   /** (0.18.0) "어느 고객사 로그인가요?" — pick a customer folder. */
   askCustomer: AskCustomer | null;
+  /** (0.19.0) A folder the user made, moved whole: files inside. */
+  folderFiles: number | null;
 }
 
 /** (0.18.0, SPEC §14.24) */

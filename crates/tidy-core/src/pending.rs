@@ -23,6 +23,12 @@ pub enum PendingError {
     NotFound(i64),
     #[error("no destination: the entry has no suggestion and none was given")]
     NoDestination,
+    /// (0.19.0) A folder item moved only partly: these files stayed.
+    #[error("{moved} files moved, {} could not be moved (first: {})", failed.len(), failed.first().map(|(p, e)| format!("{}: {e}", p.display())).unwrap_or_default())]
+    FolderPartly {
+        moved: usize,
+        failed: Vec<(PathBuf, String)>,
+    },
     #[error(transparent)]
     Mover(#[from] MoverError),
     #[error(transparent)]
@@ -44,6 +50,10 @@ impl PendingError {
             ),
             PendingError::NotFound(_) => "이미 처리된 항목입니다.".into(),
             PendingError::NoDestination => "옮길 곳이 정해지지 않았습니다. '다른 곳…'으로 폴더를 고르세요.".into(),
+            PendingError::FolderPartly { moved, failed } => format!(
+                "폴더 안 파일 {moved}개는 옮겼지만 {}개는 다른 프로그램에서 열려 있거나 잠겨 있어 그대로 두었습니다. 그 파일을 닫은 뒤 다시 '이동'을 누르세요.",
+                failed.len()
+            ),
             other => format!("옮기지 못했습니다: {other}"),
         }
     }
@@ -223,6 +233,9 @@ pub fn resolve(
     let entry = store.get_pending(id)?.ok_or(PendingError::NotFound(id))?;
     let path = entry.path.clone();
 
+    if path.is_dir() {
+        return resolve_folder(mover, &entry, decision, batch_id, index);
+    }
     if !path.is_file() {
         store.remove_pending_id(id)?;
         return Ok(Resolution::Gone { path });
@@ -342,6 +355,100 @@ pub fn resolve(
         tracing::warn!("could not record decision: {e}");
     }
     store.remove_pending_id(id)?;
+    Ok(resolution)
+}
+
+/// (0.19.0) Files inside a folder item (for the queue), at most `cap`.
+pub fn count_files(dir: &Path, cap: usize) -> usize {
+    walkdir::WalkDir::new(dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .take(cap)
+        .count()
+}
+
+/// (0.19.0, SPEC §14.29) A folder item ("폴더째 옮기기"): moved whole into
+/// the chosen folder, keeping its name and inner structure, in one batch
+/// (one `move_log` row per file, undo restores the folder). A file still
+/// open keeps the item in the queue with the files that stayed.
+fn resolve_folder(
+    mover: &Mover,
+    entry: &crate::store::PendingEntry,
+    decision: &Decision,
+    batch_id: &str,
+    index: Option<&IndexOptions>,
+) -> Result<Resolution, PendingError> {
+    let store = mover.store();
+    let path = entry.path.clone();
+    let resolution = match decision {
+        Decision::Skip => Resolution::Skipped { path: path.clone() },
+        Decision::Ignore => {
+            store.add_ignored(&path)?;
+            Resolution::Ignored { path: path.clone() }
+        }
+        Decision::Move {
+            dest_dir, new_name, ..
+        } => {
+            let dest_dir = dest_dir
+                .clone()
+                .or(entry.suggested_dest.clone())
+                .ok_or(PendingError::NoDestination)?;
+            let name = new_name
+                .clone()
+                .filter(|n| !n.trim().is_empty())
+                .map(|n| crate::curate::clean(&n))
+                .or_else(|| path.file_name().map(|n| n.to_string_lossy().into_owned()))
+                .unwrap_or_default();
+            let dest = dest_dir.join(&name);
+            let report = mover.move_dir(&crate::mover::DirMoveRequest {
+                src: path.clone(),
+                dest: dest.clone(),
+                batch_id: batch_id.to_string(),
+                decided_by: DecidedBy::User,
+                rule_name: Some(crate::engine::FOLDER_RULE.to_string()),
+                ai_confidence: entry.confidence,
+            })?;
+            if let Some(opts) = index {
+                for o in &report.outcomes {
+                    if let MoveOutcome::Moved { log_id, src, dst } = o {
+                        let a = Action::Moved {
+                            src: src.clone(),
+                            dst: dst.clone(),
+                            rule: crate::engine::FOLDER_RULE.into(),
+                            batch_id: batch_id.to_string(),
+                            log_id: *log_id,
+                            by: DecidedBy::User,
+                            confidence: entry.confidence,
+                            encrypted: false,
+                        };
+                        reindex_for(store, &a, opts);
+                    }
+                }
+            }
+            if !report.errors.is_empty() {
+                return Err(PendingError::FolderPartly {
+                    moved: report.moved(),
+                    failed: report.errors,
+                });
+            }
+            let log_id = report
+                .outcomes
+                .iter()
+                .find_map(|o| match o {
+                    MoveOutcome::Moved { log_id, .. } => Some(*log_id),
+                    _ => None,
+                })
+                .unwrap_or(0);
+            Resolution::Moved {
+                src: path.clone(),
+                dst: dest,
+                log_id,
+                batch_id: batch_id.to_string(),
+            }
+        }
+    };
+    store.remove_pending_id(entry.id)?;
     Ok(resolution)
 }
 
