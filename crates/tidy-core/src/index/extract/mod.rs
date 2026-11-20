@@ -56,6 +56,20 @@ pub trait Extractor: Send + Sync {
     fn extract(&self, path: &Path) -> Result<String, ExtractError>;
 }
 
+/// (0.20.0, SPEC §14.30) Text of a file held in memory (an entry read from
+/// inside a zip): plain text, DOCX, XLSX / XLS / ODS. `None` for other
+/// types. Parser panics are caught.
+pub fn extract_bytes(name: &str, bytes: Vec<u8>) -> Option<String> {
+    let ext = crate::paths::ext_lower(Path::new(name));
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match ext.as_str() {
+        "txt" | "csv" | "tsv" | "log" | "md" | "json" | "xml" | "ini" | "conf" | "sql" => {
+            Some(String::from_utf8_lossy(&bytes).into_owned())
+        }
+        _ => office::office_bytes(&ext, bytes),
+    }));
+    r.ok().flatten().map(|t| clean_text(&t))
+}
+
 /// The registered extractors, asked in order.
 pub struct Extractors {
     list: Vec<Box<dyn Extractor>>,

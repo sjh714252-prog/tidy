@@ -687,12 +687,33 @@ impl Engine {
         let clues = sense::clues_for(Some(&dict), Some(store), &anchor);
         let name = facts.name.clone();
         let entries = sense::zip_entries(path, 2000);
+        let archive = crate::curate::group::is_archive(path);
         let customer = hint
             .map(str::to_string)
             .or_else(|| clues.customer_in(&name))
-            .or_else(|| clues.customer_in_list(&entries));
+            .or_else(|| clues.customer_in_list(&entries))
+            // (0.20.0, §14.30) The documents inside a zip.
+            .or_else(|| {
+                archive
+                    .then(|| clues.only_customer_in(&sense::zip_text(path)))
+                    .flatten()
+            });
         let Some(shape) = sense::shape(path, &clues, customer.as_deref(), Some(&entries)) else {
-            return Ok(None);
+            // (0.20.0, §14.30) An archive of a company / topic that already
+            // has its folder: there, not the flat `압축 파일`.
+            return match self.archive_group(path, &anchor, hint, customer.as_deref()) {
+                Some((dest, rule, known)) => self.sense_tail(
+                    path,
+                    dest,
+                    rule,
+                    known,
+                    false,
+                    "압축 파일",
+                    customer.as_deref(),
+                    batch_id,
+                ),
+                None => Ok(None),
+            };
         };
         let what = shape.describe();
         let (dest, known, ask) = match sense::dest(&anchor, &shape, customer.as_deref()) {
@@ -718,6 +739,70 @@ impl Engine {
                 _ => what.clone(),
             }
         };
+        self.sense_tail(
+            path,
+            dest,
+            rule,
+            known,
+            ask,
+            &what,
+            customer.as_deref(),
+            batch_id,
+        )
+    }
+
+    /// (0.20.0, SPEC §14.30) Where an archive goes that is no log bundle,
+    /// manual or runtime: the folder of the customer its folder-name or
+    /// contents show (one the later steps would not know: a customer named
+    /// in the dictionary / cache is left to them), the `기타/{주제}` folder
+    /// its name shows, or the existing folder of the company its first word
+    /// names. `(dest, rule, customer folder exists)`.
+    fn archive_group(
+        &self,
+        path: &Path,
+        anchor: &Path,
+        hint: Option<&str>,
+        customer: Option<&str>,
+    ) -> Option<(PathBuf, String, bool)> {
+        use crate::curate::{group, kinds};
+        if !group::is_archive(path) || hint.is_some() {
+            return None;
+        }
+        let kind = group::ARCHIVE_KIND;
+        if let Some(c) = customer {
+            let (d, known) = kinds::customer_kind_dir(anchor, c, kind);
+            return Some((d, format!("{c} · {kind}"), known));
+        }
+        let name = path.file_name()?.to_string_lossy().into_owned();
+        if let Some(d) = group::topic_dir(anchor, "기타", &name) {
+            let rule = format!(
+                "주제 · {}",
+                d.file_name()
+                    .map(|n| n.to_string_lossy())
+                    .unwrap_or_default()
+            );
+            return Some((d, rule, true));
+        }
+        let c = group::company_in(&name)?;
+        let (d, known) = kinds::customer_kind_dir(anchor, &c, kind);
+        known.then(|| (d, format!("{c} · {kind}"), true))
+    }
+
+    /// The end of [`Self::sense_step`]: move, or ask in 확인 대기.
+    #[allow(clippy::too_many_arguments)]
+    fn sense_tail(
+        &self,
+        path: &Path,
+        dest: PathBuf,
+        rule: String,
+        known: bool,
+        ask: bool,
+        what: &str,
+        customer: Option<&str>,
+        batch_id: &str,
+    ) -> Result<Option<Action>, EngineError> {
+        let path = &path.to_path_buf();
+        let store = self.mover.store();
         if self.dry_run {
             return Ok(Some(Action::WouldMove {
                 path: path.clone(),
@@ -747,8 +832,8 @@ impl Engine {
                     )
                 } else {
                     format!(
-                        "{what}: 이름에 고객사 '{}'가 보입니다 — 새 고객사 폴더를 만들까요?",
-                        customer.as_deref().unwrap_or("")
+                        "{what}: 고객사 '{}' 자료로 보입니다 — 새 고객사 폴더를 만들까요?",
+                        customer.unwrap_or("")
                     )
                 }),
                 encrypt: false,

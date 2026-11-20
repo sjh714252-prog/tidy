@@ -16,6 +16,7 @@ pub mod context;
 pub mod customers;
 pub mod existing;
 pub mod folder;
+pub mod group;
 pub mod kinds;
 pub mod sense;
 pub mod template;

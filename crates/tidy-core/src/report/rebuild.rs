@@ -26,6 +26,7 @@ use super::review::{count_files, merges, name_of, rel, remap, Ctx, ReviewOptions
 use super::scan::ScanError;
 use crate::classify::FileFacts;
 use crate::curate::existing::{norm, reuse_existing, split_dated};
+use crate::curate::group;
 use crate::curate::kinds::{is_kind_name, kind_of};
 use crate::curate::sense::{self, Clues, Shape};
 use crate::curate::{clean, customer_names};
@@ -59,6 +60,11 @@ pub struct Rebuild {
     /// (0.18.0) Logs no customer could be found for: left where they are,
     /// to be asked about in 확인 대기 ([`run`] queues them).
     pub ask_logs: Vec<(PathBuf, PathBuf)>,
+    /// (0.20.0, §14.30) Archives grouped by company / topic (name, the
+    /// folder inside, the documents inside).
+    pub by_group: usize,
+    /// (0.20.0) The groups made: (folder under the root, archives).
+    pub groups: Vec<(String, usize)>,
 }
 
 /// A customer and where its folder is (or will be).
@@ -109,6 +115,11 @@ impl Builder<'_> {
     fn in_body(&self, p: &Path) -> Option<usize> {
         let rec = self.ctx.store.get_file(p).ok()??;
         let text = self.ctx.store.file_content(rec.id).ok()??;
+        self.only_in(&text)
+    }
+
+    /// The customer `text` names — only when exactly one.
+    fn only_in(&self, text: &str) -> Option<usize> {
         let head: String = text.chars().take(BODY_CHARS).collect();
         let hay = norm(&head);
         let mut found: Option<usize> = None;
@@ -280,7 +291,11 @@ pub fn rebuild(root: &Path, store: &Store, o: &ReviewOptions<'_>) -> Result<Rebu
             continue;
         }
         let known = ctx.customer(&n);
-        let by_layout = t.is_dir() && ctx.is_customer_dir(t);
+        // (0.20.0) Also a folder holding `로그` / `매뉴얼` / `압축파일`
+        // (what log bundles and archive groups make, §14.24·§14.30).
+        let by_layout = t.is_dir()
+            && (ctx.is_customer_dir(t)
+                || (o.sense && !sense::layout_top(&n) && sense::customer_like(t)));
         let parked = !t.exists(); // a customer folder coming up from 기타
         if known.is_some() || by_layout || parked {
             add(known.unwrap_or_else(|| n.clone()), Some(t.clone()), vec![n]);
@@ -439,6 +454,40 @@ pub fn rebuild(root: &Path, store: &Store, o: &ReviewOptions<'_>) -> Result<Rebu
 
     // 4. Everything outside the customer folders.
     let rules = o.rules;
+    // Where the rules put a file found in `dir` (`None`: no rule, or it is
+    // already in that rule's tree).
+    let rule_dest = |p: &Path, dir: &Path| -> Option<(PathBuf, String)> {
+        let rules = rules?;
+        let facts = FileFacts::from_path(p).ok()?;
+        let cl = rules.classify_in(&facts, Some(&root))?;
+        if !cl.dest_dir.starts_with(&root) || cl.dest_dir == dir {
+            return None;
+        }
+        // (0.16.1) Already in the rule's own tree (`텍스트/2026` for a
+        // `텍스트/{yyyy}/{mm}` rule): left where it is — the rules only
+        // take files from elsewhere, so a file never churns between period
+        // folders (or to `1980/01` for a bad modified date).
+        let top = |p: &Path| {
+            p.strip_prefix(&root)
+                .ok()
+                .and_then(|r| r.components().next())
+                .map(|c| norm(&c.as_os_str().to_string_lossy()))
+        };
+        if top(dir).is_some() && top(dir) == top(&cl.dest_dir) {
+            return None;
+        }
+        let why = format!("규칙 '{}' → '{}'", cl.rule_name, rel(&root, &cl.dest_dir));
+        Some((cl.dest_dir.join(name_of(p)), why))
+    };
+    struct Loose {
+        item: group::Item,
+        path: PathBuf,
+        dir: PathBuf,
+        entries: Vec<String>,
+    }
+    let mut loose: Vec<Loose> = Vec::new();
+    let mut by_group = 0usize;
+    let mut groups: Vec<(String, usize)> = Vec::new();
     // (dir, depth, rules apply here): the root and kind / period folders —
     // never 기타's topic folders or a folder of the user's own.
     let dict = o.curator.map(|c| c.dict());
@@ -504,7 +553,14 @@ pub fn rebuild(root: &Path, store: &Store, o: &ReviewOptions<'_>) -> Result<Rebu
                 .in_text(&name)
                 .map(|i| (i, "이름"))
                 .or_else(|| b.in_body(&p).map(|i| (i, "내용")))
-                .or_else(|| b.in_zip(&entries).map(|i| (i, "압축 파일 안 이름")));
+                .or_else(|| b.in_zip(&entries).map(|i| (i, "압축 파일 안 이름")))
+                .or_else(|| {
+                    // (0.20.0, §14.30) The documents inside the zip.
+                    (b.clues.is_some() && group::is_archive(&p))
+                        .then(|| b.only_in(&sense::zip_text(&p)))
+                        .flatten()
+                        .map(|i| (i, "압축 파일 안 문서"))
+                });
             let shape = b.shape(&p, found.map(|(i, _)| i), &entries);
             if let Some((i, by)) = found {
                 let c = &b.customers[i];
@@ -575,35 +631,172 @@ pub fn rebuild(root: &Path, store: &Store, o: &ReviewOptions<'_>) -> Result<Rebu
                     _ => {}
                 }
             }
-            let Some(rules) = rules.filter(|_| zone) else {
-                continue;
-            };
-            let Ok(facts) = FileFacts::from_path(&p) else {
-                continue;
-            };
-            if let Some(cl) = rules.classify_in(&facts, Some(&root)) {
-                if !cl.dest_dir.starts_with(&root) || cl.dest_dir == dir {
+            // (0.20.0, §14.30) An archive no customer claims: into the
+            // topic folder made for its subject before, else grouped with
+            // the archives that share its subject (after the walk).
+            if zone && shape.is_none() && b.clues.is_some() && group::is_archive(&p) {
+                if let Some(d) = group::topic_dir(&root, &o.other_dir, &name) {
+                    if d != dir {
+                        let why = format!(
+                            "이름에 주제 '{}'가 보임 → '{}'",
+                            name_of(&d),
+                            rel(&root, &d)
+                        );
+                        if push(&mut moves, p, d.join(&name), false, why) {
+                            by_group += 1;
+                        }
+                    }
                     continue;
                 }
-                // (0.16.1) Already in the rule's own tree (`텍스트/2026` for
-                // a `텍스트/{yyyy}/{mm}` rule): left where it is — the
-                // rules only take files from elsewhere, so a file never
-                // churns between period folders (or to `1980/01` for a
-                // bad modified date).
-                let top = |p: &Path| {
-                    p.strip_prefix(&root)
-                        .ok()
-                        .and_then(|r| r.components().next())
-                        .map(|c| norm(&c.as_os_str().to_string_lossy()))
-                };
-                if top(&dir).is_some() && top(&dir) == top(&cl.dest_dir) {
-                    continue;
-                }
-                let to = cl.dest_dir.join(&name);
-                let why = format!("규칙 '{}' → '{}'", cl.rule_name, rel(&root, &cl.dest_dir));
+                loose.push(Loose {
+                    item: group::Item {
+                        name: name.clone(),
+                        inner: group::inner_subject(&entries),
+                    },
+                    path: p,
+                    dir: dir.clone(),
+                    entries,
+                });
+                continue;
+            }
+            if !zone {
+                continue;
+            }
+            if let Some((to, why)) = rule_dest(&p, &dir) {
                 if push(&mut moves, p, to, false, why) {
                     by_rules += 1;
                 }
+            }
+        }
+    }
+
+    // 4b. (0.20.0, §14.30) Archives sharing a subject → one folder: a
+    // company's → `{업체}/압축파일` (log bundles to its day folders), a
+    // topic's → `기타/{주제}`. A lone archive named for a company → that
+    // company. The rest → the rules, as before.
+    let items: Vec<group::Item> = loose.iter().map(|l| l.item.clone()).collect();
+    let mut placed = vec![false; loose.len()];
+    let mut targets: Vec<(Vec<usize>, String, bool)> = group::groups(&items, o.min_items)
+        .into_iter()
+        .map(|g| (g.members, g.label, g.company))
+        .collect();
+    for (i, l) in loose.iter().enumerate() {
+        if targets.iter().any(|(m, _, _)| m.contains(&i)) {
+            continue;
+        }
+        if let Some(c) = group::company_in(&l.item.name) {
+            match targets
+                .iter_mut()
+                .find(|(_, n, co)| *co && norm(n) == norm(&c))
+            {
+                Some(t) => t.0.push(i),
+                None => targets.push((vec![i], c, true)),
+            }
+        }
+    }
+    for (members, label, company) in targets {
+        let mut count = 0usize;
+        if company {
+            // An existing customer of that name, or a new one.
+            let cust = match b.in_text(&label) {
+                Some(ci) => Customer {
+                    name: b.customers[ci].name.clone(),
+                    keys: b.customers[ci].keys.clone(),
+                    dir: b.customers[ci].dir.clone(),
+                },
+                None => Customer {
+                    dir: reuse_existing(&root.join(clean(&label)), &root, 0),
+                    keys: vec![norm(&label)],
+                    name: label.clone(),
+                },
+            };
+            let clues = b.clues.clone().map(|mut c| {
+                c.add_customer(&cust.name, cust.keys.clone());
+                c
+            });
+            for &i in &members {
+                let l = &loose[i];
+                let shape = clues
+                    .as_ref()
+                    .and_then(|c| sense::shape(&l.path, c, Some(&cust.name), Some(&l.entries)));
+                let shape = shape.filter(|s| matches!(s, Shape::Log { .. } | Shape::Manual { .. }));
+                let d = b.customer_dest(&cust.dir, &l.path, shape.as_ref());
+                if d == l.dir {
+                    placed[i] = true;
+                    continue;
+                }
+                note_new(&cust);
+                let what = shape
+                    .as_ref()
+                    .map(|s| format!(" · {}", s.describe()))
+                    .unwrap_or_default();
+                let why = if members.len() > 1 {
+                    format!(
+                        "이름이 비슷한 압축 파일 {}개 = 업체 '{}'{what} → '{}'",
+                        members.len(),
+                        cust.name,
+                        rel(&root, &d)
+                    )
+                } else {
+                    format!("이름이 업체 '{}'{what} → '{}'", cust.name, rel(&root, &d))
+                };
+                if push(
+                    &mut moves,
+                    l.path.clone(),
+                    d.join(name_of(&l.path)),
+                    false,
+                    why,
+                ) {
+                    count += 1;
+                }
+                placed[i] = true;
+            }
+        } else {
+            let d = reuse_existing(&root.join(&o.other_dir).join(clean(&label)), &root, 0);
+            for &i in &members {
+                let l = &loose[i];
+                placed[i] = true;
+                if d == l.dir {
+                    continue;
+                }
+                let why = format!(
+                    "이름이 비슷한 압축 파일 {}개 = 주제 '{label}' → '{}'",
+                    members.len(),
+                    rel(&root, &d)
+                );
+                if push(
+                    &mut moves,
+                    l.path.clone(),
+                    d.join(name_of(&l.path)),
+                    false,
+                    why,
+                ) {
+                    count += 1;
+                }
+            }
+        }
+        if count > 0 {
+            by_group += count;
+            groups.push((
+                rel(
+                    &root,
+                    &if company {
+                        reuse_existing(&root.join(clean(&label)), &root, 0)
+                    } else {
+                        root.join(&o.other_dir).join(clean(&label))
+                    },
+                ),
+                count,
+            ));
+        }
+    }
+    for (i, l) in loose.iter().enumerate() {
+        if placed[i] {
+            continue;
+        }
+        if let Some((to, why)) = rule_dest(&l.path, &l.dir) {
+            if push(&mut moves, l.path.clone(), to, false, why) {
+                by_rules += 1;
             }
         }
     }
@@ -667,6 +860,18 @@ pub fn rebuild(root: &Path, store: &Store, o: &ReviewOptions<'_>) -> Result<Rebu
             "로그 묶음·매뉴얼·설치 파일 {by_name}개를 이름·내용대로 날짜·서비스·OS 폴더에 넣습니다"
         ));
     }
+    if by_group > 0 {
+        let names: Vec<String> = groups
+            .iter()
+            .take(8)
+            .map(|(n, c)| format!("{n}({c})"))
+            .collect();
+        parts.push(format!(
+            "압축 파일 {by_group}개를 이름·안의 파일로 업체·주제별로 묶습니다({}{})",
+            names.join(", "),
+            if groups.len() > 8 { " …" } else { "" }
+        ));
+    }
     if by_rules > 0 {
         parts.push(format!("다른 파일 {by_rules}개를 규칙대로 넣습니다"));
     }
@@ -719,6 +924,8 @@ pub fn rebuild(root: &Path, store: &Store, o: &ReviewOptions<'_>) -> Result<Rebu
         capped,
         by_name,
         ask_logs,
+        by_group,
+        groups,
     })
 }
 

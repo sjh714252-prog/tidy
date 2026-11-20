@@ -246,6 +246,50 @@ fn resolve_ref(r: &BytesRef<'_>) -> Option<char> {
     }
 }
 
+// ── inside an archive ───────────────────────────────────────────────────
+
+/// (0.20.0, SPEC §14.30) Text of an Office file held in memory (a file
+/// inside a zip): DOCX body, or the cells of XLSX / XLS / ODS. `None` for
+/// other types or unreadable data.
+pub(super) fn office_bytes(ext: &str, bytes: Vec<u8>) -> Option<String> {
+    let here = Path::new("(zip entry)");
+    match ext {
+        "docx" | "docm" => {
+            let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).ok()?;
+            let mut xml = String::new();
+            z.by_name("word/document.xml")
+                .ok()?
+                .read_to_string(&mut xml)
+                .ok()?;
+            ooxml_text(&xml, &["p", "tab", "br", "cr"], &["t"], here).ok()
+        }
+        "xlsx" | "xlsm" | "xls" | "ods" => {
+            let mut wb = calamine::open_workbook_auto_from_rs(std::io::Cursor::new(bytes)).ok()?;
+            let mut out = String::new();
+            for name in wb.sheet_names() {
+                let Ok(range) = wb.worksheet_range(&name) else {
+                    continue;
+                };
+                out.push_str(&name);
+                out.push('\n');
+                for row in range.rows() {
+                    let cells: Vec<String> = row
+                        .iter()
+                        .filter(|c| !matches!(c, Data::Empty))
+                        .map(cell_text)
+                        .collect();
+                    if !cells.is_empty() {
+                        out.push_str(&cells.join("\t"));
+                        out.push('\n');
+                    }
+                }
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
